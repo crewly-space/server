@@ -1,0 +1,52 @@
+import { z } from 'zod';
+
+export const ModelPolicySchema = z.object({
+  defaultProviderId: z.string().min(1),
+  defaultModel: z.string().min(1),
+  fallbackProviderId: z.string().min(1).optional(),
+  fallbackModel: z.string().min(1).optional(),
+});
+export type ModelPolicy = z.infer<typeof ModelPolicySchema>;
+
+export const PermissionSetSchema = z.object({
+  tools: z.array(z.string()).default([]),
+  canMessageAgents: z.boolean().default(true),
+  canApproveOwnActions: z.boolean().default(false),
+});
+export type PermissionSet = z.infer<typeof PermissionSetSchema>;
+
+export const RelationshipRefSchema = z.object({
+  agentId: z.string().min(1),
+  label: z.string().min(1),
+});
+export type RelationshipRef = z.infer<typeof RelationshipRefSchema>;
+
+export const AgentSchema = z
+  .object({
+    id: z.string().min(1),
+    ownerUserId: z.string().min(1),
+    name: z.string().min(1),
+    personality: z.string().default(''),
+    modelPolicy: ModelPolicySchema,
+    permissions: PermissionSetSchema.default({}),
+    relationships: z.array(RelationshipRefSchema).default([]),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+export type Agent = z.infer<typeof AgentSchema>;
+
+/**
+ * Field names a runtime integration might be tempted to bolt onto Agent directly.
+ * AgentSchema is `.strict()`, so any object carrying one of these fails to parse —
+ * vendor session state belongs on RuntimeBinding.vendorState instead.
+ */
+export const FORBIDDEN_AGENT_FIELDS = [
+  'runtimeSessionId',
+  'claudeSessionId',
+  'codexSessionId',
+  'geminiSessionId',
+  'vendorSessionId',
+  'runtimeId',
+  'threadId',
+] as const;

@@ -1,0 +1,87 @@
+import { buildApp } from './app.js';
+import { loadConfig } from './config.js';
+import { openDatabase } from './db/connection.js';
+import { runMigrations } from './db/migrate.js';
+import { JobRunner } from './jobs/runner.js';
+import { SUMMARIZE_CONVERSATION_JOB_TYPE, updateConversationSummary } from './memory/summary.js';
+import { countUsers } from './users/repository.js';
+import { prepareSetupClaim } from './auth/setup-claim.js';
+import { pruneOperationalData } from './maintenance.js';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const VERSION = '0.1.0';
+
+async function main(): Promise<void> {
+  if (process.argv.includes('--help') || process.argv.includes('-h')) {
+    console.log(`OpenCrew server ${VERSION}
+
+Usage: opencrew-server [options]
+
+  --port <number>       Listen port (default: 8787)
+  --host <address>      Bind address (default: 127.0.0.1)
+  --data-dir <path>     SQLite and configuration directory
+  --web-dir <path>      Built OpenCrew app directory (omit for API only)
+  --log-level <level>   fatal|error|warn|info|debug|trace|silent
+  --trust-proxy [bool]  Trust reverse-proxy forwarding headers`);
+    return;
+  }
+  if (process.argv.includes('--version') || process.argv.includes('-v')) {
+    console.log(`opencrew-server ${VERSION}`);
+    return;
+  }
+  const config = loadConfig();
+  if (config.webDir && !fs.existsSync(path.join(config.webDir, 'index.html'))) {
+    throw new Error(`OpenCrew app is missing: ${path.join(config.webDir, 'index.html')}`);
+  }
+  if (!config.webDir) {
+    console.warn('OpenCrew app is disabled (no --web-dir); serving the API only');
+  }
+  const db = openDatabase(config.dataDir);
+  runMigrations(db);
+  const setupClaim = prepareSetupClaim(config.dataDir, countUsers(db) > 0);
+  if (setupClaim.token) {
+    console.warn(`First-run claim token: ${setupClaim.token}`);
+    console.warn(`It is also stored in ${setupClaim.file} until the owner account is created.`);
+  }
+  const app = await buildApp({
+    db,
+    webDir: config.webDir,
+    logger: { level: config.logLevel },
+    trustProxy: config.trustProxy,
+    setupClaimToken: setupClaim.token,
+    onSetupComplete: setupClaim.consume,
+  });
+
+  const jobRunner = new JobRunner(db, {
+    [SUMMARIZE_CONVERSATION_JOB_TYPE]: async (jobDb, payload) => {
+      const { conversationId } = payload as { conversationId: string };
+      await updateConversationSummary(jobDb, conversationId);
+    },
+  });
+  jobRunner.start();
+  pruneOperationalData(db);
+  const maintenanceTimer = setInterval(() => pruneOperationalData(db), 6 * 60 * 60 * 1000);
+  maintenanceTimer.unref?.();
+
+  let closing = false;
+  const close = async (signal: string) => {
+    if (closing) return;
+    closing = true;
+    app.log.info({ signal }, 'shutting down');
+    jobRunner.stop();
+    clearInterval(maintenanceTimer);
+    await app.close();
+    db.close();
+  };
+  process.once('SIGTERM', () => void close('SIGTERM'));
+  process.once('SIGINT', () => void close('SIGINT'));
+
+  await app.listen({ port: config.port, host: config.host });
+  app.log.info({ host: config.host, port: config.port }, 'OpenCrew server listening');
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

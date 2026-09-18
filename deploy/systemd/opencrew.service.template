@@ -1,0 +1,27 @@
+[Unit]
+Description=OpenCrew self-hosted server
+Documentation=https://opencrew.dev/docs/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opencrew
+Group=opencrew
+Environment=OPENCREW_DATA_DIR=@@DATA@@
+Environment=OPENCREW_PORT=@@PORT@@
+Environment=OPENCREW_HOST=127.0.0.1
+ExecStart=@@BIN@@
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=@@DATA@@
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
