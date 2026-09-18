@@ -75,6 +75,24 @@ jobs:
           sha256sum --check --strict --ignore-missing checksums.txt
           echo "checksums verified"
 
+      # The Dockerfile is a documented install path, so it must not be able to
+      # ship broken. It already did once: web/ is gitignored, so COPY matched
+      # nothing on a clean checkout and the build failed for everyone but the
+      # machine that had run fetch:app.
+      - name: Build the container image
+        run: |
+          docker build -f deploy/Dockerfile -t opencrew-server:${{ github.event.inputs.tag || github.ref_name }} .
+          docker run --rm -d --name smoke -e OPENCREW_HOST=0.0.0.0 -p 8787:8787 \
+            opencrew-server:${{ github.event.inputs.tag || github.ref_name }}
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8787/readyz >/dev/null && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:8787/readyz
+          curl -sf -o /dev/null -w "app: %{http_code}\n" http://127.0.0.1:8787/
+          docker logs smoke | tail -5
+          docker stop smoke
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
