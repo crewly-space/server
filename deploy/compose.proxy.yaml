@@ -1,0 +1,33 @@
+# Adds HTTPS in front of compose.yaml. Use both files together:
+#   OPENCREW_DOMAIN=crew.example.com ACME_EMAIL=you@example.com \
+#     docker compose -f compose.yaml -f compose.proxy.yaml up -d
+#
+# compose.yaml alone publishes the server on 127.0.0.1 with no TLS, which is
+# right for a local trial and wrong for anything reachable from the internet.
+#
+# That localhost publish stays in place when this file is layered on, so the
+# server is reachable on 127.0.0.1:8787 for debugging as well as through the
+# proxy. It is not exposed off-box unless you set OPENCREW_BIND_ADDRESS.
+services:
+  proxy:
+    image: caddy:2-alpine
+    container_name: opencrew-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      OPENCREW_DOMAIN: ${OPENCREW_DOMAIN:?set OPENCREW_DOMAIN to your hostname}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL for Let'\''s Encrypt}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      opencrew:
+        condition: service_healthy
+
+volumes:
+  caddy-data:
+  caddy-config:
