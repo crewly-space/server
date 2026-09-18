@@ -1,6 +1,6 @@
 services:
   opencrew:
-    image: ghcr.io/opentribe-dev/opencrew:${OPENCREW_VERSION:-latest}
+    image: ghcr.io/opentribe-dev/opencrew-server:${OPENCREW_VERSION:-latest}
     container_name: opencrew
     restart: unless-stopped
     ports:

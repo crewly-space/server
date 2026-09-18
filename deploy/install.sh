@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
 
-REPO="opentribe-dev/opencrew"
+SERVER_REPO="opentribe-dev/opencrew-server"
+CLI_REPO="opentribe-dev/opencrew-cli"
 VERSION="${OPENCREW_VERSION:-latest}"
 INSTALL_DIR="${OPENCREW_INSTALL_DIR:-/usr/local/bin}"
 SKIP_INIT="${OPENCREW_SKIP_INIT:-${OPENCREW_SKIP_SETUP:-}}"
@@ -21,32 +22,46 @@ ARCH=$(uname -m)
 case "$ARCH" in x86_64|amd64) ARCH="amd64" ;; aarch64|arm64) ARCH="arm64" ;; *) fail "Unsupported architecture: $ARCH" ;; esac
 ok "Detected $OS / $ARCH"
 
-if [ -n "${OPENCREW_RELEASE_BASE_URL:-}" ]; then
-  RELEASE_URL=${OPENCREW_RELEASE_BASE_URL%/}
-elif [ "$VERSION" = "latest" ]; then
-  RELEASE_URL="https://github.com/$REPO/releases/latest/download"
-else
-  RELEASE_URL="https://github.com/$REPO/releases/download/$VERSION"
-fi
-ASSET="opencrew_${OS}_${ARCH}.tar.gz"
+# The server (with the bundled app) and the CLI ship from separate
+# repositories now, so each asset resolves against its own release.
+release_url_for() {
+  if [ -n "${OPENCREW_RELEASE_BASE_URL:-}" ]; then
+    printf '%s' "${OPENCREW_RELEASE_BASE_URL%/}"
+  elif [ "$VERSION" = "latest" ]; then
+    printf 'https://github.com/%s/releases/latest/download' "$1"
+  else
+    printf 'https://github.com/%s/releases/download/%s' "$1" "$VERSION"
+  fi
+}
+RELEASE_URL=$(release_url_for "$SERVER_REPO")
+CLI_RELEASE_URL=$(release_url_for "$CLI_REPO")
+SERVER_ASSET="opencrew-server_${OS}_${ARCH}.tar.gz"
+CLI_ASSET="opencrew-cli_${OS}_${ARCH}.tar.gz"
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/opencrew.XXXXXX")
 trap 'rm -rf "$TMP_DIR"' EXIT HUP INT TERM
 
-say "Downloading OpenCrew ${VERSION}"
-curl -fL --retry 3 --connect-timeout 10 "$RELEASE_URL/$ASSET" -o "$TMP_DIR/$ASSET"
-curl -fL --retry 3 --connect-timeout 10 "$RELEASE_URL/checksums.txt" -o "$TMP_DIR/checksums.txt"
-EXPECTED=$(awk -v asset="$ASSET" '$2 == asset { print $1 }' "$TMP_DIR/checksums.txt")
-[ -n "$EXPECTED" ] || fail "Release checksum is missing"
-if has sha256sum; then ACTUAL=$(sha256sum "$TMP_DIR/$ASSET" | awk '{print $1}')
-elif has shasum; then ACTUAL=$(shasum -a 256 "$TMP_DIR/$ASSET" | awk '{print $1}')
-else fail "sha256sum or shasum is required"; fi
-[ "$EXPECTED" = "$ACTUAL" ] || fail "Release checksum did not match"
-ok "Verified release checksum"
+# Download one asset and verify it against its release's checksums.txt.
+fetch_verified() {
+  base_url=$1; asset=$2; label=$3
+  say "Downloading $label"
+  curl -fL --retry 3 --connect-timeout 10 "$base_url/$asset" -o "$TMP_DIR/$asset"
+  curl -fL --retry 3 --connect-timeout 10 "$base_url/checksums.txt" -o "$TMP_DIR/checksums.$label.txt"
+  expected=$(awk -v a="$asset" '$2 == a { print $1 }' "$TMP_DIR/checksums.$label.txt")
+  [ -n "$expected" ] || fail "Release checksum for $asset is missing"
+  if has sha256sum; then actual=$(sha256sum "$TMP_DIR/$asset" | awk '{print $1}')
+  elif has shasum; then actual=$(shasum -a 256 "$TMP_DIR/$asset" | awk '{print $1}')
+  else fail "sha256sum or shasum is required"; fi
+  [ "$expected" = "$actual" ] || fail "Release checksum for $asset did not match"
+  tar -xzf "$TMP_DIR/$asset" -C "$TMP_DIR"
+  ok "Verified $label"
+}
 
-tar -xzf "$TMP_DIR/$ASSET" -C "$TMP_DIR"
-[ -x "$TMP_DIR/opencrew" ] || fail "Release does not contain the OpenCrew CLI"
-[ -x "$TMP_DIR/opencrew-server" ] || fail "Release does not contain the OpenCrew server"
-[ -f "$TMP_DIR/web/index.html" ] || fail "Release does not contain the OpenCrew app"
+fetch_verified "$RELEASE_URL" "$SERVER_ASSET" "server"
+fetch_verified "$CLI_RELEASE_URL" "$CLI_ASSET" "CLI"
+
+[ -x "$TMP_DIR/opencrew" ] || fail "The CLI release does not contain the opencrew binary"
+[ -x "$TMP_DIR/opencrew-server" ] || fail "The server release does not contain opencrew-server"
+[ -f "$TMP_DIR/web/index.html" ] || fail "The server release does not contain the OpenCrew app"
 
 SUDO=""
 if [ ! -d "$INSTALL_DIR" ] || [ ! -w "$INSTALL_DIR" ]; then

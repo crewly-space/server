@@ -28,8 +28,9 @@ WORKDIR /app
 COPY --from=build /workspace/package.json ./package.json
 COPY --from=build /workspace/node_modules ./node_modules
 COPY --from=build /workspace/dist ./dist
-# Optional: present only when ./web was populated before the build.
-COPY web* ./web/
+# Always present (web/.gitkeep is committed); empty unless fetch:app ran, in
+# which case it holds the built app. An empty web/ means the API serves no UI.
+COPY web ./web
 RUN mkdir -p /data /app/web && chown -R node:node /app /data
 USER node
 VOLUME ["/data"]

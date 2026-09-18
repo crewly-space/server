@@ -1,7 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-$Repository = 'opentribe-dev/opencrew'
+$Repository = 'opentribe-dev/opencrew-server'
+$CliRepository = 'opentribe-dev/opencrew-cli'
 $Version = if ($env:OPENCREW_VERSION) { $env:OPENCREW_VERSION } else { 'latest' }
 $InstallDir = if ($env:OPENCREW_INSTALL_DIR) { $env:OPENCREW_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'OpenCrew\bin' }
 $Architecture = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()) {
@@ -13,29 +14,37 @@ Write-Host "`n  OpenCrew installer" -ForegroundColor White
 Write-Host "  ------------------`n" -ForegroundColor DarkGray
 Write-Host "  [ok] Detected windows / $Architecture" -ForegroundColor Green
 
-$ReleaseUrl = if ($env:OPENCREW_RELEASE_BASE_URL) {
-  $env:OPENCREW_RELEASE_BASE_URL.TrimEnd('/')
-} elseif ($Version -eq 'latest') {
-  "https://github.com/$Repository/releases/latest/download"
-} else {
-  "https://github.com/$Repository/releases/download/$Version"
+# The server (with the bundled app) and the CLI ship from separate
+# repositories now, so each asset resolves against its own release.
+function Get-ReleaseUrl([string]$Repo) {
+  if ($env:OPENCREW_RELEASE_BASE_URL) { return $env:OPENCREW_RELEASE_BASE_URL.TrimEnd('/') }
+  if ($Version -eq 'latest') { return "https://github.com/$Repo/releases/latest/download" }
+  return "https://github.com/$Repo/releases/download/$Version"
 }
-$Asset = "opencrew_windows_$Architecture.zip"
+$ReleaseUrl = Get-ReleaseUrl $Repository
+$CliReleaseUrl = Get-ReleaseUrl $CliRepository
+$Asset = "opencrew-server_windows_$Architecture.zip"
+$CliAsset = "opencrew-cli_windows_$Architecture.zip"
 $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("opencrew-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $TempDir | Out-Null
 
 try {
-  Write-Host "  -> Downloading OpenCrew $Version" -ForegroundColor Cyan
-  Invoke-WebRequest "$ReleaseUrl/$Asset" -OutFile (Join-Path $TempDir $Asset)
-  Invoke-WebRequest "$ReleaseUrl/checksums.txt" -OutFile (Join-Path $TempDir 'checksums.txt')
-  $ChecksumLine = Get-Content (Join-Path $TempDir 'checksums.txt') | Where-Object { $_ -match ([regex]::Escape($Asset) + '$') } | Select-Object -First 1
-  if (!$ChecksumLine) { throw 'Release checksum is missing.' }
-  $Expected = ($ChecksumLine -split '\s+')[0].ToLowerInvariant()
-  $Actual = (Get-FileHash (Join-Path $TempDir $Asset) -Algorithm SHA256).Hash.ToLowerInvariant()
-  if ($Expected -ne $Actual) { throw 'Release checksum did not match.' }
-  Write-Host '  [ok] Verified release checksum' -ForegroundColor Green
+  function Get-VerifiedAsset([string]$BaseUrl, [string]$AssetName, [string]$Label) {
+    Write-Host "  -> Downloading $Label" -ForegroundColor Cyan
+    $ChecksumFile = Join-Path $TempDir "checksums.$Label.txt"
+    Invoke-WebRequest "$BaseUrl/$AssetName" -OutFile (Join-Path $TempDir $AssetName)
+    Invoke-WebRequest "$BaseUrl/checksums.txt" -OutFile $ChecksumFile
+    $Line = Get-Content $ChecksumFile | Where-Object { $_ -match ([regex]::Escape($AssetName) + '$') } | Select-Object -First 1
+    if (!$Line) { throw "Release checksum for $AssetName is missing." }
+    $Expected = ($Line -split '\s+')[0].ToLowerInvariant()
+    $Actual = (Get-FileHash (Join-Path $TempDir $AssetName) -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($Expected -ne $Actual) { throw "Release checksum for $AssetName did not match." }
+    Expand-Archive (Join-Path $TempDir $AssetName) -DestinationPath $TempDir -Force
+    Write-Host "  [ok] Verified $Label" -ForegroundColor Green
+  }
 
-  Expand-Archive (Join-Path $TempDir $Asset) -DestinationPath $TempDir -Force
+  Get-VerifiedAsset $ReleaseUrl $Asset 'server'
+  Get-VerifiedAsset $CliReleaseUrl $CliAsset 'CLI' 
   foreach ($required in @('opencrew.exe', 'opencrew-server.exe', 'web\index.html')) {
     if (!(Test-Path -LiteralPath (Join-Path $TempDir $required))) { throw "Release is missing $required" }
   }

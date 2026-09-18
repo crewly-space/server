@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Report suspected vulnerabilities privately through GitHub's
-[private vulnerability reporting](https://github.com/opentribe-dev/server/security/advisories/new).
+[private vulnerability reporting](https://github.com/opentribe-dev/opencrew-server/security/advisories/new).
 Please do not open a public issue for a security problem.
 
 Include the affected version, what an attacker can do, and the smallest set of
