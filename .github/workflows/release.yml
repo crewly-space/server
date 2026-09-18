@@ -1,0 +1,94 @@
+name: Release
+
+# Publishes the server release the installers download: one archive per
+# platform holding the opencrew-server binary and the built app, plus the
+# checksums.txt both installers verify against.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with: { node-version: "24", cache: npm }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.4.0" }
+
+      - name: Install
+        run: npm ci
+
+      - name: Test before publishing
+        run: |
+          npm run typecheck
+          npm test
+
+      # The app is a separate repository, so it is built from source here
+      # rather than pulled from its own release. That keeps this workflow from
+      # depending on the app having shipped first, which would deadlock the
+      # very first release of both.
+      - name: Build the app
+        run: |
+          git clone --depth 1 https://github.com/opentribe-dev/opencrew-app.git /tmp/app
+          npm --prefix /tmp/app ci
+          npm --prefix /tmp/app run build
+          rm -rf web && mkdir -p web
+          cp -R /tmp/app/dist/. web/
+          test -f web/index.html
+
+      - name: Cross-compile the server
+        run: bun run scripts/build-binary.ts
+
+      - name: Package every platform
+        run: |
+          set -eu
+          for pair in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64; do
+            os=${pair%_*}
+            arch=${pair#*_}
+            binary=deploy/../dist-binary/opencrew_${pair}/opencrew-server
+            [ "$os" = "windows" ] && binary="${binary}.exe"
+            sh deploy/scripts/package-release.sh "$os" "$arch" "$binary" web
+          done
+          sh deploy/scripts/checksums.sh
+          ls -la deploy/dist
+
+      # A release whose checksums do not match its archives bricks every
+      # install, and the installer failure would not say why.
+      - name: Verify the checksums we are about to publish
+        working-directory: deploy/dist
+        run: |
+          sha256sum --check --strict --ignore-missing checksums.txt
+          echo "checksums verified"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "OpenCrew Server $TAG" \
+            --generate-notes \
+            --verify-tag \
+            deploy/dist/opencrew-server_* \
+            deploy/dist/checksums.txt \
+            deploy/install.sh \
+            deploy/install.ps1 \
+            deploy/compose.yaml \
+            deploy/compose.proxy.yaml \
+            deploy/Caddyfile

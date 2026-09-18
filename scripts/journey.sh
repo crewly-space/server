@@ -91,8 +91,11 @@ sec "CLOUD: control plane"
 cd "$SP/opencrew-cloud"
 npm run build >/dev/null 2>&1 && ok "cloud builds" || no "cloud builds" "build failed"
 CDATA=$(mktemp -d); rm -rf "$CDATA"; mkdir -p "$CDATA"
+BILLING_SECRET=journey-billing-secret-cccccccccccccccccccc
 OPENCREW_CLOUD_ADMIN_TOKEN=test-admin-token-aaaaaaaaaaaaaaaaaaaaaaaa OPENCREW_CLOUD_PORT=4201 \
   OPENCREW_CLOUD_DATA_DIR="$CDATA" OPENCREW_CLOUD_PUBLIC_URL=http://127.0.0.1:4201 \
+  OPENCREW_BILLING_CHECKOUT_URL=http://127.0.0.1:9/checkout \
+  OPENCREW_BILLING_WEBHOOK_SECRET="$BILLING_SECRET" \
   node dist/index.js > /tmp/j-cloud.log 2>&1 &
 for i in $(seq 1 40); do curl -sf http://127.0.0.1:4201/ >/dev/null 2>&1 && break; sleep 1; done
 C=http://127.0.0.1:4201; CJ=$(mktemp)
@@ -104,9 +107,25 @@ curl -s -b $CJ $C/api/v1/auth/session | grep -q '"user"' && ok "cloud session" |
 OID=$(curl -s -b $CJ $C/api/v1/organizations | python -c "import sys,json;print(json.load(sys.stdin)['organizations'][0]['id'])" 2>/dev/null)
 [ -n "$OID" ] && ok "organization created" || no "organization" "none"
 chk "CSRF: foreign origin rejected" \
-  "$(code -b $CJ -X POST $C/api/v1/organizations/$OID/deployments -H 'content-type: application/json' -H 'origin: http://evil.example' -d '{"name":"evil","region":"x","plan":"starter"}')" "403"
+  "$(code -b $CJ -X POST $C/api/v1/organizations/$OID/deployments -H 'content-type: application/json' -H 'origin: http://evil.example' -d '{"name":"evil","region":"x"}')" "403"
+
+# The paid path: a customer is blocked until a signed checkout arrives, and the
+# signature is the only thing authenticating that webhook.
+chk "provisioning blocked before checkout" \
+  "$(code -b $CJ -X POST $C/api/v1/organizations/$OID/deployments -H 'content-type: application/json' -H "origin: $C" -d '{"name":"too-early","region":"eu-central"}')" "402"
+
+EVT="{\"id\":\"journey-evt-1\",\"kind\":\"billing.checkout.completed\",\"organizationId\":\"$OID\",\"plan\":\"starter\",\"deploymentLimit\":1}"
+sig() { printf '%s' "$1" | openssl dgst -sha256 -hmac "$BILLING_SECRET" -hex | awk '{print $NF}'; }
+hook() { code -X POST $C/api/v1/webhooks/billing -H 'content-type: application/json' -H "x-opencrew-signature: sha256=$2" -d "$1"; }
+
+chk "webhook rejects a bad signature" "$(hook "$EVT" deadbeef)" "401"
+chk "webhook accepts a signed checkout" "$(hook "$EVT" "$(sig "$EVT")")" "200"
+chk "webhook ignores a replayed delivery" "$(hook "$EVT" "$(sig "$EVT")")" "200"
 chk "customer self-serve provisioning" \
-  "$(code -b $CJ -X POST $C/api/v1/organizations/$OID/deployments -H 'content-type: application/json' -H "origin: $C" -d '{"name":"acme","region":"eu","plan":"starter"}')" "201"
+  "$(code -b $CJ -X POST $C/api/v1/organizations/$OID/deployments -H 'content-type: application/json' -H "origin: $C" -d '{"name":"acme","region":"eu-central"}')" "202"
+chk "plan server limit enforced" \
+  "$(code -b $CJ -X POST $C/api/v1/organizations/$OID/deployments -H 'content-type: application/json' -H "origin: $C" -d '{"name":"acme-second","region":"eu-central"}')" "409"
+
 OT='authorization: Bearer test-admin-token-aaaaaaaaaaaaaaaaaaaaaaaa'
 curl -s -X POST $C/api/v1/organizations/$OID/deployments -H 'content-type: application/json' -H "$OT" -H "origin: $C" \
   -d '{"name":"acme-prod","region":"eu-central","plan":"starter"}' | grep -q '"operation"' \
