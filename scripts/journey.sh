@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# End-to-end verification of every OpenCrew user journey across the four repos.
-SP=/c/Users/igorr/coding/opencrew-split
+# End-to-end verification of every Crewly user journey across the four repos.
+SP=/c/Users/igorr/coding/crewly-split
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); printf "  \033[32mPASS\033[0m  %s\n" "$1"; }
 no()  { FAIL=$((FAIL+1)); printf "  \033[31mFAIL\033[0m  %s  -- %s\n" "$1" "$2"; }
@@ -10,11 +10,11 @@ sec() { printf "\n\033[1m== %s\033[0m\n" "$1"; }
 code() { curl -s -o /dev/null -w "%{http_code}" "$@"; }
 
 sec "SELF-HOST: build and boot"
-cd "$SP/opencrew-server"
+cd "$SP/crewly-server"
 npm run build >/dev/null 2>&1 && ok "server builds" || no "server builds" "npm run build failed"
 npm run fetch:app >/dev/null 2>&1 && ok "app fetched into web/" || no "app fetched" "fetch:app failed"
 DATA=$(mktemp -d); rm -rf "$DATA"; mkdir -p "$DATA"
-OPENCREW_DATA_DIR="$DATA" OPENCREW_PORT=8901 OPENCREW_WEB_DIR="$SP/opencrew-server/web" \
+CREWLY_DATA_DIR="$DATA" CREWLY_PORT=8901 CREWLY_WEB_DIR="$SP/crewly-server/web" \
   node dist/index.js > /tmp/j-server.log 2>&1 &
 for i in $(seq 1 40); do curl -sf http://127.0.0.1:8901/readyz >/dev/null 2>&1 && break; sleep 1; done
 B=http://127.0.0.1:8901
@@ -27,7 +27,7 @@ TOK=$(cat "$DATA/claim-token" 2>/dev/null)
 chk "wrong claim token rejected" \
   "$(code -X POST $B/api/v1/auth/setup -H 'content-type: application/json' -d '{"email":"a@b.co","displayName":"X","password":"correct-horse-battery","claimToken":"wrong"}')" "403"
 S=$(curl -s -X POST $B/api/v1/auth/setup -H 'content-type: application/json' \
-  -d "{\"email\":\"igor@opencrew.test\",\"displayName\":\"Igor\",\"password\":\"correct-horse-battery-staple\",\"claimToken\":\"$TOK\"}")
+  -d "{\"email\":\"igor@crewly.test\",\"displayName\":\"Igor\",\"password\":\"correct-horse-battery-staple\",\"claimToken\":\"$TOK\"}")
 T=$(echo "$S" | python -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
 [ -n "$T" ] && ok "owner account created" || no "owner account" "$S"
 chk "setup replay blocked" \
@@ -35,8 +35,8 @@ chk "setup replay blocked" \
 A="authorization: Bearer $T"
 chk "authenticated /auth/me" "$(code $B/api/v1/auth/me -H "$A")" "200"
 chk "unauthenticated /auth/me" "$(code $B/api/v1/auth/me)" "401"
-chk "login works" "$(code -X POST $B/api/v1/auth/login -H 'content-type: application/json' -d '{"email":"igor@opencrew.test","password":"correct-horse-battery-staple"}')" "200"
-chk "wrong password rejected" "$(code -X POST $B/api/v1/auth/login -H 'content-type: application/json' -d '{"email":"igor@opencrew.test","password":"wrong-password-here"}')" "401"
+chk "login works" "$(code -X POST $B/api/v1/auth/login -H 'content-type: application/json' -d '{"email":"igor@crewly.test","password":"correct-horse-battery-staple"}')" "200"
+chk "wrong password rejected" "$(code -X POST $B/api/v1/auth/login -H 'content-type: application/json' -d '{"email":"igor@crewly.test","password":"wrong-password-here"}')" "401"
 
 sec "SELF-HOST: provider, agent, conversation"
 node "$SP/../fake-provider.mjs" > /tmp/j-provider.log 2>&1 &
@@ -62,9 +62,9 @@ done
 echo "$M" | grep -q "echo: ping" && ok "agent replied through the provider" || no "agent replied" "no assistant message"
 
 sec "CLI: parsing and commands"
-cd "$SP/opencrew-cli"
+cd "$SP/crewly-cli"
 run_cli() { timeout 25 bun run src/index.ts "$@" 2>&1; }
-run_cli --version | grep -q "opencrew" && ok "--version" || no "--version" "no output"
+run_cli --version | grep -q "crewly" && ok "--version" || no "--version" "no output"
 run_cli --help | grep -q "runtime list|install" && ok "help lists runtime command" || no "help lists runtime" "missing"
 run_cli runtime list | grep -q "Claude Code" && ok "runtime list" || no "runtime list" "no output"
 run_cli runtime install nonsense 2>&1 | grep -q "unknown runtime" && ok "bad runtime name rejected" || no "bad runtime name" "not rejected"
@@ -88,20 +88,20 @@ grep -q "paired securely" /tmp/j-connect.log && ok "CLI confirms pairing" || no 
 curl -s $B/api/v1/devices -H "$A" | grep -q "claude-code" && ok "device runtimes reported to server" || no "device runtimes" "not listed"
 
 sec "CLOUD: control plane"
-cd "$SP/opencrew-cloud"
+cd "$SP/crewly-cloud"
 npm run build >/dev/null 2>&1 && ok "cloud builds" || no "cloud builds" "build failed"
 CDATA=$(mktemp -d); rm -rf "$CDATA"; mkdir -p "$CDATA"
 BILLING_SECRET=journey-billing-secret-cccccccccccccccccccc
-OPENCREW_CLOUD_ADMIN_TOKEN=test-admin-token-aaaaaaaaaaaaaaaaaaaaaaaa OPENCREW_CLOUD_PORT=4201 \
-  OPENCREW_CLOUD_DATA_DIR="$CDATA" OPENCREW_CLOUD_PUBLIC_URL=http://127.0.0.1:4201 \
-  OPENCREW_BILLING_CHECKOUT_URL=http://127.0.0.1:9/checkout \
-  OPENCREW_BILLING_WEBHOOK_SECRET="$BILLING_SECRET" \
+CREWLY_CLOUD_ADMIN_TOKEN=test-admin-token-aaaaaaaaaaaaaaaaaaaaaaaa CREWLY_CLOUD_PORT=4201 \
+  CREWLY_CLOUD_DATA_DIR="$CDATA" CREWLY_CLOUD_PUBLIC_URL=http://127.0.0.1:4201 \
+  CREWLY_BILLING_CHECKOUT_URL=http://127.0.0.1:9/checkout \
+  CREWLY_BILLING_WEBHOOK_SECRET="$BILLING_SECRET" \
   node dist/index.js > /tmp/j-cloud.log 2>&1 &
 for i in $(seq 1 40); do curl -sf http://127.0.0.1:4201/ >/dev/null 2>&1 && break; sleep 1; done
 C=http://127.0.0.1:4201; CJ=$(mktemp)
 chk "cloud console served" "$(code $C/)" "200"
 curl -s -c $CJ -X POST $C/api/v1/auth/signup -H 'content-type: application/json' -H "origin: $C" \
-  -d '{"email":"igor@opencrew.test","password":"correct-horse-battery-staple","displayName":"Igor","organization":{"name":"Acme","slug":"acme"}}' | grep -q '"user"' \
+  -d '{"email":"igor@crewly.test","password":"correct-horse-battery-staple","displayName":"Igor","organization":{"name":"Acme","slug":"acme"}}' | grep -q '"user"' \
   && ok "cloud signup" || no "cloud signup" "failed"
 curl -s -b $CJ $C/api/v1/auth/session | grep -q '"user"' && ok "cloud session" || no "cloud session" "unauthorized"
 OID=$(curl -s -b $CJ $C/api/v1/organizations | python -c "import sys,json;print(json.load(sys.stdin)['organizations'][0]['id'])" 2>/dev/null)
@@ -116,7 +116,7 @@ chk "provisioning blocked before checkout" \
 
 EVT="{\"id\":\"journey-evt-1\",\"kind\":\"billing.checkout.completed\",\"organizationId\":\"$OID\",\"plan\":\"starter\",\"deploymentLimit\":1}"
 sig() { printf '%s' "$1" | openssl dgst -sha256 -hmac "$BILLING_SECRET" -hex | awk '{print $NF}'; }
-hook() { code -X POST $C/api/v1/webhooks/billing -H 'content-type: application/json' -H "x-opencrew-signature: sha256=$2" -d "$1"; }
+hook() { code -X POST $C/api/v1/webhooks/billing -H 'content-type: application/json' -H "x-crewly-signature: sha256=$2" -d "$1"; }
 
 chk "webhook rejects a bad signature" "$(hook "$EVT" deadbeef)" "401"
 chk "webhook accepts a signed checkout" "$(hook "$EVT" "$(sig "$EVT")")" "200"

@@ -16,7 +16,7 @@ describe('runtime bindings repository', () => {
   });
 
   function freshDbWithAgent() {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-bindings-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-bindings-'));
     const db = openDatabase(dataDir);
     runMigrations(db);
     const owner = createUser(db, { email: 'owner@example.com', displayName: 'Owner', passwordHash: 'x', role: 'owner' });

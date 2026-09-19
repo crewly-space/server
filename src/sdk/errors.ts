@@ -1,4 +1,4 @@
-export class OpenCrewApiError extends Error {
+export class CrewlyApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
@@ -6,6 +6,6 @@ export class OpenCrewApiError extends Error {
     public readonly body?: unknown
   ) {
     super(message);
-    this.name = 'OpenCrewApiError';
+    this.name = 'CrewlyApiError';
   }
 }

@@ -18,7 +18,7 @@ describe('conversation summary orchestration', () => {
   });
 
   function freshDbWithConversation() {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-summary-orch-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-summary-orch-'));
     const db = openDatabase(dataDir);
     runMigrations(db);
     const alice = createUser(db, { email: 'alice@example.com', displayName: 'Alice', passwordHash: 'x', role: 'owner' });

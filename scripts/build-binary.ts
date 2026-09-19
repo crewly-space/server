@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 /**
- * Cross-compiles the standalone `opencrew-server` executables the installer
- * drops next to the `opencrew` CLI.
+ * Cross-compiles the standalone `crewly-server` executables the installer
+ * drops next to the `crewly` CLI.
  *
- * Without these, `opencrew up` and `opencrew server start` have nothing to
- * launch: the CLI looks for an `opencrew-server` sibling and gives up when it
+ * Without these, `crewly up` and `crewly server start` have nothing to
+ * launch: the CLI looks for an `crewly-server` sibling and gives up when it
  * is missing. The CLI itself is built the same way over in the agentd repo, so
  * the two halves of a self-hosted install stay symmetrical — one archive, two
  * self-contained binaries, no Node and no Docker on the user's machine.
@@ -24,11 +24,11 @@ interface Target {
 }
 
 const TARGETS: Target[] = [
-  { target: 'bun-linux-x64', asset: 'opencrew_linux_amd64', binary: 'opencrew-server' },
-  { target: 'bun-linux-arm64', asset: 'opencrew_linux_arm64', binary: 'opencrew-server' },
-  { target: 'bun-darwin-x64', asset: 'opencrew_darwin_amd64', binary: 'opencrew-server' },
-  { target: 'bun-darwin-arm64', asset: 'opencrew_darwin_arm64', binary: 'opencrew-server' },
-  { target: 'bun-windows-x64', asset: 'opencrew_windows_amd64', binary: 'opencrew-server.exe' },
+  { target: 'bun-linux-x64', asset: 'crewly_linux_amd64', binary: 'crewly-server' },
+  { target: 'bun-linux-arm64', asset: 'crewly_linux_arm64', binary: 'crewly-server' },
+  { target: 'bun-darwin-x64', asset: 'crewly_darwin_amd64', binary: 'crewly-server' },
+  { target: 'bun-darwin-arm64', asset: 'crewly_darwin_arm64', binary: 'crewly-server' },
+  { target: 'bun-windows-x64', asset: 'crewly_windows_amd64', binary: 'crewly-server.exe' },
 ];
 
 const ROOT = join(import.meta.dir, '..');

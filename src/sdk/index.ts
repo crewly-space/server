@@ -1,6 +1,6 @@
-export { OpenCrewClient } from './client.js';
+export { CrewlyClient } from './client.js';
 export { HttpClient } from './http-client.js';
-export { OpenCrewApiError } from './errors.js';
+export { CrewlyApiError } from './errors.js';
 
 export {
   AuthResource,

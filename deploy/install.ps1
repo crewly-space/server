@@ -1,31 +1,31 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-$Repository = 'opentribe-dev/opencrew-server'
-$CliRepository = 'opentribe-dev/opencrew-cli'
-$Version = if ($env:OPENCREW_VERSION) { $env:OPENCREW_VERSION } else { 'latest' }
-$InstallDir = if ($env:OPENCREW_INSTALL_DIR) { $env:OPENCREW_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'OpenCrew\bin' }
+$Repository = 'crewly-space/server'
+$CliRepository = 'crewly-space/cli'
+$Version = if ($env:CREWLY_VERSION) { $env:CREWLY_VERSION } else { 'latest' }
+$InstallDir = if ($env:CREWLY_INSTALL_DIR) { $env:CREWLY_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Crewly\bin' }
 $Architecture = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()) {
   'x64' { 'amd64' }
-  default { throw "Unsupported Windows architecture. OpenCrew currently publishes Windows x64 releases." }
+  default { throw "Unsupported Windows architecture. Crewly currently publishes Windows x64 releases." }
 }
 
-Write-Host "`n  OpenCrew installer" -ForegroundColor White
+Write-Host "`n  Crewly installer" -ForegroundColor White
 Write-Host "  ------------------`n" -ForegroundColor DarkGray
 Write-Host "  [ok] Detected windows / $Architecture" -ForegroundColor Green
 
 # The server (with the bundled app) and the CLI ship from separate
 # repositories now, so each asset resolves against its own release.
 function Get-ReleaseUrl([string]$Repo) {
-  if ($env:OPENCREW_RELEASE_BASE_URL) { return $env:OPENCREW_RELEASE_BASE_URL.TrimEnd('/') }
+  if ($env:CREWLY_RELEASE_BASE_URL) { return $env:CREWLY_RELEASE_BASE_URL.TrimEnd('/') }
   if ($Version -eq 'latest') { return "https://github.com/$Repo/releases/latest/download" }
   return "https://github.com/$Repo/releases/download/$Version"
 }
 $ReleaseUrl = Get-ReleaseUrl $Repository
 $CliReleaseUrl = Get-ReleaseUrl $CliRepository
-$Asset = "opencrew-server_windows_$Architecture.zip"
-$CliAsset = "opencrew-cli_windows_$Architecture.zip"
-$TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("opencrew-" + [Guid]::NewGuid().ToString('N'))
+$Asset = "crewly-server_windows_$Architecture.zip"
+$CliAsset = "crewly-cli_windows_$Architecture.zip"
+$TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("crewly-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $TempDir | Out-Null
 
 try {
@@ -45,31 +45,31 @@ try {
 
   Get-VerifiedAsset $ReleaseUrl $Asset 'server'
   Get-VerifiedAsset $CliReleaseUrl $CliAsset 'CLI' 
-  foreach ($required in @('opencrew.exe', 'opencrew-server.exe', 'web\index.html')) {
+  foreach ($required in @('crewly.exe', 'crewly-server.exe', 'web\index.html')) {
     if (!(Test-Path -LiteralPath (Join-Path $TempDir $required))) { throw "Release is missing $required" }
   }
   New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-  Copy-Item (Join-Path $TempDir 'opencrew.exe') (Join-Path $InstallDir 'opencrew.exe') -Force
-  Copy-Item (Join-Path $TempDir 'opencrew-server.exe') (Join-Path $InstallDir 'opencrew-server.exe') -Force
+  Copy-Item (Join-Path $TempDir 'crewly.exe') (Join-Path $InstallDir 'crewly.exe') -Force
+  Copy-Item (Join-Path $TempDir 'crewly-server.exe') (Join-Path $InstallDir 'crewly-server.exe') -Force
   $WebDir = Join-Path $InstallDir 'web'
   New-Item -ItemType Directory -Force -Path $WebDir | Out-Null
   Copy-Item (Join-Path $TempDir 'web\*') $WebDir -Recurse -Force
 
   $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-  if (!$env:OPENCREW_NO_PATH -and ($UserPath -split ';') -notcontains $InstallDir) {
+  if (!$env:CREWLY_NO_PATH -and ($UserPath -split ';') -notcontains $InstallDir) {
     $NewPath = if ($UserPath) { "${UserPath};${InstallDir}" } else { $InstallDir }
     [Environment]::SetEnvironmentVariable('Path', $NewPath, 'User')
     $env:Path = "${env:Path};${InstallDir}"
-    Write-Host '  [ok] Added OpenCrew to your user PATH (new terminals will inherit it)' -ForegroundColor Green
+    Write-Host '  [ok] Added Crewly to your user PATH (new terminals will inherit it)' -ForegroundColor Green
   }
   Write-Host '  [ok] Installed CLI, server, and app' -ForegroundColor Green
 
-  if (!$env:OPENCREW_SKIP_INIT -and !$env:OPENCREW_SKIP_SETUP -and [Environment]::UserInteractive) {
-    Write-Host "`n  Starting OpenCrew setup`n" -ForegroundColor White
-    & (Join-Path $InstallDir 'opencrew.exe') init
-    if ($LASTEXITCODE -ne 0) { throw "OpenCrew setup exited with code $LASTEXITCODE" }
+  if (!$env:CREWLY_SKIP_INIT -and !$env:CREWLY_SKIP_SETUP -and [Environment]::UserInteractive) {
+    Write-Host "`n  Starting Crewly setup`n" -ForegroundColor White
+    & (Join-Path $InstallDir 'crewly.exe') init
+    if ($LASTEXITCODE -ne 0) { throw "Crewly setup exited with code $LASTEXITCODE" }
   } else {
-    Write-Host "`n  Next: opencrew init`n" -ForegroundColor White
+    Write-Host "`n  Next: crewly init`n" -ForegroundColor White
   }
 } finally {
   if (Test-Path -LiteralPath $TempDir) { Remove-Item -LiteralPath $TempDir -Recurse -Force }

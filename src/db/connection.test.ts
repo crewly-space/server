@@ -11,14 +11,15 @@ describe('openDatabase', () => {
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it('creates the data directory and an opencrew.db file in WAL mode', () => {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-db-'));
+  it('creates the data directory and an crewly.db file in WAL mode', () => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-db-'));
     const nestedDir = path.join(dataDir, 'nested');
     const db = openDatabase(nestedDir);
-    expect(fs.existsSync(path.join(nestedDir, 'opencrew.db'))).toBe(true);
+    expect(fs.existsSync(path.join(nestedDir, 'crewly.db'))).toBe(true);
     expect(fs.readFileSync(path.join(nestedDir, 'secrets.key'))).toHaveLength(32);
     const mode = db.pragma('journal_mode', { simple: true });
     expect(mode).toBe('wal');
     db.close();
   });
+
 });

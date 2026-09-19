@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { openSqlite } from './driver.js';
 
 /**
- * The shipped `opencrew-server` binary and the Node process run the same
+ * The shipped `crewly-server` binary and the Node process run the same
  * `node:sqlite` driver, so these cover the helpers this module adds on top of
  * it — and the binding semantics the repositories depend on.
  */

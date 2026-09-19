@@ -23,7 +23,7 @@ describe('ConnectionHub', () => {
   });
 
   function freshHub() {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-hub-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-hub-'));
     const db = openDatabase(dataDir);
     runMigrations(db);
     return { db, hub: new ConnectionHub(db) };

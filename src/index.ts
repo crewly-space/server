@@ -14,28 +14,28 @@ const VERSION = '0.1.0';
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
-    console.log(`OpenCrew server ${VERSION}
+    console.log(`Crewly server ${VERSION}
 
-Usage: opencrew-server [options]
+Usage: crewly-server [options]
 
   --port <number>       Listen port (default: 8787)
   --host <address>      Bind address (default: 127.0.0.1)
   --data-dir <path>     SQLite and configuration directory
-  --web-dir <path>      Built OpenCrew app directory (omit for API only)
+  --web-dir <path>      Built Crewly app directory (omit for API only)
   --log-level <level>   fatal|error|warn|info|debug|trace|silent
   --trust-proxy [bool]  Trust reverse-proxy forwarding headers`);
     return;
   }
   if (process.argv.includes('--version') || process.argv.includes('-v')) {
-    console.log(`opencrew-server ${VERSION}`);
+    console.log(`crewly-server ${VERSION}`);
     return;
   }
   const config = loadConfig();
   if (config.webDir && !fs.existsSync(path.join(config.webDir, 'index.html'))) {
-    throw new Error(`OpenCrew app is missing: ${path.join(config.webDir, 'index.html')}`);
+    throw new Error(`Crewly app is missing: ${path.join(config.webDir, 'index.html')}`);
   }
   if (!config.webDir) {
-    console.warn('OpenCrew app is disabled (no --web-dir); serving the API only');
+    console.warn('Crewly app is disabled (no --web-dir); serving the API only');
   }
   const db = openDatabase(config.dataDir);
   runMigrations(db);
@@ -78,7 +78,7 @@ Usage: opencrew-server [options]
   process.once('SIGINT', () => void close('SIGINT'));
 
   await app.listen({ port: config.port, host: config.host });
-  app.log.info({ host: config.host, port: config.port }, 'OpenCrew server listening');
+  app.log.info({ host: config.host, port: config.port }, 'Crewly server listening');
 }
 
 main().catch((err) => {

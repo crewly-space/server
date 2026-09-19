@@ -90,7 +90,7 @@ describe('MemoryResource', () => {
     expect(summary.summary).toBe('recap');
   });
 
-  it('getConversationSummary rejects with a 404 OpenCrewApiError when no summary exists yet', async () => {
+  it('getConversationSummary rejects with a 404 CrewlyApiError when no summary exists yet', async () => {
     const http = clientWithFetch(() => new Response(JSON.stringify({ error: 'summary_not_found' }), { status: 404 }));
     const memory = new MemoryResource(http);
 

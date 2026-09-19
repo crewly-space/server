@@ -1,6 +1,6 @@
-# OpenCrew Server
+# Crewly Server
 
-The self-hostable OpenCrew server: API, WebSocket hub, job runner, and SQLite
+The self-hostable Crewly server: API, WebSocket hub, job runner, and SQLite
 storage. This repository also owns the two things that define the server's
 contract with everything else — the wire **protocol** and the TypeScript
 **SDK** — because a contract belongs with the side that enforces it.
@@ -31,8 +31,8 @@ npm run dev
 The app is a separate repository on its own release cadence. To serve it:
 
 ```sh
-npm run fetch:app          # sibling ../opencrew-app/dist, else the app release
-docker build -f deploy/Dockerfile -t opencrew-server .
+npm run fetch:app          # sibling ../app/dist, else the app release
+docker build -f deploy/Dockerfile -t crewly-server .
 ```
 
 Without that step the image is still valid — the server just serves no UI.

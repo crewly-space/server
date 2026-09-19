@@ -1,18 +1,18 @@
 #!/bin/sh
 set -eu
 
-SERVER_REPO="opentribe-dev/opencrew-server"
-CLI_REPO="opentribe-dev/opencrew-cli"
-VERSION="${OPENCREW_VERSION:-latest}"
-INSTALL_DIR="${OPENCREW_INSTALL_DIR:-/usr/local/bin}"
-SKIP_INIT="${OPENCREW_SKIP_INIT:-${OPENCREW_SKIP_SETUP:-}}"
+SERVER_REPO="crewly-space/server"
+CLI_REPO="crewly-space/cli"
+VERSION="${CREWLY_VERSION:-latest}"
+INSTALL_DIR="${CREWLY_INSTALL_DIR:-/usr/local/bin}"
+SKIP_INIT="${CREWLY_SKIP_INIT:-${CREWLY_SKIP_SETUP:-}}"
 
 say() { printf '  %s\n' "$1"; }
 ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31m×\033[0m %s\n' "$1" >&2; exit 1; }
 has() { command -v "$1" >/dev/null 2>&1; }
 
-printf '\n  OpenCrew installer\n  ──────────────────\n\n'
+printf '\n  Crewly installer\n  ──────────────────\n\n'
 has curl || fail "curl is required"
 has tar || fail "tar is required"
 
@@ -25,8 +25,8 @@ ok "Detected $OS / $ARCH"
 # The server (with the bundled app) and the CLI ship from separate
 # repositories now, so each asset resolves against its own release.
 release_url_for() {
-  if [ -n "${OPENCREW_RELEASE_BASE_URL:-}" ]; then
-    printf '%s' "${OPENCREW_RELEASE_BASE_URL%/}"
+  if [ -n "${CREWLY_RELEASE_BASE_URL:-}" ]; then
+    printf '%s' "${CREWLY_RELEASE_BASE_URL%/}"
   elif [ "$VERSION" = "latest" ]; then
     printf 'https://github.com/%s/releases/latest/download' "$1"
   else
@@ -35,9 +35,9 @@ release_url_for() {
 }
 RELEASE_URL=$(release_url_for "$SERVER_REPO")
 CLI_RELEASE_URL=$(release_url_for "$CLI_REPO")
-SERVER_ASSET="opencrew-server_${OS}_${ARCH}.tar.gz"
-CLI_ASSET="opencrew-cli_${OS}_${ARCH}.tar.gz"
-TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/opencrew.XXXXXX")
+SERVER_ASSET="crewly-server_${OS}_${ARCH}.tar.gz"
+CLI_ASSET="crewly-cli_${OS}_${ARCH}.tar.gz"
+TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/crewly.XXXXXX")
 trap 'rm -rf "$TMP_DIR"' EXIT HUP INT TERM
 
 # Download one asset and verify it against its release's checksums.txt.
@@ -59,24 +59,24 @@ fetch_verified() {
 fetch_verified "$RELEASE_URL" "$SERVER_ASSET" "server"
 fetch_verified "$CLI_RELEASE_URL" "$CLI_ASSET" "CLI"
 
-[ -x "$TMP_DIR/opencrew" ] || fail "The CLI release does not contain the opencrew binary"
-[ -x "$TMP_DIR/opencrew-server" ] || fail "The server release does not contain opencrew-server"
-[ -f "$TMP_DIR/web/index.html" ] || fail "The server release does not contain the OpenCrew app"
+[ -x "$TMP_DIR/crewly" ] || fail "The CLI release does not contain the crewly binary"
+[ -x "$TMP_DIR/crewly-server" ] || fail "The server release does not contain crewly-server"
+[ -f "$TMP_DIR/web/index.html" ] || fail "The server release does not contain the Crewly app"
 
 SUDO=""
 if [ ! -d "$INSTALL_DIR" ] || [ ! -w "$INSTALL_DIR" ]; then
   if [ "$(id -u)" -ne 0 ]; then has sudo || fail "Run as root or install sudo"; SUDO="sudo"; fi
 fi
 $SUDO mkdir -p "$INSTALL_DIR/web"
-$SUDO install -m 0755 "$TMP_DIR/opencrew" "$INSTALL_DIR/opencrew"
-$SUDO install -m 0755 "$TMP_DIR/opencrew-server" "$INSTALL_DIR/opencrew-server"
+$SUDO install -m 0755 "$TMP_DIR/crewly" "$INSTALL_DIR/crewly"
+$SUDO install -m 0755 "$TMP_DIR/crewly-server" "$INSTALL_DIR/crewly-server"
 $SUDO cp -R "$TMP_DIR/web/." "$INSTALL_DIR/web/"
 ok "Installed CLI, server, and app"
 
 if [ -z "$SKIP_INIT" ] && [ -r /dev/tty ] && [ -t 1 ]; then
   printf '\n'
-  "$INSTALL_DIR/opencrew" init </dev/tty
+  "$INSTALL_DIR/crewly" init </dev/tty
 else
   printf '\n'
-  say "Next: opencrew init"
+  say "Next: crewly init"
 fi

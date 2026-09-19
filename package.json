@@ -1,10 +1,10 @@
 {
-  "name": "opencrew-server",
+  "name": "crewly-server",
   "version": "0.1.0",
   "license": "MIT",
   "private": true,
   "type": "module",
-  "description": "The self-hostable OpenCrew server. Owns the wire protocol and the client SDK.",
+  "description": "The self-hostable Crewly server. Owns the wire protocol and the client SDK.",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "npm run build:migrations && tsc -p tsconfig.build.json && node scripts/copy-migrations.mjs",

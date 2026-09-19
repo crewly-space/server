@@ -18,7 +18,7 @@ describe('runtime sessions repository', () => {
   });
 
   function freshDbWithAgentAndConversation() {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-sessions-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-sessions-'));
     const db = openDatabase(dataDir);
     runMigrations(db);
     const owner = createUser(db, { email: 'owner@example.com', displayName: 'Owner', passwordHash: 'x', role: 'owner' });

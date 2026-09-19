@@ -5,7 +5,7 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
  *
  * The server ships two ways: as a Node process, and as a single
  * `bun build --compile` executable that the installer drops next to the CLI so
- * `opencrew up` works on a machine with no Node, no Docker, and no toolchain.
+ * `crewly up` works on a machine with no Node, no Docker, and no toolchain.
  * A compiled binary cannot embed a native addon, which rules out
  * `better-sqlite3` — but `node:sqlite` is built into both Node and Bun, so one
  * driver and one test suite cover every way the server ships.

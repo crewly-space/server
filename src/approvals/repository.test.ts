@@ -19,7 +19,7 @@ describe('approvals repository', () => {
   });
 
   function freshSetup() {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-approvals-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-approvals-'));
     const db = openDatabase(dataDir);
     runMigrations(db);
     const owner = createUser(db, { email: 'owner@example.com', displayName: 'Owner', passwordHash: 'x', role: 'owner' });

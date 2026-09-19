@@ -5,8 +5,8 @@
  * The app is a separate repository with its own release cadence, so the server
  * does not build it. This resolves, in order:
  *
- *   1. a sibling ../opencrew-app/dist checkout (fastest inner loop)
- *   2. the OPENCREW_APP_TARBALL url, or the app repo's release for APP_VERSION
+ *   1. a sibling ../app/dist checkout (fastest inner loop)
+ *   2. the CREWLY_APP_TARBALL url, or the app repo's release for APP_VERSION
  *
  * Usage:  node scripts/fetch-app.mjs [version]
  */
@@ -17,29 +17,29 @@ import { execFileSync } from "node:child_process";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const target = resolve(repoRoot, "web");
-const sibling = resolve(repoRoot, "../opencrew-app/dist");
+const sibling = resolve(repoRoot, "../app/dist");
 
 if (existsSync(sibling)) {
   rmSync(target, { recursive: true, force: true });
   mkdirSync(target, { recursive: true });
   cpSync(sibling, target, { recursive: true });
-  console.log("fetch-app: copied ../opencrew-app/dist -> web/");
+  console.log("fetch-app: copied ../app/dist -> web/");
   process.exit(0);
 }
 
 const version = process.argv[2] ?? process.env.APP_VERSION ?? "latest";
 const url =
-  process.env.OPENCREW_APP_TARBALL ??
-  `https://github.com/opentribe-dev/opencrew-app/releases/${
+  process.env.CREWLY_APP_TARBALL ??
+  `https://github.com/crewly-space/app/releases/${
     version === "latest" ? "latest/download" : `download/v${version}`
-  }/opencrew-app-dist.tar.gz`;
+  }/crewly-app-dist.tar.gz`;
 
 console.log(`fetch-app: downloading ${url}`);
 const response = await fetch(url, { redirect: "follow" });
 if (!response.ok) {
   console.error(
     `fetch-app: ${response.status} ${response.statusText}.\n` +
-      "Check out opencrew-app next to this repo and run its build, or set OPENCREW_APP_TARBALL.",
+      "Check out the app repo next to this repo and run its build, or set CREWLY_APP_TARBALL.",
   );
   process.exit(1);
 }

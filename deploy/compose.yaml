@@ -1,20 +1,20 @@
 services:
-  opencrew:
-    image: ghcr.io/opentribe-dev/opencrew-server:${OPENCREW_VERSION:-latest}
-    container_name: opencrew
+  crewly:
+    image: ghcr.io/crewly-space/server:${CREWLY_VERSION:-latest}
+    container_name: crewly
     restart: unless-stopped
     ports:
-      - "${OPENCREW_BIND_ADDRESS:-127.0.0.1}:${OPENCREW_PORT:-8787}:8787"
+      - "${CREWLY_BIND_ADDRESS:-127.0.0.1}:${CREWLY_PORT:-8787}:8787"
     volumes:
-      - opencrew-data:/data
+      - crewly-data:/data
     environment:
       NODE_ENV: production
-      OPENCREW_HOST: 0.0.0.0
-      OPENCREW_PORT: 8787
-      OPENCREW_DATA_DIR: /data
-      OPENCREW_WEB_DIR: /app/web
-      OPENCREW_LOG_LEVEL: ${OPENCREW_LOG_LEVEL:-info}
-      OPENCREW_TRUST_PROXY: ${OPENCREW_TRUST_PROXY:-true}
+      CREWLY_HOST: 0.0.0.0
+      CREWLY_PORT: 8787
+      CREWLY_DATA_DIR: /data
+      CREWLY_WEB_DIR: /app/web
+      CREWLY_LOG_LEVEL: ${CREWLY_LOG_LEVEL:-info}
+      CREWLY_TRUST_PROXY: ${CREWLY_TRUST_PROXY:-true}
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -30,4 +30,4 @@ services:
       start_period: 5s
 
 volumes:
-  opencrew-data:
+  crewly-data:

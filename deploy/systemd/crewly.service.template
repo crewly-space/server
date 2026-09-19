@@ -1,16 +1,16 @@
 [Unit]
-Description=OpenCrew self-hosted server
-Documentation=https://opencrew.dev/docs/
+Description=Crewly self-hosted server
+Documentation=https://crewly.space/docs/
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=opencrew
-Group=opencrew
-Environment=OPENCREW_DATA_DIR=@@DATA@@
-Environment=OPENCREW_PORT=@@PORT@@
-Environment=OPENCREW_HOST=127.0.0.1
+User=crewly
+Group=crewly
+Environment=CREWLY_DATA_DIR=@@DATA@@
+Environment=CREWLY_PORT=@@PORT@@
+Environment=CREWLY_HOST=127.0.0.1
 ExecStart=@@BIN@@
 Restart=on-failure
 RestartSec=2

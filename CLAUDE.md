@@ -1,7 +1,7 @@
-# OpenCrew server instructions
+# Crewly server instructions
 
-GitHub organization: opentribe-dev. One of four repositories:
-`opencrew-server` (this), `opencrew-app`, `opencrew-cli`, `opencrew-cloud`.
+GitHub organization: crewly-space. One of four repositories:
+`server` (this), `app`, `cli`, `cloud`.
 
 This repo **owns** `src/protocol` and `src/sdk`. The app and CLI commit
 vendored copies and refresh them with `npm run vendor:sync`. So:

@@ -1,7 +1,7 @@
-# TLS termination for a self-hosted OpenCrew server.
+# TLS termination for a self-hosted Crewly server.
 #
-# Set OPENCREW_DOMAIN and ACME_EMAIL, then run this next to compose.yaml:
-#   OPENCREW_DOMAIN=crew.example.com ACME_EMAIL=you@example.com \
+# Set CREWLY_DOMAIN and ACME_EMAIL, then run this next to compose.yaml:
+#   CREWLY_DOMAIN=crew.example.com ACME_EMAIL=you@example.com \
 #     docker compose -f compose.yaml -f compose.proxy.yaml up -d
 #
 # The server serves the API, the WebSocket hub, and the app on one port, so
@@ -14,7 +14,7 @@
 	}
 }
 
-{$OPENCREW_DOMAIN} {
+{$CREWLY_DOMAIN} {
 	encode zstd gzip
 
 	header {
@@ -26,8 +26,8 @@
 	}
 
 	# The server reads the client address from these to rate-limit by real IP,
-	# which is why it runs with OPENCREW_TRUST_PROXY=true behind this.
-	reverse_proxy opencrew:8787 {
+	# which is why it runs with CREWLY_TRUST_PROXY=true behind this.
+	reverse_proxy crewly:8787 {
 		header_up X-Forwarded-For {remote_host}
 		header_up X-Forwarded-Proto {scheme}
 	}

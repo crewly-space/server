@@ -23,7 +23,7 @@ describe('conversations repository', () => {
   });
 
   function freshDbWithTwoUsers() {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-conversations-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-conversations-'));
     const db = openDatabase(dataDir);
     runMigrations(db);
     const alice = createUser(db, { email: 'alice@example.com', displayName: 'Alice', passwordHash: 'x', role: 'owner' });

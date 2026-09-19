@@ -7,7 +7,7 @@
 set -eu
 ROOT=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
-FILES="dist/opencrew-server_*.tar.gz dist/opencrew-server_*.zip install.sh install.ps1 compose.yaml compose.proxy.yaml Caddyfile"
+FILES="dist/crewly-server_*.tar.gz dist/crewly-server_*.zip install.sh install.ps1 compose.yaml compose.proxy.yaml Caddyfile"
 : > dist/checksums.txt
 # shellcheck disable=SC2086
 for file in $FILES; do

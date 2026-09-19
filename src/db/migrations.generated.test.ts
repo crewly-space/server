@@ -7,7 +7,7 @@ import { EMBEDDED_MIGRATIONS } from './migrations.generated.js';
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
 
 /**
- * The compiled `opencrew-server` executable has no migrations directory to read,
+ * The compiled `crewly-server` executable has no migrations directory to read,
  * so the SQL is embedded at build time. If someone adds a .sql file and forgets
  * to regenerate, the binary would quietly skip that migration — these tests turn
  * that into a build failure instead.

@@ -5,7 +5,7 @@ import { loadOrCreateDatabaseSecretKey, registerDatabaseSecretKey } from './secr
 
 export function openDatabase(dataDir: string): Database {
   fs.mkdirSync(dataDir, { recursive: true });
-  const db = openSqlite(path.join(dataDir, 'opencrew.db'));
+  const db = openSqlite(path.join(dataDir, 'crewly.db'));
   registerDatabaseSecretKey(db, loadOrCreateDatabaseSecretKey(dataDir));
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');

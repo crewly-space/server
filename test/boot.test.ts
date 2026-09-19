@@ -14,7 +14,7 @@ describe('full boot sequence', () => {
   });
 
   it('boots against a real on-disk SQLite database and serves the first-admin flow', async () => {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-boot-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-boot-'));
     const db = openDatabase(dataDir);
     const applied = runMigrations(db);
     expect(applied.length).toBeGreaterThan(0);

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { OpenCrewApiError } from './errors.js';
+import { CrewlyApiError } from './errors.js';
 import { HttpClient } from './http-client.js';
 
 function fakeFetch(handler: (url: string, init: RequestInit) => Response): typeof fetch {
@@ -81,7 +81,7 @@ describe('HttpClient', () => {
     expect(result).toBeUndefined();
   });
 
-  it('throws OpenCrewApiError with the status and server error code on a non-2xx response', async () => {
+  it('throws CrewlyApiError with the status and server error code on a non-2xx response', async () => {
     const fetchImpl = fakeFetch(
       () => new Response(JSON.stringify({ error: 'not_a_participant' }), { status: 403 })
     );
@@ -105,7 +105,7 @@ describe('HttpClient', () => {
     });
   });
 
-  it('rejects with a plain OpenCrewApiError instance, not a generic Error, on failure', async () => {
+  it('rejects with a plain CrewlyApiError instance, not a generic Error, on failure', async () => {
     const fetchImpl = fakeFetch(() => new Response(JSON.stringify({ error: 'boom' }), { status: 500 }));
     const client = new HttpClient('http://localhost:4000', fetchImpl);
 
@@ -113,7 +113,7 @@ describe('HttpClient', () => {
       await client.request('GET', '/api/v1/health');
       expect.fail('expected request to throw');
     } catch (err) {
-      expect(err).toBeInstanceOf(OpenCrewApiError);
+      expect(err).toBeInstanceOf(CrewlyApiError);
     }
   });
 

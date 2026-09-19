@@ -17,7 +17,7 @@ describe('conversation summary repository', () => {
   });
 
   function freshDbWithMessage() {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-summary-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-summary-'));
     const db = openDatabase(dataDir);
     runMigrations(db);
     const alice = createUser(db, { email: 'alice@example.com', displayName: 'Alice', passwordHash: 'x', role: 'owner' });

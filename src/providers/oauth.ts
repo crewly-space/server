@@ -5,7 +5,7 @@ import type { Database } from '../db/driver.js';
  * Connecting a model provider by signing in to it, instead of pasting a key.
  *
  * OpenRouter is the provider that supports this today: an authorization code
- * flow with PKCE that mints a fresh API key scoped to this OpenCrew server. No
+ * flow with PKCE that mints a fresh API key scoped to this Crewly server. No
  * client registration is needed, so a self-hosted install can use it with no
  * operator configuration at all.
  *
@@ -50,7 +50,7 @@ export class ProviderOAuthError extends Error {
  * Start a connect flow.
  *
  * `callbackUrl` is where the provider sends the browser back, which is a page
- * in the OpenCrew app rather than an API route: the app authenticates with a
+ * in the Crewly app rather than an API route: the app authenticates with a
  * bearer token that a redirect would not carry.
  */
 export function startProviderAuthorization(

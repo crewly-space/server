@@ -12,7 +12,7 @@ import { WsClient, type WebSocketConstructor } from './ws-client.js';
 import { UsersResource } from './resources/users.js';
 import { DevicesResource } from './resources/devices.js';
 
-export class OpenCrewClient {
+export class CrewlyClient {
   private readonly http: HttpClient;
   private readonly baseUrl: string;
 

@@ -75,7 +75,7 @@ export function isEncryptedDatabaseSecret(value: string): boolean {
   return value.startsWith(PREFIX);
 }
 
-/** Upgrades credentials written by pre-encryption OpenCrew releases in place. */
+/** Upgrades credentials written by pre-encryption Crewly releases in place. */
 export function encryptLegacyProviderSecrets(db: Database): number {
   const rows = db.prepare(
     'SELECT id, api_key FROM provider_configs WHERE api_key IS NOT NULL'

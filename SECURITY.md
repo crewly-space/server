@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Report suspected vulnerabilities privately through GitHub's
-[private vulnerability reporting](https://github.com/opentribe-dev/opencrew-server/security/advisories/new).
+[private vulnerability reporting](https://github.com/crewly-space/server/security/advisories/new).
 Please do not open a public issue for a security problem.
 
 Include the affected version, what an attacker can do, and the smallest set of
@@ -12,7 +12,7 @@ days and to keep you updated until it is resolved.
 
 ## Supported versions
 
-OpenCrew is pre-1.0. Fixes land on `main` and in the next tagged release; there
+Crewly is pre-1.0. Fixes land on `main` and in the next tagged release; there
 is no long-term support branch yet.
 
 ## What the server does today

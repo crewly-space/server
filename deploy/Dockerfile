@@ -1,7 +1,7 @@
 # Build from this repository root:
-#   docker build -f deploy/Dockerfile -t opencrew-server .
+#   docker build -f deploy/Dockerfile -t crewly-server .
 #
-# The web UI lives in the opencrew-app repository and is NOT built here. Put a
+# The web UI lives in the crewly-app repository and is NOT built here. Put a
 # built app under ./web first -- `npm run fetch:app` downloads it from the
 # app repo's release, or copy a sibling checkout's dist/ there yourself. The
 # image is still valid without it; the server simply serves no UI.
@@ -18,12 +18,12 @@ RUN npm run build && npm prune --omit=dev
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production \
-    OPENCREW_HOST=0.0.0.0 \
-    OPENCREW_PORT=8787 \
-    OPENCREW_DATA_DIR=/data \
-    OPENCREW_WEB_DIR=/app/web \
-    OPENCREW_LOG_LEVEL=info \
-    OPENCREW_TRUST_PROXY=true
+    CREWLY_HOST=0.0.0.0 \
+    CREWLY_PORT=8787 \
+    CREWLY_DATA_DIR=/data \
+    CREWLY_WEB_DIR=/app/web \
+    CREWLY_LOG_LEVEL=info \
+    CREWLY_TRUST_PROXY=true
 WORKDIR /app
 COPY --from=build /workspace/package.json ./package.json
 COPY --from=build /workspace/node_modules ./node_modules

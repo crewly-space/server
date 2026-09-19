@@ -1,7 +1,7 @@
 name: Release
 
 # Publishes the server release the installers download: one archive per
-# platform holding the opencrew-server binary and the built app, plus the
+# platform holding the crewly-server binary and the built app, plus the
 # checksums.txt both installers verify against.
 #
 #   git tag v0.1.0 && git push origin v0.1.0
@@ -44,7 +44,7 @@ jobs:
       # very first release of both.
       - name: Build the app
         run: |
-          git clone --depth 1 https://github.com/opentribe-dev/opencrew-app.git /tmp/app
+          git clone --depth 1 https://github.com/crewly-space/app.git /tmp/app
           npm --prefix /tmp/app ci
           npm --prefix /tmp/app run build
           rm -rf web && mkdir -p web
@@ -60,7 +60,7 @@ jobs:
           for pair in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64; do
             os=${pair%_*}
             arch=${pair#*_}
-            binary=deploy/../dist-binary/opencrew_${pair}/opencrew-server
+            binary=deploy/../dist-binary/crewly_${pair}/crewly-server
             [ "$os" = "windows" ] && binary="${binary}.exe"
             sh deploy/scripts/package-release.sh "$os" "$arch" "$binary" web
           done
@@ -81,9 +81,9 @@ jobs:
       # machine that had run fetch:app.
       - name: Build the container image
         run: |
-          docker build -f deploy/Dockerfile -t opencrew-server:${{ github.event.inputs.tag || github.ref_name }} .
-          docker run --rm -d --name smoke -e OPENCREW_HOST=0.0.0.0 -p 8787:8787 \
-            opencrew-server:${{ github.event.inputs.tag || github.ref_name }}
+          docker build -f deploy/Dockerfile -t crewly-server:${{ github.event.inputs.tag || github.ref_name }} .
+          docker run --rm -d --name smoke -e CREWLY_HOST=0.0.0.0 -p 8787:8787 \
+            crewly-server:${{ github.event.inputs.tag || github.ref_name }}
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:8787/readyz >/dev/null && break
             sleep 2
@@ -100,10 +100,10 @@ jobs:
         run: |
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "OpenCrew Server $TAG" \
+            --title "Crewly Server $TAG" \
             --generate-notes \
             --verify-tag \
-            deploy/dist/opencrew-server_* \
+            deploy/dist/crewly-server_* \
             deploy/dist/checksums.txt \
             deploy/install.sh \
             deploy/install.ps1 \

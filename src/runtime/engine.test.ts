@@ -21,7 +21,7 @@ describe('runAgentTurn (single turn, no handoff)', () => {
   });
 
   function freshSetup() {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-engine-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-engine-'));
     const db = openDatabase(dataDir);
     runMigrations(db);
     const owner = createUser(db, { email: 'owner@example.com', displayName: 'Owner', passwordHash: 'x', role: 'owner' });

@@ -13,7 +13,7 @@ describe('runMigrations', () => {
   });
 
   it('applies pending migrations once and is idempotent on re-run', () => {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-migrate-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-migrate-'));
     const db = openDatabase(dataDir);
 
     const firstRun = runMigrations(db);

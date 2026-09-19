@@ -22,7 +22,7 @@ export function prepareSetupClaim(dataDir: string, initialized: boolean): SetupC
   let token: string;
   try {
     token = fs.readFileSync(file, 'utf8').trim();
-    if (token.length < 20) throw new Error(`${file} is invalid; remove it and restart OpenCrew`);
+    if (token.length < 20) throw new Error(`${file} is invalid; remove it and restart Crewly`);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     token = randomBytes(24).toString('base64url');

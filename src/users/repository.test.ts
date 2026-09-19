@@ -14,7 +14,7 @@ describe('users repository', () => {
   });
 
   function freshDb() {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-users-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-users-'));
     const db = openDatabase(dataDir);
     runMigrations(db);
     return db;

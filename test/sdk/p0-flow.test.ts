@@ -7,7 +7,7 @@ import { openDatabase } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/migrate.js';
 import { afterEach, expect, it } from 'vitest';
 import WebSocket from 'ws';
-import { OpenCrewClient } from '../../src/sdk/client.js';
+import { CrewlyClient } from '../../src/sdk/client.js';
 
 let provider: Server | undefined;
 let app: Awaited<ReturnType<typeof buildApp>> | undefined;
@@ -33,7 +33,7 @@ it('P0 clean setup → provider-backed DM → persisted WS reply → new client 
   await new Promise<void>((resolve) => provider!.listen(0, '127.0.0.1', resolve));
   const providerAddress = provider.address();
   if (!providerAddress || typeof providerAddress === 'string') throw new Error('provider address');
-  dataDir = mkdtempSync(join(tmpdir(), 'opencrew-p0-'));
+  dataDir = mkdtempSync(join(tmpdir(), 'crewly-p0-'));
   db = openDatabase(dataDir);
   runMigrations(db);
   app = await buildApp({ db });
@@ -41,7 +41,7 @@ it('P0 clean setup → provider-backed DM → persisted WS reply → new client 
   const address = app.server.address();
   if (!address || typeof address === 'string') throw new Error('server address');
   const baseUrl = `http://127.0.0.1:${address.port}`;
-  const client = new OpenCrewClient({ baseUrl });
+  const client = new CrewlyClient({ baseUrl });
   expect((await client.auth.status()).initialized).toBe(false);
   const setup = await client.auth.setup({ email: 'owner@example.com', displayName: 'Owner', password: 'super-secret-1' });
   client.setToken(setup.token);
@@ -71,7 +71,7 @@ it('P0 clean setup → provider-backed DM → persisted WS reply → new client 
   expect(providerInput?.messages.at(-1)).toEqual({ role: 'user', content: 'Hello' });
   expect(db.prepare('SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ?').get(dm.id)).toEqual({ n: 2 });
   ws.close();
-  const reloaded = new OpenCrewClient({ baseUrl });
+  const reloaded = new CrewlyClient({ baseUrl });
   reloaded.setToken(setup.token);
   expect((await reloaded.conversations.list()).some((item) => item.id === dm.id)).toBe(true);
   expect((await reloaded.messages.list(dm.id)).map((item) => item.id)).toContain(reply.id);

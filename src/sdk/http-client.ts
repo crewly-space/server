@@ -1,4 +1,4 @@
-import { OpenCrewApiError } from './errors.js';
+import { CrewlyApiError } from './errors.js';
 
 export class HttpClient {
   private token: string | undefined;
@@ -29,7 +29,7 @@ export class HttpClient {
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
     } catch (err) {
-      throw new OpenCrewApiError(
+      throw new CrewlyApiError(
         `network error calling ${method} ${path}: ${(err as Error).message}`,
         0,
         'network_error'
@@ -42,7 +42,7 @@ export class HttpClient {
       text = await response.text();
       data = text.length > 0 ? JSON.parse(text) : undefined;
     } catch (err) {
-      throw new OpenCrewApiError(
+      throw new CrewlyApiError(
         `invalid response calling ${method} ${path}: ${(err as Error).message}`,
         response.status,
         'invalid_response',
@@ -55,7 +55,7 @@ export class HttpClient {
         data && typeof data === 'object' && 'error' in (data as Record<string, unknown>)
           ? String((data as Record<string, unknown>).error)
           : undefined;
-      throw new OpenCrewApiError(`request failed with status ${response.status}`, response.status, code, data);
+      throw new CrewlyApiError(`request failed with status ${response.status}`, response.status, code, data);
     }
 
     return data as T;

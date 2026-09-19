@@ -11,7 +11,7 @@ describe('setup claim', () => {
   });
 
   it('persists one token across restarts and removes it when consumed', () => {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-claim-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-claim-'));
     const first = prepareSetupClaim(dataDir, false);
     const second = prepareSetupClaim(dataDir, false);
     expect(first.token).toMatch(/^[A-Za-z0-9_-]{32}$/);
@@ -22,7 +22,7 @@ describe('setup claim', () => {
   });
 
   it('removes a stale token after initialization', () => {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-claim-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-claim-'));
     const pending = prepareSetupClaim(dataDir, false);
     expect(fs.existsSync(pending.file)).toBe(true);
     expect(prepareSetupClaim(dataDir, true).token).toBeUndefined();

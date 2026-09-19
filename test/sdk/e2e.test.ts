@@ -3,7 +3,7 @@ import { buildApp } from '../../src/app.js';
 import { runMigrations } from '../../src/db/migrate.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
-import { OpenCrewClient } from '../../src/sdk/client.js';
+import { CrewlyClient } from '../../src/sdk/client.js';
 
 describe('SDK end-to-end against a real running server', () => {
   let db: Database;
@@ -27,7 +27,7 @@ describe('SDK end-to-end against a real running server', () => {
   });
 
   it('sets up an owner, creates an agent, sends a message over REST, and receives it live over WS', async () => {
-    const client = new OpenCrewClient({ baseUrl });
+    const client = new CrewlyClient({ baseUrl });
 
     await expect(client.health.get()).resolves.toEqual({ ok: true });
 
@@ -63,7 +63,7 @@ describe('SDK end-to-end against a real running server', () => {
   });
 
   it('reconnects and replays events missed while disconnected, using getLastSeq', async () => {
-    const client = new OpenCrewClient({ baseUrl });
+    const client = new CrewlyClient({ baseUrl });
     const setup = await client.auth.setup({ email: 'owner@example.com', displayName: 'Owner', password: 'super-secret-1' });
     client.setToken(setup.token);
     const agent = await client.agents.create({

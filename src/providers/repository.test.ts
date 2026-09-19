@@ -20,7 +20,7 @@ describe('provider config repository', () => {
   });
 
   function freshDb() {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-providers-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-providers-'));
     const db = openDatabase(dataDir);
     runMigrations(db);
     return db;

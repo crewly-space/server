@@ -15,7 +15,7 @@ describe('agents repository', () => {
   });
 
   function freshDbWithUser() {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-agents-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-agents-'));
     const db = openDatabase(dataDir);
     runMigrations(db);
     const user = createUser(db, {

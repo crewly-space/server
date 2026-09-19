@@ -18,7 +18,7 @@ describe('agent runs repository', () => {
   });
 
   function freshDbWithAgentAndConversation() {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-runs-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-runs-'));
     const db = openDatabase(dataDir);
     runMigrations(db);
     const owner = createUser(db, { email: 'owner@example.com', displayName: 'Owner', passwordHash: 'x', role: 'owner' });

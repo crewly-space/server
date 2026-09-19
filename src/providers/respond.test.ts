@@ -17,7 +17,7 @@ describe('createProviderRespond', () => {
   });
 
   function freshSetup(modelPolicyExtra: { fallbackProviderId?: string; fallbackModel?: string } = {}) {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencrew-respond-'));
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-respond-'));
     const db = openDatabase(dataDir);
     runMigrations(db);
     const owner = createUser(db, { email: 'owner@example.com', displayName: 'Owner', passwordHash: 'x', role: 'owner' });
