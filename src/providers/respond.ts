@@ -41,7 +41,7 @@ export function createProviderRespond(
   return async ({ agentId, conversationId, recentMessages }) => {
     const agent = getAgent(db, agentId);
     if (!agent) {
-      return { body: `[error] agent ${agentId} not found` };
+      throw new ProviderError(`agent ${agentId} not found`);
     }
 
     const facts = listMemoryFactsForAgent(db, agentId).slice(-20);
@@ -84,7 +84,9 @@ export function createProviderRespond(
         }
       }
 
-      return { body: `[error] agent ${agentId} could not respond right now: ${primaryError.message}` };
+      // Surfaced as an `agent.run.failed` event, not as a message the agent
+      // appears to have spoken. Callers translate it for the UI.
+      throw primaryError;
     }
   };
 }

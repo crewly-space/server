@@ -7,6 +7,7 @@ import { runMigrations } from '../db/migrate.js';
 import { createUser } from '../users/repository.js';
 import { createAgent } from '../agents/repository.js';
 import { createProviderConfig } from './repository.js';
+import { ProviderError, ProviderUnavailableError } from './errors.js';
 import { createProviderRespond } from './respond.js';
 
 describe('createProviderRespond', () => {
@@ -47,7 +48,7 @@ describe('createProviderRespond', () => {
     db.close();
   });
 
-  it('returns a safe error message when the primary provider is unavailable and no fallback is configured', async () => {
+  it('throws when the primary provider is unavailable and no fallback is configured', async () => {
     const { db, agent } = freshSetup();
     createProviderConfig(db, { id: 'primary', kind: 'anthropic', apiKey: 'sk-test' });
     const respond = createProviderRespond(
@@ -57,8 +58,11 @@ describe('createProviderRespond', () => {
       }) as unknown as typeof fetch
     );
 
-    const result = await respond({ agentId: agent.id, conversationId: 'conversation_1', recentMessages: [] });
-    expect(result.body).toContain('could not respond right now');
+    // The caller turns this into an `agent.run.failed` event; a persisted
+    // "[error] ..." message would read as something the agent said.
+    await expect(
+      respond({ agentId: agent.id, conversationId: 'conversation_1', recentMessages: [] })
+    ).rejects.toBeInstanceOf(ProviderUnavailableError);
     db.close();
   });
 
@@ -80,7 +84,7 @@ describe('createProviderRespond', () => {
     db.close();
   });
 
-  it('returns a safe error message when both primary and fallback fail', async () => {
+  it('throws when both primary and fallback fail', async () => {
     const { db, agent } = freshSetup({ fallbackProviderId: 'backup', fallbackModel: 'model-b' });
     createProviderConfig(db, { id: 'primary', kind: 'anthropic', apiKey: 'sk-bad' });
     createProviderConfig(db, { id: 'backup', kind: 'anthropic', apiKey: 'sk-also-bad' });
@@ -91,16 +95,18 @@ describe('createProviderRespond', () => {
       }) as unknown as typeof fetch
     );
 
-    const result = await respond({ agentId: agent.id, conversationId: 'conversation_1', recentMessages: [] });
-    expect(result.body).toContain('could not respond right now');
+    await expect(
+      respond({ agentId: agent.id, conversationId: 'conversation_1', recentMessages: [] })
+    ).rejects.toBeInstanceOf(ProviderUnavailableError);
     db.close();
   });
 
-  it('returns a safe error message when the agent does not exist', async () => {
+  it('throws when the agent does not exist', async () => {
     const { db } = freshSetup();
     const respond = createProviderRespond(db);
-    const result = await respond({ agentId: 'nonexistent', conversationId: 'conversation_1', recentMessages: [] });
-    expect(result.body).toContain('not found');
+    await expect(
+      respond({ agentId: 'nonexistent', conversationId: 'conversation_1', recentMessages: [] })
+    ).rejects.toThrow(ProviderError);
     db.close();
   });
 

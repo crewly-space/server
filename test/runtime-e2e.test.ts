@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { buildApp } from '../src/app.js';
 import { runMigrations } from '../src/db/migrate.js';
+import { createProviderConfig } from '../src/providers/repository.js';
 import type { AgentTurnResult, RespondFn } from '../src/runtime/engine.js';
 
 describe('runtime end-to-end: agent invocation, WS delivery, and max-hop protection', () => {
@@ -22,6 +23,7 @@ describe('runtime end-to-end: agent invocation, WS delivery, and max-hop protect
     db = openSqlite(':memory:');
     db.pragma('foreign_keys = ON');
     runMigrations(db);
+    createProviderConfig(db, { id: 'anthropic', kind: 'anthropic', apiKey: 'sk-test' });
     app = await buildApp({ db, respond });
     await app.listen({ port: 0, host: '127.0.0.1' });
     const address = app.server.address();

@@ -5,6 +5,7 @@ import { createSession } from '../auth/session.js';
 import { runMigrations } from '../db/migrate.js';
 import { updateConversationSummary } from './summary.js';
 import { createUser } from '../users/repository.js';
+import { createProviderConfig } from '../providers/repository.js';
 
 describe('memory fact routes', () => {
   let db: Database;
@@ -13,6 +14,7 @@ describe('memory fact routes', () => {
     db = openSqlite(':memory:');
     db.pragma('foreign_keys = ON');
     runMigrations(db);
+    createProviderConfig(db, { id: 'anthropic', kind: 'anthropic', apiKey: 'sk-test' });
   });
 
   afterEach(() => {

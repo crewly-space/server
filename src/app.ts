@@ -96,7 +96,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerRuntimeRoutes(app, hub, respond);
   registerApprovalRoutes(app);
   registerWsRoutes(app, hub);
-  registerDeviceSocket(app, deviceHub);
+  registerDeviceSocket(app, deviceHub, hub);
 
   if (opts.webDir && fs.existsSync(path.join(opts.webDir, 'index.html'))) {
     await app.register(fastifyStatic, { root: opts.webDir, prefix: '/', index: false });

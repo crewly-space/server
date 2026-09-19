@@ -4,6 +4,7 @@ import { getAgent } from '../agents/repository.js';
 import { requireAuth } from '../auth/middleware.js';
 import { getConversation, isParticipant } from '../conversations/repository.js';
 import type { ConnectionHub } from '../ws/hub.js';
+import { describeAgentFailure, ProviderError } from '../providers/errors.js';
 import { createRuntimeBinding, getRuntimeBinding } from './bindings.js';
 import { MaxHopCountExceededError, runAgentTurn, type RespondFn } from './engine.js';
 import { createRuntimeSession, getRuntimeSession } from './sessions.js';
@@ -111,6 +112,13 @@ export function registerRuntimeRoutes(app: FastifyInstance, hub: ConnectionHub, 
     } catch (err) {
       if (err instanceof MaxHopCountExceededError) {
         reply.code(400).send({ error: 'max_hop_count_exceeded' });
+        return;
+      }
+      // A provider that rejects or is unreachable is an upstream failure, not a
+      // server fault: report it instead of letting it surface as a 500.
+      if (err instanceof ProviderError) {
+        const failure = describeAgentFailure(err, getAgent(app.db, id)?.name ?? 'The agent');
+        reply.code(502).send({ error: failure.code, message: failure.message });
         return;
       }
       throw err;

@@ -4,6 +4,7 @@ import { requireAuth } from '../auth/middleware.js';
 import { getConversation, isParticipant } from '../conversations/repository.js';
 import { getAgent } from '../agents/repository.js';
 import { getProviderConfig } from '../providers/repository.js';
+import { describeAgentFailure } from '../providers/errors.js';
 import { runAgentTurn, type RespondFn } from '../runtime/engine.js';
 import { enqueueJob } from '../jobs/repository.js';
 import { SUMMARIZE_CONVERSATION_JOB_TYPE } from '../memory/summary.js';
@@ -21,6 +22,23 @@ const CreateMessageBodySchema = z.object({
 const ListMessagesQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(50),
 });
+
+type MentionRef = { targetId: string; targetType: 'user' | 'agent' };
+
+/** Agents mentioned in the message that actually belong to the conversation. */
+function mentionedAgentIds(
+  conversation: { participants: { participantId: string; participantType: string }[] },
+  mentions: MentionRef[]
+): string[] {
+  const members = new Set(
+    conversation.participants.filter((p) => p.participantType === 'agent').map((p) => p.participantId)
+  );
+  return [
+    ...new Set(
+      mentions.filter((m) => m.targetType === 'agent' && members.has(m.targetId)).map((m) => m.targetId)
+    ),
+  ];
+}
 
 export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, respond: RespondFn): void {
   app.post('/api/v1/conversations/:id/messages', { preHandler: requireAuth }, async (request, reply) => {
@@ -71,14 +89,32 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
       dedupeKey: `${SUMMARIZE_CONVERSATION_JOB_TYPE}:${id}`,
     });
     reply.code(201).send(message);
-    if (dmAgentId) {
-      void runAgentTurn({ db: app.db, hub, respond }, { agentId: dmAgentId, conversationId: id })
-        .catch((error: unknown) => {
-          hub.publish(`user:${request.user!.id}`, 'agent.run.failed', {
-            conversationId: id, messageId: message.id,
-            error: error instanceof Error ? error.message : 'Agent response failed',
-          });
-        });
+
+    // A DM always goes to its agent. In a group only the mentioned agents
+    // answer, so a busy channel does not wake every agent in it.
+    const respondingAgentIds = dmAgentId ? [dmAgentId] : mentionedAgentIds(conversation, body.mentions);
+    const failed = (agentId: string, code: string, error: string) =>
+      hub.publish(`user:${request.user!.id}`, 'agent.run.failed', {
+        conversationId: id, messageId: message.id, agentId, code, error,
+      });
+
+    for (const agentId of respondingAgentIds) {
+      const agent = getAgent(app.db, agentId);
+      const agentName = agent?.name ?? 'The agent';
+      if (!agent || !getProviderConfig(app.db, agent.modelPolicy.defaultProviderId)) {
+        failed(
+          agentId,
+          'provider_not_configured',
+          `${agentName} could not reply: no model provider is configured for it. Add one in Settings → Providers.`
+        );
+        continue;
+      }
+      void runAgentTurn({ db: app.db, hub, respond }, { agentId, conversationId: id }).catch(
+        (error: unknown) => {
+          const failure = describeAgentFailure(error, agentName);
+          failed(agentId, failure.code, failure.message);
+        }
+      );
     }
   });
 

@@ -35,12 +35,12 @@ describe('SDK end-to-end against a real running server', () => {
     client.setToken(setup.token);
     expect(setup.user.role).toBe('owner');
 
+    await client.providers.create({ id: 'anthropic', kind: 'anthropic', apiKey: 'test-key' });
+
     const agent = await client.agents.create({
       name: 'Assistant',
       modelPolicy: { defaultProviderId: 'anthropic', defaultModel: 'claude-sonnet-5' },
     });
-
-    await client.providers.create({ id: 'anthropic', kind: 'anthropic', apiKey: 'test-key' });
     const conversation = await client.conversations.createDm({ participantId: agent.id, participantType: 'agent' });
 
     const ws = client.ws(WebSocket);
@@ -66,11 +66,11 @@ describe('SDK end-to-end against a real running server', () => {
     const client = new CrewlyClient({ baseUrl });
     const setup = await client.auth.setup({ email: 'owner@example.com', displayName: 'Owner', password: 'super-secret-1' });
     client.setToken(setup.token);
+    await client.providers.create({ id: 'anthropic', kind: 'anthropic', apiKey: 'test-key' });
     const agent = await client.agents.create({
       name: 'Assistant',
       modelPolicy: { defaultProviderId: 'anthropic', defaultModel: 'claude-sonnet-5' },
     });
-    await client.providers.create({ id: 'anthropic', kind: 'anthropic', apiKey: 'test-key' });
     const conversation = await client.conversations.createDm({ participantId: agent.id, participantType: 'agent' });
 
     const ws = client.ws(WebSocket);

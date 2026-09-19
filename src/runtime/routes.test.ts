@@ -4,6 +4,7 @@ import { buildApp } from '../app.js';
 import { createSession } from '../auth/session.js';
 import { runMigrations } from '../db/migrate.js';
 import { createUser } from '../users/repository.js';
+import { createProviderConfig } from '../providers/repository.js';
 
 describe('runtime routes', () => {
   let db: Database;
@@ -12,6 +13,7 @@ describe('runtime routes', () => {
     db = openSqlite(':memory:');
     db.pragma('foreign_keys = ON');
     runMigrations(db);
+    createProviderConfig(db, { id: 'anthropic', kind: 'anthropic', apiKey: 'sk-test' });
   });
 
   afterEach(() => {

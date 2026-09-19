@@ -5,7 +5,7 @@ import { runMigrations } from '../src/db/migrate.js';
 import { createProviderConfig } from '../src/providers/repository.js';
 import { createProviderRespond } from '../src/providers/respond.js';
 
-describe('provider end-to-end: real request shape through a configured provider, and graceful failure', () => {
+describe('provider end-to-end: real request shape through a configured provider, and reported failure', () => {
   let db: Database;
 
   beforeEach(() => {
@@ -75,7 +75,7 @@ describe('provider end-to-end: real request shape through a configured provider,
     await app.close();
   });
 
-  it('degrades gracefully to a safe persisted message instead of a 500 when the provider is unreachable', async () => {
+  it('reports an unreachable provider as a 502 instead of a message the agent appears to have spoken', async () => {
     createProviderConfig(db, { id: 'anthropic-default', kind: 'anthropic', apiKey: 'sk-test' });
     const fakeFetch = (async () => {
       throw new Error('network down');
@@ -90,15 +90,18 @@ describe('provider end-to-end: real request shape through a configured provider,
       headers: { authorization: `Bearer ${token}` },
       payload: { conversationId },
     });
-    expect(invoke.statusCode).toBe(201);
-    expect(invoke.json().message.body).toContain('could not respond right now');
+    expect(invoke.statusCode).toBe(502);
+    expect(invoke.json().error).toBe('provider_unavailable');
+    expect(invoke.json().message).toContain('Assistant could not reply');
 
+    // Nothing is persisted: an "[error] ..." line in the transcript reads as
+    // the agent's own words and outlives the failure it describes.
     const messages = await app.inject({
       method: 'GET',
       url: `/api/v1/conversations/${conversationId}/messages`,
       headers: { authorization: `Bearer ${token}` },
     });
-    expect(messages.json()).toHaveLength(1);
+    expect(messages.json()).toHaveLength(0);
 
     await app.close();
   });

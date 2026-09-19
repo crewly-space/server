@@ -4,6 +4,7 @@ import { buildApp } from '../app.js';
 import { runMigrations } from '../db/migrate.js';
 import { createUser } from '../users/repository.js';
 import { createSession } from '../auth/session.js';
+import { createProviderConfig } from '../providers/repository.js';
 import { createAgent } from './repository.js';
 
 describe('agent routes', () => {
@@ -13,6 +14,9 @@ describe('agent routes', () => {
     db = openSqlite(':memory:');
     db.pragma('foreign_keys = ON');
     runMigrations(db);
+    // An agent cannot be created for a provider that is not configured, so
+    // every test that expects a successful create needs one in place.
+    createProviderConfig(db, { id: 'anthropic', kind: 'anthropic', apiKey: 'sk-test' });
   });
 
   afterEach(() => {
@@ -81,6 +85,25 @@ describe('agent routes', () => {
       payload: { name: 'Nope', modelPolicy: { defaultProviderId: 'anthropic', defaultModel: 'x' } },
     });
     expect(response.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it('refuses an agent whose model provider is not configured with 409', async () => {
+    const app = await buildApp({ db });
+    const token = await setupAndGetToken(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/agents',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        name: 'Orphan',
+        modelPolicy: { defaultProviderId: 'not-configured', defaultModel: 'claude-sonnet-5' },
+      },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toBe('provider_not_configured');
+
     await app.close();
   });
 

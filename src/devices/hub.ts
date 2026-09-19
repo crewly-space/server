@@ -27,11 +27,12 @@ export class DeviceConnectionHub {
     this.sockets.set(deviceId, socket);
   }
 
-  disconnect(deviceId: string, socket: WebSocket): void {
-    if (this.sockets.get(deviceId) === socket) {
-      this.sockets.delete(deviceId);
-      this.rejectDevice(deviceId, new DeviceUnavailableError('device disconnected'));
-    }
+  /** True when this socket was the device's live one, so the device is now offline. */
+  disconnect(deviceId: string, socket: WebSocket): boolean {
+    if (this.sockets.get(deviceId) !== socket) return false;
+    this.sockets.delete(deviceId);
+    this.rejectDevice(deviceId, new DeviceUnavailableError('device disconnected'));
+    return true;
   }
 
   isConnected(deviceId: string): boolean {

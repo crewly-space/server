@@ -2,6 +2,7 @@ import { openSqlite, type Database } from '../src/db/driver.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import { runMigrations } from '../src/db/migrate.js';
+import { createProviderConfig } from '../src/providers/repository.js';
 import { JobRunner } from '../src/jobs/runner.js';
 import { SUMMARIZE_CONVERSATION_JOB_TYPE, updateConversationSummary } from '../src/memory/summary.js';
 
@@ -13,6 +14,7 @@ describe('memory end-to-end: MemoryFact dedup and conversation summary regenerat
     db = openSqlite(':memory:');
     db.pragma('foreign_keys = ON');
     runMigrations(db);
+    createProviderConfig(db, { id: 'anthropic', kind: 'anthropic', apiKey: 'sk-test' });
     app = await buildApp({ db, respond: async () => ({ body: 'Test reply' }) });
   });
 

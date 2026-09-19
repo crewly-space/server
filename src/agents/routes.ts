@@ -14,6 +14,10 @@ const CreateAgentBodySchema = z.object({
 export function registerAgentRoutes(app: FastifyInstance): void {
   app.post('/api/v1/agents', { preHandler: requireAuth }, async (request, reply) => {
     const body = CreateAgentBodySchema.parse(request.body);
+    if (!getProviderConfig(app.db, body.modelPolicy.defaultProviderId)) {
+      reply.code(409).send({ error: 'provider_not_configured' });
+      return;
+    }
     const agent = createAgent(app.db, {
       ownerUserId: request.user!.id,
       name: body.name,

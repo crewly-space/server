@@ -3,6 +3,7 @@ import { createPublicKey, randomBytes, verify } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import { AgentdAuthenticateSchema, AgentdHeartbeatSchema, AgentdResponseSchema } from '../protocol/index.js';
 import type { DeviceConnectionHub } from './hub.js';
+import type { ConnectionHub } from '../ws/hub.js';
 import { getDevice, touchDevice } from './repository.js';
 
 const SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
@@ -12,10 +13,15 @@ function signaturePayload(deviceId: string, timestamp: string, nonce: string): B
   return Buffer.from(`${deviceId}\n${timestamp}\n${nonce}`, 'utf8');
 }
 
-export function registerDeviceSocket(app: FastifyInstance, hub: DeviceConnectionHub): void {
+export function registerDeviceSocket(
+  app: FastifyInstance,
+  hub: DeviceConnectionHub,
+  events?: ConnectionHub
+): void {
   app.get('/api/v1/agentd/connect', { websocket: true }, (socket) => {
     const nonce = randomBytes(24).toString('base64url');
     let authenticatedDeviceId: string | undefined;
+    let ownerUserId: string | undefined;
     const authTimer = setTimeout(() => socket.close(4001, 'authentication timed out'), 15_000);
     authTimer.unref?.();
     socket.send(JSON.stringify({ type: 'challenge', nonce }));
@@ -47,9 +53,15 @@ export function registerDeviceSocket(app: FastifyInstance, hub: DeviceConnection
           return;
         }
         authenticatedDeviceId = device.id;
+        ownerUserId = device.owner_user_id;
         clearTimeout(authTimer);
         hub.connect(device.id, socket as WebSocket);
         touchDevice(app.db, device.id);
+        events?.publish(`user:${device.owner_user_id}`, 'device.connected', {
+          deviceId: device.id,
+          name: device.name,
+          platform: device.platform,
+        });
         socket.send(JSON.stringify({ type: 'authenticated', deviceId: device.id }));
         return;
       }
@@ -66,7 +78,14 @@ export function registerDeviceSocket(app: FastifyInstance, hub: DeviceConnection
 
     socket.on('close', () => {
       clearTimeout(authTimer);
-      if (authenticatedDeviceId) hub.disconnect(authenticatedDeviceId, socket as WebSocket);
+      if (!authenticatedDeviceId) return;
+      // A replaced connection leaves the device online under the newer socket,
+      // which already owns the hub entry — only the live socket announces going
+      // offline, so a reconnect does not look like a disconnect.
+      const wasLive = hub.disconnect(authenticatedDeviceId, socket as WebSocket);
+      if (wasLive && ownerUserId) {
+        events?.publish(`user:${ownerUserId}`, 'device.disconnected', { deviceId: authenticatedDeviceId });
+      }
     });
   });
 }
