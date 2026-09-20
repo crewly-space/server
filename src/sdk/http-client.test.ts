@@ -93,6 +93,37 @@ describe('HttpClient', () => {
     });
   });
 
+  it('uses the message the server sent, so the UI can show it as-is', async () => {
+    const fetchImpl = fakeFetch(
+      () => new Response(
+        JSON.stringify({ error: 'provider_unavailable', message: 'Maya could not reply: the model provider could not be reached.' }),
+        { status: 502 }
+      )
+    );
+    const client = new HttpClient('http://localhost:4000', fetchImpl);
+
+    await expect(client.request('POST', '/api/v1/agents/a1/runs')).rejects.toThrow(
+      'Maya could not reply: the model provider could not be reached.'
+    );
+  });
+
+  it('explains a bare error code rather than reporting the status line', async () => {
+    const fetchImpl = fakeFetch(
+      () => new Response(JSON.stringify({ error: 'provider_not_configured' }), { status: 409 })
+    );
+    const client = new HttpClient('http://localhost:4000', fetchImpl);
+
+    // Callers render error.message; "request failed with status 409" is not
+    // something a person can act on.
+    const error: CrewlyApiError = await client
+      .request('POST', '/api/v1/agents')
+      .then(() => { throw new Error('expected a rejection'); })
+      .catch((e: unknown) => e as CrewlyApiError);
+    expect(error.message).toContain('No model provider is configured');
+    expect(error.message).not.toContain('409');
+    expect(error.code).toBe('provider_not_configured');
+  });
+
   it('wraps a fetch-level failure as a status-0 network_error', async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error('ECONNREFUSED');

@@ -1,4 +1,4 @@
-import { CrewlyApiError } from './errors.js';
+import { CrewlyApiError, describeStatus } from './errors.js';
 
 export class HttpClient {
   private token: string | undefined;
@@ -30,9 +30,10 @@ export class HttpClient {
       });
     } catch (err) {
       throw new CrewlyApiError(
-        `network error calling ${method} ${path}: ${(err as Error).message}`,
+        describeStatus(0, 'network_error'),
         0,
-        'network_error'
+        'network_error',
+        { detail: `${method} ${path}: ${(err as Error).message}` }
       );
     }
 
@@ -51,11 +52,21 @@ export class HttpClient {
     }
 
     if (!response.ok) {
-      const code =
-        data && typeof data === 'object' && 'error' in (data as Record<string, unknown>)
-          ? String((data as Record<string, unknown>).error)
+      const payload = data && typeof data === 'object' ? (data as Record<string, unknown>) : undefined;
+      const code = payload && 'error' in payload ? String(payload.error) : undefined;
+      // The server explains failures in `message` and names them in `error`.
+      // Callers show `error.message`, so carry the explanation rather than the
+      // status line — "request failed with status 409" tells a person nothing.
+      const explained =
+        payload && typeof payload.message === 'string' && payload.message.length > 0
+          ? payload.message
           : undefined;
-      throw new CrewlyApiError(`request failed with status ${response.status}`, response.status, code, data);
+      throw new CrewlyApiError(
+        explained ?? describeStatus(response.status, code),
+        response.status,
+        code,
+        data
+      );
     }
 
     return data as T;
