@@ -17,6 +17,9 @@ import { registerProviderRoutes } from './providers/routes.js';
 import { type RespondFn } from './runtime/engine.js';
 import { createProviderRespond } from './providers/respond.js';
 import { AiGateway } from './gateway/gateway.js';
+import { installBudgets } from './usage/budgets.js';
+import { priceCall } from './usage/pricing.js';
+import { registerUsageRoutes } from './usage/routes.js';
 import { registerRuntimeRoutes } from './runtime/routes.js';
 import { ConnectionHub } from './ws/hub.js';
 import { registerWsRoutes } from './ws/routes.js';
@@ -142,6 +145,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     deviceHub,
   });
   app.decorate('gateway', gateway);
+  installBudgets(opts.db, gateway, hub, (kind, model, usage) => priceCall(opts.db, kind, model, usage));
+  registerUsageRoutes(app);
   const respond = opts.respond ?? createProviderRespond(opts.db, globalThis.fetch.bind(globalThis), deviceHub, { gateway });
   registerMessageRoutes(app, hub, respond);
   registerMemoryFactRoutes(app);

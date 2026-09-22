@@ -12,6 +12,7 @@ import { WsClient, type WebSocketConstructor } from './ws-client.js';
 import { UsersResource } from './resources/users.js';
 import { DevicesResource } from './resources/devices.js';
 import { ServerResource } from './resources/server.js';
+import { UsageResource } from './resources/usage.js';
 
 export class CrewlyClient {
   private readonly http: HttpClient;
@@ -29,6 +30,7 @@ export class CrewlyClient {
   readonly users: UsersResource;
   readonly devices: DevicesResource;
   readonly server: ServerResource;
+  readonly usage: UsageResource;
 
   constructor(opts: { baseUrl: string; fetchImpl?: typeof fetch }) {
     this.baseUrl = opts.baseUrl;
@@ -45,6 +47,7 @@ export class CrewlyClient {
     this.users = new UsersResource(this.http);
     this.devices = new DevicesResource(this.http);
     this.server = new ServerResource(this.http);
+    this.usage = new UsageResource(this.http);
   }
 
   setToken(token: string | undefined): void {

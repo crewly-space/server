@@ -95,7 +95,7 @@ export function describeAgentFailure(error: unknown, agentName: string): Provide
     };
   }
   if (error instanceof ProviderError) {
-    return { code: 'provider_error', message: `${agentName} could not reply: ${error.message}` };
+    return { code: error.code, message: `${agentName} could not reply: ${error.message}.` };
   }
   return { code: 'agent_run_failed', message: `${agentName} could not reply because of an unexpected error.` };
 }

@@ -57,6 +57,19 @@ export {
   type ServerLogEntry,
 } from './resources/server.js';
 export {
+  UsageResource,
+  type Budget,
+  type BudgetAction,
+  type BudgetThresholdEvent,
+  type CreateBudgetInput,
+  type ModelPrice,
+  type ProviderCall,
+  type UsageGrouping,
+  type UsageReport,
+  type UsageRow,
+  type UsageTotals,
+} from './resources/usage.js';
+export {
   WsClient,
   type WebSocketConnection,
   type WebSocketConstructor,
