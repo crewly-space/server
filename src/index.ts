@@ -51,6 +51,8 @@ Usage: crewly-server [options]
     trustProxy: config.trustProxy,
     setupClaimToken: setupClaim.token,
     onSetupComplete: setupClaim.consume,
+    cloudHandoff: config.cloudHandoff,
+    trustedAppOrigins: config.trustedAppOrigins,
   });
 
   const jobRunner = new JobRunner(db, {

@@ -8,6 +8,13 @@ export interface AppConfig {
   webDir?: string;
   logLevel: string;
   trustProxy: boolean;
+  /**
+   * Set together by a Crewly Cloud provisioner, and absent on a self-hosted
+   * server, which signs people in locally and knows nothing about a Cloud.
+   */
+  cloudHandoff?: { publicKey: string; deploymentId: string };
+  /** Browser origins allowed to call this server's API, such as the hosted app. */
+  trustedAppOrigins: string[];
 }
 
 const ARG_TO_ENV: Record<string, string> = {
@@ -33,6 +40,22 @@ export function loadConfig(
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new Error(`port must be an integer between 1 and 65535, got ${resolved.CREWLY_PORT}`);
   }
+  const handoffPublicKey = resolved.CREWLY_CLOUD_HANDOFF_PUBLIC_KEY?.trim();
+  const deploymentId = resolved.CREWLY_DEPLOYMENT_ID?.trim();
+  if (Boolean(handoffPublicKey) !== Boolean(deploymentId)) {
+    throw new Error('CREWLY_CLOUD_HANDOFF_PUBLIC_KEY and CREWLY_DEPLOYMENT_ID must be set together');
+  }
+  const trustedAppOrigins = (resolved.CREWLY_TRUSTED_APP_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+    .map((origin) => {
+      try {
+        return new URL(origin).origin;
+      } catch {
+        throw new Error(`CREWLY_TRUSTED_APP_ORIGINS contains an invalid origin: ${origin}`);
+      }
+    });
   const logLevel = resolved.CREWLY_LOG_LEVEL ?? 'info';
   if (!['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'].includes(logLevel)) {
     throw new Error(`CREWLY_LOG_LEVEL is invalid: ${logLevel}`);
@@ -44,6 +67,10 @@ export function loadConfig(
     webDir: resolved.CREWLY_WEB_DIR ? path.resolve(resolved.CREWLY_WEB_DIR) : undefined,
     logLevel,
     trustProxy: parseBoolean(resolved.CREWLY_TRUST_PROXY),
+    cloudHandoff: handoffPublicKey && deploymentId
+      ? { publicKey: handoffPublicKey, deploymentId }
+      : undefined,
+    trustedAppOrigins,
   };
 }
 

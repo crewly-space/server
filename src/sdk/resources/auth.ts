@@ -34,10 +34,20 @@ export class AuthResource {
     return this.http.request('POST', '/api/v1/auth/login', input);
   }
 
+  /**
+   * Trades a Crewly Cloud handoff token for a session on this server.
+   *
+   * Only servers linked to a Cloud answer this; a self-hosted one replies 404,
+   * which is why `status()` says whether to offer it.
+   */
+  cloudHandoff(input: { token: string }): Promise<AuthResult> {
+    return this.http.request('POST', '/api/v1/auth/cloud-handoff', input);
+  }
+
   me(): Promise<AuthUser> {
     return this.http.request('GET', '/api/v1/auth/me');
   }
-  status(): Promise<{ initialized: boolean; claimRequired?: boolean }> {
+  status(): Promise<{ initialized: boolean; claimRequired?: boolean; cloudHandoff?: boolean }> {
     return this.http.request('GET', '/api/v1/auth/status');
   }
   logout(): Promise<void> {

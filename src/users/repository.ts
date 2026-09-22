@@ -7,14 +7,15 @@ export interface UserRow {
   id: string;
   email: string;
   display_name: string;
-  password_hash: string;
+  /** NULL for an account that only signs in through Crewly Cloud. */
+  password_hash: string | null;
   role: Role;
   created_at: string;
 }
 
 export function createUser(
   db: Database,
-  input: { email: string; displayName: string; passwordHash: string; role: Role }
+  input: { email: string; displayName: string; passwordHash: string | null; role: Role }
 ): UserRow {
   const row: UserRow = {
     id: randomUUID(),

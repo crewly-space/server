@@ -42,7 +42,7 @@ describe('auth routes', () => {
     const onSetupComplete = vi.fn();
     const app = await buildApp({ db, setupClaimToken: 'one-time-claim-token', onSetupComplete });
     const status = await app.inject({ method: 'GET', url: '/api/v1/auth/status' });
-    expect(status.json()).toEqual({ initialized: false, claimRequired: true });
+    expect(status.json()).toEqual({ initialized: false, claimRequired: true, cloudHandoff: false });
 
     const denied = await app.inject({
       method: 'POST', url: '/api/v1/auth/setup',
@@ -58,7 +58,7 @@ describe('auth routes', () => {
     });
     expect(claimed.statusCode).toBe(201);
     expect(onSetupComplete).toHaveBeenCalledOnce();
-    expect((await app.inject({ method: 'GET', url: '/api/v1/auth/status' })).json()).toEqual({ initialized: true, claimRequired: false });
+    expect((await app.inject({ method: 'GET', url: '/api/v1/auth/status' })).json()).toEqual({ initialized: true, claimRequired: false, cloudHandoff: false });
     await app.close();
   });
 

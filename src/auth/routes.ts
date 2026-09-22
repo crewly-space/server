@@ -5,12 +5,23 @@ import { countUsers, createUser, getUserByEmail, getUserById } from '../users/re
 import { requireAuth } from './middleware.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { createSession, revokeSession } from './session.js';
+import {
+  applyHandoff,
+  consumeNonce,
+  HandoffRejected,
+  verifyHandoffToken,
+  type CloudHandoffConfig,
+} from './cloud-handoff.js';
 
 const SetupBodySchema = z.object({
   email: z.string().email(),
   displayName: z.string().min(1),
   password: z.string().min(12).max(256),
   claimToken: z.string().min(1).optional(),
+});
+
+const HandoffBodySchema = z.object({
+  token: z.string().min(1).max(4096),
 });
 
 const LoginBodySchema = z.object({
@@ -20,7 +31,11 @@ const LoginBodySchema = z.object({
 
 export function registerAuthRoutes(
   app: FastifyInstance,
-  options: { setupClaimToken?: string; onSetupComplete?: () => void } = {},
+  options: {
+    setupClaimToken?: string;
+    onSetupComplete?: () => void;
+    cloudHandoff?: CloudHandoffConfig;
+  } = {},
 ): void {
   const WINDOW_MS = 15 * 60 * 1000;
   const MAX_ATTEMPTS = 20;
@@ -49,8 +64,47 @@ export function registerAuthRoutes(
   };
   app.get('/api/v1/auth/status', async () => {
     const initialized = countUsers(app.db) > 0;
-    return { initialized, claimRequired: !initialized && Boolean(options.setupClaimToken) };
+    return {
+      initialized,
+      claimRequired: !initialized && Boolean(options.setupClaimToken),
+      // Tells the app whether to offer a Cloud sign-in or only the local form.
+      cloudHandoff: Boolean(options.cloudHandoff),
+    };
   });
+
+  /*
+   * Signing in with the Crewly account that owns this server.
+   *
+   * Only registered when an operator has linked the server to a Cloud: a
+   * self-hosted server has no such key, so it has no such door either. The
+   * token is the whole authentication, so every reason to refuse one answers
+   * the same way -- a caller learns whether it worked and nothing else.
+   */
+  if (options.cloudHandoff) {
+    const handoff = options.cloudHandoff;
+    app.post('/api/v1/auth/cloud-handoff', async (request, reply) => {
+      checkRateLimit(request.ip);
+      const body = HandoffBodySchema.parse(request.body);
+      let claims;
+      try {
+        claims = verifyHandoffToken(body.token, handoff);
+      } catch (error) {
+        if (error instanceof HandoffRejected) {
+          request.log.warn({ reason: error.message }, 'cloud handoff refused');
+          reply.code(401).send({ error: 'invalid_handoff' });
+          return;
+        }
+        throw error;
+      }
+      if (!consumeNonce(app.db, claims.nonce, new Date(claims.exp * 1000))) {
+        reply.code(401).send({ error: 'invalid_handoff' });
+        return;
+      }
+      const user = applyHandoff(app.db, claims, options.onSetupComplete);
+      const token = createSession(app.db, user.id);
+      reply.code(201).send({ token, user: { id: user.id, email: user.email, role: user.role } });
+    });
+  }
   app.post('/api/v1/auth/setup', async (request, reply) => {
     checkRateLimit(request.ip);
     if (countUsers(app.db) > 0) {
@@ -77,7 +131,9 @@ export function registerAuthRoutes(
     checkRateLimit(request.ip);
     const body = LoginBodySchema.parse(request.body);
     const user = getUserByEmail(app.db, body.email.trim());
-    if (!user || !verifyPassword(body.password, user.password_hash)) {
+    // An account that only exists through Cloud has no password to check, and
+    // an empty one must never be treated as a match.
+    if (!user || !user.password_hash || !verifyPassword(body.password, user.password_hash)) {
       reply.code(401).send({ error: 'invalid_credentials' });
       return;
     }

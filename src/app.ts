@@ -8,6 +8,7 @@ import { ZodError } from 'zod';
 import { registerAgentRoutes } from './agents/routes.js';
 import { registerApprovalRoutes } from './approvals/routes.js';
 import { registerAuthRoutes } from './auth/routes.js';
+import type { CloudHandoffConfig } from './auth/cloud-handoff.js';
 import { registerConversationRoutes } from './conversations/routes.js';
 import { registerMessageRoutes } from './messages/routes.js';
 import { registerConversationSummaryRoutes, registerMemoryFactRoutes } from './memory/routes.js';
@@ -33,6 +34,14 @@ export interface BuildAppOptions {
   /** One-time secret required by the first owner setup on a packaged server. */
   setupClaimToken?: string;
   onSetupComplete?: () => void;
+  /** Set when this server was provisioned by a Crewly Cloud that can sign people in. */
+  cloudHandoff?: CloudHandoffConfig;
+  /**
+   * Origins allowed to call this server's API from a browser, such as the
+   * hosted app. Empty by default: a self-hosted server serves its own app from
+   * its own origin and needs no cross-origin caller.
+   */
+  trustedAppOrigins?: string[];
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -57,6 +66,37 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       error: statusCode >= 500 ? 'internal_error' : error instanceof Error ? error.message : 'request_failed',
     });
   });
+  /*
+   * The hosted app runs on its own origin and talks to every server from
+   * there, so a server has to say which origins may read its answers.
+   *
+   * Sessions are bearer tokens rather than cookies, so nothing is sent by the
+   * browser on its own and there is no credentialed mode to open up. An origin
+   * that is not on the list gets no header, and the browser refuses to hand it
+   * the answer.
+   */
+  const trustedOrigins = new Set(opts.trustedAppOrigins ?? []);
+  const allowedOrigin = (request: { headers: { origin?: string } }): string | undefined => {
+    const origin = request.headers.origin;
+    return origin && trustedOrigins.has(origin) ? origin : undefined;
+  };
+  if (trustedOrigins.size > 0) {
+    app.addHook('onRequest', async (request, reply) => {
+      if (!request.url.startsWith('/api/')) return;
+      const origin = allowedOrigin(request);
+      reply.header('vary', 'Origin');
+      if (!origin) return;
+      reply.header('access-control-allow-origin', origin);
+      if (request.method !== 'OPTIONS') return;
+      reply
+        .header('access-control-allow-methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS')
+        .header('access-control-allow-headers', 'authorization, content-type')
+        .header('access-control-max-age', '600')
+        .code(204)
+        .send();
+    });
+  }
+
   app.addHook('onSend', async (_request, reply, payload) => {
     reply.header('x-content-type-options', 'nosniff');
     reply.header('x-frame-options', 'DENY');
@@ -83,6 +123,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerAuthRoutes(app, {
     setupClaimToken: opts.setupClaimToken,
     onSetupComplete: opts.onSetupComplete,
+    cloudHandoff: opts.cloudHandoff,
   });
   registerUserRoutes(app);
   registerDeviceRoutes(app, deviceHub);
@@ -95,7 +136,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerProviderRoutes(app, { fetchImpl: opts.fetchImpl });
   registerRuntimeRoutes(app, hub, respond);
   registerApprovalRoutes(app);
-  registerWsRoutes(app, hub);
+  registerWsRoutes(app, hub, opts.trustedAppOrigins ?? []);
   registerDeviceSocket(app, deviceHub, hub);
 
   if (opts.webDir && fs.existsSync(path.join(opts.webDir, 'index.html'))) {

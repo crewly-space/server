@@ -3,8 +3,19 @@ import { verifySessionToken } from '../auth/session.js';
 import { listConversationsForParticipant } from '../conversations/repository.js';
 import type { ConnectionHub } from './hub.js';
 
-export function registerWsRoutes(app: FastifyInstance, hub: ConnectionHub): void {
+export function registerWsRoutes(
+  app: FastifyInstance,
+  hub: ConnectionHub,
+  // Same list the HTTP API uses. A socket carries no Origin check of its own,
+  // so a server that allows no cross-origin caller must refuse one here too.
+  trustedAppOrigins: string[] = [],
+): void {
   app.get('/api/v1/ws', { websocket: true }, (socket, request) => {
+    const origin = request.headers.origin;
+    if (origin && !trustedAppOrigins.includes(origin) && origin !== `${request.protocol}://${request.headers.host}`) {
+      socket.close(4003, 'forbidden_origin');
+      return;
+    }
     const url = new URL(request.url, 'http://localhost');
     const token = url.searchParams.get('token') ?? '';
     const userId = verifySessionToken(app.db, token);
