@@ -1,11 +1,15 @@
 import type { Database } from './db/driver.js';
 
-const DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_RETENTION_MS = 30 * DAY_MS;
+/** Usage is kept long enough to compare this month with the same one last year. */
+const USAGE_RETENTION_MS = 400 * DAY_MS;
 
 export interface PruneResult {
   events: number;
   jobs: number;
   sessions: number;
+  providerCalls: number;
 }
 
 export function pruneOperationalData(
@@ -19,9 +23,12 @@ export function pruneOperationalData(
     "DELETE FROM jobs WHERE status IN ('done', 'failed') AND updated_at < ?"
   ).run(cutoff);
   const sessions = db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now.toISOString());
+  const providerCalls = db.prepare('DELETE FROM provider_calls WHERE created_at < ?')
+    .run(new Date(now.getTime() - Math.max(retentionMs, USAGE_RETENTION_MS)).toISOString());
   return {
     events: Number(events.changes),
     jobs: Number(jobs.changes),
     sessions: Number(sessions.changes),
+    providerCalls: Number(providerCalls.changes),
   };
 }

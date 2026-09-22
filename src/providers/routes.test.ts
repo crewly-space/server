@@ -107,7 +107,7 @@ describe('provider routes', () => {
       headers: { authorization: `Bearer ${memberToken}` },
     });
     expect(list.statusCode).toBe(200);
-    expect(list.json()).toEqual([{ id: 'compatible', kind: 'openai-compatible', hasApiKey: true }]);
+    expect(list.json()).toEqual([{ id: 'compatible', kind: 'openai-compatible', hasApiKey: true, status: 'unknown' }]);
     expect(list.body).not.toContain('private.example');
     await app.close();
   });
