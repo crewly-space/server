@@ -139,6 +139,7 @@ export function registerProviderRoutes(
         kind: pending.kind,
         apiKey,
       });
+      app.agentStatus.refresh();
       reply.code(201).send(redact(config));
     } catch (err) {
       if (err instanceof ProviderOAuthError) {
@@ -160,6 +161,7 @@ export function registerProviderRoutes(
       return;
     }
     const config = createProviderConfig(app.db, body);
+    app.agentStatus.refresh();
     reply.code(201).send(redact(config));
   });
 
@@ -204,6 +206,7 @@ export function registerProviderRoutes(
       reply.code(404).send({ error: 'provider_not_found' });
       return;
     }
+    app.agentStatus.refresh();
     reply.send(redact(config));
   });
 
@@ -217,6 +220,7 @@ export function registerProviderRoutes(
       reply.code(404).send({ error: 'provider_not_found' });
       return;
     }
+    app.agentStatus.refresh();
     reply.code(204).send();
   });
 

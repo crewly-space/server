@@ -30,6 +30,8 @@ export const AgentSchema = z
     modelPolicy: ModelPolicySchema,
     permissions: PermissionSetSchema.default({}),
     relationships: z.array(RelationshipRefSchema).default([]),
+    /** `dnd` keeps the agent out of automatic invocation; `auto` lets presence follow what it is doing. */
+    availability: z.enum(['auto', 'dnd']).default('auto'),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
@@ -50,3 +52,35 @@ export const FORBIDDEN_AGENT_FIELDS = [
   'runtimeId',
   'threadId',
 ] as const;
+
+export const AgentPresenceSchema = z.enum(['online', 'idle', 'dnd', 'offline']);
+export type AgentPresence = z.infer<typeof AgentPresenceSchema>;
+
+export const AgentExecutionStateSchema = z.enum([
+  'ready',
+  'working',
+  'waiting_approval',
+  'queued',
+  'error',
+  'runtime_unavailable',
+  'provider_unavailable',
+]);
+export type AgentExecutionState = z.infer<typeof AgentExecutionStateSchema>;
+
+/**
+ * What an agent is doing and whether it can be reached, derived on the server
+ * from runs, approvals, providers, devices and runtimes -- never guessed by a
+ * client. Presence and execution are separate: `online · working`, `dnd · ready`.
+ */
+export const AgentStatusSchema = z.object({
+  agentId: z.string().min(1),
+  presence: AgentPresenceSchema,
+  execution: AgentExecutionStateSchema,
+  /** Why, in words: "Claude device offline", "Waiting for approval". */
+  reason: z.string().nullable(),
+  availability: z.enum(['auto', 'dnd']),
+  /** The run it is working on, queued behind, or waiting on approval for. */
+  activeRunId: z.string().nullable(),
+  lastActiveAt: z.string().datetime().nullable(),
+});
+export type AgentStatus = z.infer<typeof AgentStatusSchema>;

@@ -9,6 +9,7 @@ interface AgentRow {
   personality: string;
   model_policy: string;
   permissions: string;
+  availability?: 'auto' | 'dnd';
   created_at: string;
   updated_at: string;
 }
@@ -22,6 +23,7 @@ function rowToAgent(row: AgentRow): Agent {
     modelPolicy: JSON.parse(row.model_policy),
     permissions: JSON.parse(row.permissions),
     relationships: [],
+    availability: row.availability ?? 'auto',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -72,4 +74,15 @@ export function updateAgent(db: Database, id: string, ownerUserId: string, input
     WHERE id = ? AND owner_user_id = ?`).run(input.name, input.personality,
     JSON.stringify(input.modelPolicy), new Date().toISOString(), id, ownerUserId);
   return info.changes ? getAgent(db, id) : undefined;
+}
+
+export function setAgentAvailability(db: Database, id: string, availability: 'auto' | 'dnd'): Agent | undefined {
+  const info = db.prepare('UPDATE agents SET availability = ?, updated_at = ? WHERE id = ?')
+    .run(availability, new Date().toISOString(), id);
+  return info.changes ? getAgent(db, id) : undefined;
+}
+
+export function listAllAgents(db: Database): Agent[] {
+  const rows = db.prepare('SELECT * FROM agents ORDER BY created_at ASC').all() as AgentRow[];
+  return rows.map(rowToAgent);
 }

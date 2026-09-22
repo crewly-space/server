@@ -105,7 +105,7 @@ export function registerRuntimeRoutes(app: FastifyInstance, hub: ConnectionHub, 
     }
     try {
       const outcome = await runAgentTurn(
-        { db: app.db, hub, respond },
+        { db: app.db, hub, respond, queue: app.runQueue, onAgentChange: (changed) => app.agentStatus.refresh(changed) },
         { agentId: id, conversationId: body.conversationId, trigger: 'api' }
       );
       reply.code(201).send(outcome);

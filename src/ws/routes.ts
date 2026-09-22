@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { verifySessionToken } from '../auth/session.js';
 import { listConversationsForParticipant } from '../conversations/repository.js';
 import type { ConnectionHub } from './hub.js';
+import { AGENT_STATUS_TOPIC } from '../agents/status.js';
 
 export function registerWsRoutes(
   app: FastifyInstance,
@@ -27,7 +28,8 @@ export function registerWsRoutes(
     const conversationTopics = listConversationsForParticipant(app.db, userId).map(
       (c) => `conversation:${c.id}`
     );
-    const topics = [`user:${userId}`, ...conversationTopics];
+    // Agent status is server-wide: everyone sees the same canonical state.
+    const topics = [`user:${userId}`, AGENT_STATUS_TOPIC, ...conversationTopics];
     hub.subscribe(socket, topics);
 
     const sinceSeqParam = url.searchParams.get('sinceSeq');
