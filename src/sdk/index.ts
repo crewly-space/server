@@ -39,6 +39,7 @@ export { ApprovalsResource } from './resources/approvals.js';
 export {
   UsersResource,
   type CreateUserInput,
+  type Invite,
   type UserAccount,
   type UserRole,
 } from './resources/users.js';
