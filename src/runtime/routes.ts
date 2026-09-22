@@ -8,6 +8,7 @@ import { describeAgentFailure, ProviderError } from '../providers/errors.js';
 import { createRuntimeBinding, getRuntimeBinding } from './bindings.js';
 import { MaxHopCountExceededError, runAgentTurn, type RespondFn } from './engine.js';
 import { createRuntimeSession, getRuntimeSession } from './sessions.js';
+import { agentRuntime, RuntimeConfigError, setAgentRuntime } from './agent-runtime.js';
 
 const CreateBindingBodySchema = z.object({
   agentId: z.string().min(1),
@@ -19,6 +20,13 @@ const CreateSessionBodySchema = z.object({
   agentId: z.string().min(1),
   conversationId: z.string().min(1),
   runtimeBindingId: z.string().min(1),
+});
+
+const AgentRuntimeBodySchema = z.object({
+  runtimeKind: z.enum(['native', 'claude-code', 'codex', 'gemini-cli']),
+  deviceId: z.string().min(1).optional(),
+  workspaceId: z.string().min(1).optional(),
+  options: z.object({ permissionMode: z.enum(['ask', 'auto_edit', 'read_only']).optional() }).strict().optional(),
 });
 
 const InvokeAgentBodySchema = z.object({
@@ -86,6 +94,46 @@ export function registerRuntimeRoutes(app: FastifyInstance, hub: ConnectionHub, 
       return;
     }
     reply.send(session);
+  });
+
+  /** What an agent runs on, whether that can run now, and what it could run on instead. */
+  app.get('/api/v1/agents/:id/runtime', { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const agent = getAgent(app.db, id);
+    if (!agent) {
+      reply.code(404).send({ error: 'agent_not_found' });
+      return;
+    }
+    const role = request.user!.role;
+    if (agent.ownerUserId !== request.user!.id && role !== 'owner' && role !== 'admin') {
+      reply.code(403).send({ error: 'forbidden' });
+      return;
+    }
+    reply.send(agentRuntime(app.db, app.deviceHub, agent));
+  });
+
+  app.put('/api/v1/agents/:id/runtime', { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const agent = getAgent(app.db, id);
+    if (!agent) {
+      reply.code(404).send({ error: 'agent_not_found' });
+      return;
+    }
+    if (agent.ownerUserId !== request.user!.id) {
+      reply.code(403).send({ error: 'forbidden' });
+      return;
+    }
+    try {
+      setAgentRuntime(app.db, agent, AgentRuntimeBodySchema.parse(request.body));
+    } catch (error) {
+      if (error instanceof RuntimeConfigError) {
+        reply.code(400).send({ error: 'invalid_runtime', message: error.message });
+        return;
+      }
+      throw error;
+    }
+    app.agentStatus.refresh(id);
+    reply.send(agentRuntime(app.db, app.deviceHub, agent));
   });
 
   app.post('/api/v1/agents/:id/runs', { preHandler: requireAuth }, async (request, reply) => {

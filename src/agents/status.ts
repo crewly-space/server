@@ -1,12 +1,12 @@
 import type { Agent, AgentExecutionState, AgentPresence, AgentStatus } from '../protocol/index.js';
 import type { Database } from '../db/driver.js';
 import type { DeviceConnectionHub } from '../devices/hub.js';
-import { listDevicesForUser } from '../devices/repository.js';
 import { providerHealth } from '../gateway/health.js';
 import type { RateLimitBoard } from '../gateway/rate-limits.js';
 import { getProviderConfig } from '../providers/repository.js';
 import type { ConnectionHub } from '../ws/hub.js';
 import { getAgent, listAllAgents } from './repository.js';
+import { runtimeHealth } from '../runtime/agent-runtime.js';
 
 /** The realtime topic every signed-in socket hears agent status on. */
 export const AGENT_STATUS_TOPIC = 'agents';
@@ -18,26 +18,6 @@ export interface StatusSources {
   deviceHub?: DeviceConnectionHub;
   rateLimits?: RateLimitBoard;
   now?: number;
-}
-
-const RUNTIME_LABELS: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  codex: 'Codex',
-  'gemini-cli': 'Gemini CLI',
-};
-
-/** Whether one of the owner's connected devices has this coding runtime installed and signed in. */
-function runtimeAvailable(db: Database, hub: DeviceConnectionHub | undefined, ownerUserId: string, runtime: string): boolean {
-  if (!hub) return false;
-  return listDevicesForUser(db, ownerUserId).some((device) => {
-    if (!hub.isConnected(device.id)) return false;
-    try {
-      const capabilities = JSON.parse(device.capabilities) as { runtimes?: Array<{ id?: string; authenticated?: boolean }> };
-      return capabilities.runtimes?.some((entry) => entry.id === runtime && entry.authenticated !== false) ?? false;
-    } catch {
-      return false;
-    }
-  });
 }
 
 /** The reason a provider cannot serve an agent, or null when it can. */
@@ -76,8 +56,8 @@ export function computeAgentStatus(db: Database, agent: Agent, sources: StatusSo
     )
     .get(agent.id) as { status: 'completed' | 'failed'; error_code: string | null; at: string } | undefined;
   const binding = db
-    .prepare('SELECT runtime_kind FROM runtime_bindings WHERE agent_id = ? ORDER BY updated_at DESC LIMIT 1')
-    .get(agent.id) as { runtime_kind: string } | undefined;
+    .prepare('SELECT runtime_kind, device_id FROM runtime_bindings WHERE agent_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1')
+    .get(agent.id) as { runtime_kind: string; device_id: string | null } | undefined;
 
   let execution: AgentExecutionState = 'ready';
   let reason: string | null = null;
@@ -99,9 +79,9 @@ export function computeAgentStatus(db: Database, agent: Agent, sources: StatusSo
   } else if (problem) {
     execution = 'provider_unavailable';
     reason = problem;
-  } else if (runtime && !runtimeAvailable(db, sources.deviceHub, agent.ownerUserId, runtime)) {
+  } else if (runtime && !runtimeHealth(db, sources.deviceHub, agent.ownerUserId, runtime, binding?.device_id ?? null).available) {
     execution = 'runtime_unavailable';
-    reason = `${RUNTIME_LABELS[runtime] ?? runtime} is not available on a connected device`;
+    reason = runtimeHealth(db, sources.deviceHub, agent.ownerUserId, runtime, binding?.device_id ?? null).reason;
   } else if (last?.status === 'failed') {
     execution = 'error';
     reason = last.error_code ? `Last run failed: ${last.error_code}` : 'Last run failed';

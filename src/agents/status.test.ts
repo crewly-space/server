@@ -114,7 +114,7 @@ describe('computeAgentStatus', () => {
     db = setup.db;
     createRuntimeBinding(db, { agentId: setup.agent.id, runtimeKind: 'claude-code', workspacePath: '/src/app' });
     expect(computeAgentStatus(db, setup.agent)).toMatchObject({
-      presence: 'offline', execution: 'runtime_unavailable', reason: 'Claude Code is not available on a connected device',
+      presence: 'offline', execution: 'runtime_unavailable', reason: 'No paired device',
     });
   });
 
