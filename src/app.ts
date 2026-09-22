@@ -24,6 +24,8 @@ import { delegationToolset } from './runtime/delegation.js';
 import { priceCall } from './usage/pricing.js';
 import { registerUsageRoutes } from './usage/routes.js';
 import { registerSecretRoutes } from './secrets/routes.js';
+import { registerMcpRoutes } from './mcp/routes.js';
+import { mcpToolset, registerMcpSecretHooks } from './mcp/service.js';
 import { registerRuntimeRoutes } from './runtime/routes.js';
 import { registerRunInspectorRoutes } from './runtime/inspector-routes.js';
 import { ConnectionHub } from './ws/hub.js';
@@ -58,6 +60,8 @@ export interface BuildAppOptions {
   gateway?: AiGateway;
   /** How many hops a chain of agent delegations may reach (at most 4). */
   maxDelegationDepth?: number;
+  /** Whether admins may connect local (stdio) MCP servers, which run as this process's user. */
+  allowMcpStdio?: boolean;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -161,9 +165,17 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   gateway.onCall(() => agentStatus.refresh());
   registerUsageRoutes(app);
   registerSecretRoutes(app);
+  registerMcpSecretHooks();
+  const mcpOptions = {
+    fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
+    allowStdio: opts.allowMcpStdio ?? false,
+    clientVersion: opts.version,
+  };
+  registerMcpRoutes(app, mcpOptions);
   const respond: RespondFn = opts.respond ?? createProviderRespond(opts.db, globalThis.fetch.bind(globalThis), deviceHub, {
     gateway,
     toolsets: [
+      mcpToolset(opts.db, mcpOptions),
       delegationToolset({
         db: opts.db,
         hub,

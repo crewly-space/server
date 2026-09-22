@@ -19,6 +19,8 @@ export interface AppConfig {
   maxDelegationDepth?: number;
   /** A platform-managed encryption key for stored secrets (CREWLY_SECRETS_KEY); absent when self-hosted. */
   managedSecretsKey?: string;
+  /** CREWLY_MCP_STDIO=1 lets admins run local MCP servers as this process's user. Off by default. */
+  allowMcpStdio: boolean;
 }
 
 const ARG_TO_ENV: Record<string, string> = {
@@ -80,6 +82,7 @@ export function loadConfig(
       : undefined,
     trustedAppOrigins,
     ...(maxDelegationDepth !== undefined ? { maxDelegationDepth } : {}),
+    allowMcpStdio: parseBoolean(resolved.CREWLY_MCP_STDIO),
     ...(resolved.CREWLY_SECRETS_KEY?.trim() ? { managedSecretsKey: resolved.CREWLY_SECRETS_KEY.trim() } : {}),
   };
 }

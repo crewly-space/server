@@ -55,6 +55,7 @@ Usage: crewly-server [options]
     cloudHandoff: config.cloudHandoff,
     trustedAppOrigins: config.trustedAppOrigins,
     maxDelegationDepth: config.maxDelegationDepth,
+    allowMcpStdio: config.allowMcpStdio,
   });
 
   const jobRunner = new JobRunner(db, {
