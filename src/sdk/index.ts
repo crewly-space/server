@@ -26,7 +26,10 @@ export {
 export {
   ProvidersResource,
   type CreateProviderInput,
+  type ProviderAvailability,
   type ProviderConfigPublic,
+  type ProviderHealth,
+  type ProviderHealthStatus,
 } from './resources/providers.js';
 export {
   RuntimeResource,
@@ -67,6 +70,8 @@ export type {
   ChatMessage,
   ChatRequest,
   ChatResponse,
+  ToolCall,
+  ToolDefinition,
   Conversation,
   ConversationSummary,
   MemoryFact,

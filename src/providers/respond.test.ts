@@ -8,7 +8,7 @@ import { createUser } from '../users/repository.js';
 import { createAgent } from '../agents/repository.js';
 import { createProviderConfig } from './repository.js';
 import { ProviderError, ProviderUnavailableError } from './errors.js';
-import { createProviderRespond } from './respond.js';
+import { createProviderRespond, MAX_TOOL_ROUNDS } from './respond.js';
 
 describe('createProviderRespond', () => {
   let dataDir: string;
@@ -127,4 +127,67 @@ describe('createProviderRespond', () => {
     ).rejects.toThrow(/missing an apiKey/);
     db.close();
   });
+
+  it('runs the tools the model asks for and gives it the results', async () => {
+    const { db, agent } = freshSetup();
+    createProviderConfig(db, { id: 'primary', kind: 'anthropic', apiKey: 'sk-test' });
+    const bodies: Array<{ messages: unknown[]; tools?: unknown[] }> = [];
+    const replies = [
+      { content: [{ type: 'tool_use', id: 't1', name: 'lookup', input: { key: 'k' } }], stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } },
+      successBody,
+    ];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return jsonResponse(replies.shift());
+    }) as unknown as typeof fetch;
+    const executed: unknown[] = [];
+    const events: string[] = [];
+    const respond = createProviderRespond(db, fetchImpl, undefined, {
+      toolsets: [() => ({
+        definitions: [{ name: 'lookup', description: 'Look a key up', inputSchema: { type: 'object' } }],
+        execute: async (call) => {
+          executed.push(call.input);
+          return { content: 'value' };
+        },
+      })],
+    });
+
+    const result = await respond({
+      agentId: agent.id, conversationId: 'conversation_1', recentMessages: [],
+      onEvent: (event) => events.push(event.type),
+    });
+
+    expect(result.body).toBe('hi!');
+    expect(executed).toEqual([{ key: 'k' }]);
+    expect(bodies[1]!.messages).toContainEqual({
+      role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'value' }],
+    });
+    expect(events).toEqual(['provider.call', 'tool.call', 'provider.call']);
+    db.close();
+  });
+
+  it('stops offering tools once a model has used every round it gets', async () => {
+    const { db, agent } = freshSetup();
+    createProviderConfig(db, { id: 'primary', kind: 'anthropic', apiKey: 'sk-test' });
+    const offered: boolean[] = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { tools?: unknown[] };
+      offered.push(Boolean(body.tools));
+      return jsonResponse(body.tools
+        ? { content: [{ type: 'tool_use', id: `t${offered.length}`, name: 'again', input: {} }], stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } }
+        : successBody);
+    }) as unknown as typeof fetch;
+    const respond = createProviderRespond(db, fetchImpl, undefined, {
+      toolsets: [() => ({
+        definitions: [{ name: 'again', description: '', inputSchema: { type: 'object' } }],
+        execute: async () => ({ content: 'more' }),
+      })],
+    });
+
+    const result = await respond({ agentId: agent.id, conversationId: 'conversation_1', recentMessages: [] });
+    expect(result.body).toBe('hi!');
+    expect(offered).toEqual([...Array(MAX_TOOL_ROUNDS).fill(true), false]);
+    db.close();
+  });
 });
+

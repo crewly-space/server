@@ -16,6 +16,7 @@ import { registerConversationSummaryRoutes, registerMemoryFactRoutes } from './m
 import { registerProviderRoutes } from './providers/routes.js';
 import { type RespondFn } from './runtime/engine.js';
 import { createProviderRespond } from './providers/respond.js';
+import { AiGateway } from './gateway/gateway.js';
 import { registerRuntimeRoutes } from './runtime/routes.js';
 import { ConnectionHub } from './ws/hub.js';
 import { registerWsRoutes } from './ws/routes.js';
@@ -45,6 +46,8 @@ export interface BuildAppOptions {
   trustedAppOrigins?: string[];
   /** Reported by the dashboard, so somebody can see what they are running. */
   version?: string;
+  /** The AI gateway every model call goes through; built from `fetchImpl` when absent. */
+  gateway?: AiGateway;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -133,7 +136,13 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerDeviceRoutes(app, deviceHub);
   registerAgentRoutes(app);
   registerConversationRoutes(app);
-  const respond = opts.respond ?? createProviderRespond(opts.db, globalThis.fetch.bind(globalThis), deviceHub);
+  const gateway = opts.gateway ?? new AiGateway({
+    db: opts.db,
+    fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
+    deviceHub,
+  });
+  app.decorate('gateway', gateway);
+  const respond = opts.respond ?? createProviderRespond(opts.db, globalThis.fetch.bind(globalThis), deviceHub, { gateway });
   registerMessageRoutes(app, hub, respond);
   registerMemoryFactRoutes(app);
   registerConversationSummaryRoutes(app);

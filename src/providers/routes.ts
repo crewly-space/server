@@ -20,6 +20,7 @@ import {
   type OAuthProviderKind,
 } from './oauth.js';
 import { resolveProviderClient } from './registry.js';
+import { providerHealth } from '../gateway/health.js';
 
 function isAgentdBackedKind(kind: ProviderKind): boolean {
   return (AGENTD_BACKED_PROVIDER_KINDS as readonly ProviderKind[]).includes(kind);
@@ -65,8 +66,14 @@ function redact(config: ProviderConfigRecord) {
   return { ...rest, hasApiKey: apiKey !== null };
 }
 
-function availability(config: ProviderConfigRecord) {
-  return { id: config.id, kind: config.kind, hasApiKey: config.apiKey !== null };
+function availability(config: ProviderConfigRecord, health: { status: string; reason?: string }) {
+  return {
+    id: config.id,
+    kind: config.kind,
+    hasApiKey: config.apiKey !== null,
+    status: health.status,
+    ...(health.reason ? { statusReason: health.reason } : {}),
+  };
 }
 
 const OAuthStartBodySchema = z.object({
@@ -167,7 +174,22 @@ export function registerProviderRoutes(
   // Members need provider IDs and kinds to configure their own agents, but do
   // not receive provider URLs, timestamps, or any credential-management data.
   app.get('/api/v1/providers/available', { preHandler: requireAuth }, async (_request, reply) => {
-    reply.send(listProviderConfigs(app.db).map(availability));
+    reply.send(listProviderConfigs(app.db).map((config) => availability(config, healthOf(config))));
+  });
+
+  const healthOf = (config: ProviderConfigRecord) =>
+    providerHealth(app.db, config, { rateLimits: app.gateway.rateLimits, deviceHub: app.deviceHub });
+
+  /**
+   * How each provider has actually been doing: calls, errors, latency and the
+   * rate limit it last reported, over the last hour of real traffic.
+   */
+  app.get('/api/v1/providers/health', { preHandler: requireAuth }, async (request, reply) => {
+    if (!can(request.user!.role as Role, 'provider:manage')) {
+      reply.code(403).send({ error: 'forbidden' });
+      return;
+    }
+    reply.send({ providers: listProviderConfigs(app.db).map(healthOf) });
   });
 
   app.patch('/api/v1/providers/:id', { preHandler: requireAuth }, async (request, reply) => {

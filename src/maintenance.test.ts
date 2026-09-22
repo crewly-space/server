@@ -26,9 +26,18 @@ describe('operational maintenance', () => {
     db.prepare('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)').run('expired', 'u1', old, old);
     db.prepare('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)').run('live', 'u1', recent, '2027-01-01T00:00:00.000Z');
 
+    const call = db.prepare(
+      `INSERT INTO provider_calls (id, provider_id, provider_kind, model, purpose, attempt, status, latency_ms, created_at)
+       VALUES (?, 'p', 'anthropic', 'm', 'agent_turn', 1, 'ok', 1, ?)`,
+    );
+    call.run('over-a-year', '2024-11-01T00:00:00.000Z');
+    call.run('last-month', '2025-12-10T00:00:00.000Z');
+
     expect(pruneOperationalData(db, new Date('2026-01-10T00:00:00.000Z'), 24 * 60 * 60 * 1000)).toEqual({
-      events: 1, jobs: 1, sessions: 1,
+      events: 1, jobs: 1, sessions: 1, providerCalls: 1,
     });
+    // Usage outlives the operational retention: budgets and reports need it.
+    expect(db.prepare('SELECT id FROM provider_calls').pluck().all()).toEqual(['last-month']);
     expect((db.prepare('SELECT topic FROM event_log').pluck().all())).toEqual(['recent']);
     expect((db.prepare('SELECT id FROM jobs').pluck().all())).toEqual(['old-pending']);
     expect((db.prepare('SELECT token FROM sessions').pluck().all())).toEqual(['live']);

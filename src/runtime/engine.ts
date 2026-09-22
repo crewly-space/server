@@ -5,6 +5,7 @@ import { enqueueJob } from '../jobs/repository.js';
 import { SUMMARIZE_CONVERSATION_JOB_TYPE } from '../memory/summary.js';
 import { createMessage, listRecentMessagesForConversation } from '../messages/repository.js';
 import type { ConnectionHub } from '../ws/hub.js';
+import type { GatewayEvent } from '../gateway/gateway.js';
 import { createAgentRun } from './runs.js';
 
 export interface AgentTurnResult {
@@ -12,11 +13,30 @@ export interface AgentTurnResult {
   handoffToAgentId?: string;
 }
 
-export type RespondFn = (input: {
+export interface RespondInput {
   agentId: string;
   conversationId: string;
   recentMessages: Message[];
-}) => Promise<AgentTurnResult>;
+  /** The run this turn belongs to, so what it spends and does can be traced to it. */
+  run?: { runId: string; rootRunId: string; hopCount: number };
+  /** Hears provider calls, retries, fallbacks and tool calls as they happen. */
+  onEvent?: (event: TurnEvent) => void;
+}
+
+/** One tool the model called during a turn. Sizes only: contents stay out of the trace. */
+export interface ToolCallEvent {
+  type: 'tool.call';
+  toolCallId: string;
+  name: string;
+  status: 'ok' | 'error';
+  durationMs: number;
+  inputBytes: number;
+  outputBytes: number;
+}
+
+export type TurnEvent = GatewayEvent | ToolCallEvent;
+
+export type RespondFn = (input: RespondInput) => Promise<AgentTurnResult>;
 
 export interface RunAgentTurnDeps {
   db: Database;
@@ -66,6 +86,7 @@ export async function runAgentTurn(deps: RunAgentTurnDeps, input: RunAgentTurnIn
     agentId: input.agentId,
     conversationId: input.conversationId,
     recentMessages,
+    run: { runId, rootRunId, hopCount },
   });
 
   const message = createMessage(deps.db, {
