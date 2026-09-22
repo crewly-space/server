@@ -51,6 +51,7 @@ Usage: crewly-server [options]
     trustProxy: config.trustProxy,
     setupClaimToken: setupClaim.token,
     onSetupComplete: setupClaim.consume,
+    version: VERSION,
     cloudHandoff: config.cloudHandoff,
     trustedAppOrigins: config.trustedAppOrigins,
   });

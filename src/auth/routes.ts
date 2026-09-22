@@ -137,6 +137,12 @@ export function registerAuthRoutes(
       reply.code(401).send({ error: 'invalid_credentials' });
       return;
     }
+    // Said plainly: somebody whose access was withdrawn should be told that,
+    // not left guessing at their own password.
+    if (user.suspended_at) {
+      reply.code(403).send({ error: 'account_suspended' });
+      return;
+    }
     const token = createSession(app.db, user.id);
     attempts.delete(request.ip);
     reply.code(200).send({ token, user: { id: user.id, email: user.email, role: user.role } });

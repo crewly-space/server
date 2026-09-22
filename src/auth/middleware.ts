@@ -15,7 +15,9 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
     return;
   }
   const user = getUserById(request.server.db, userId);
-  if (!user) {
+  // A suspended account is not an account that can act, whatever token it
+  // still holds.
+  if (!user || user.suspended_at) {
     reply.code(401).send({ error: 'unauthorized' });
     return;
   }

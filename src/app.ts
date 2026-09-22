@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ZodError } from 'zod';
 import { registerAgentRoutes } from './agents/routes.js';
+import { registerServerAdminRoutes } from './admin/routes.js';
 import { registerApprovalRoutes } from './approvals/routes.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import type { CloudHandoffConfig } from './auth/cloud-handoff.js';
@@ -42,6 +43,8 @@ export interface BuildAppOptions {
    * its own origin and needs no cross-origin caller.
    */
   trustedAppOrigins?: string[];
+  /** Reported by the dashboard, so somebody can see what they are running. */
+  version?: string;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -126,6 +129,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     cloudHandoff: opts.cloudHandoff,
   });
   registerUserRoutes(app);
+  registerServerAdminRoutes(app, { version: opts.version ?? '0.0.0-dev' });
   registerDeviceRoutes(app, deviceHub);
   registerAgentRoutes(app);
   registerConversationRoutes(app);

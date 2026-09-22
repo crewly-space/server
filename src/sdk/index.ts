@@ -48,6 +48,11 @@ export {
   type DevicePairingInfo,
 } from './resources/devices.js';
 export {
+  ServerResource,
+  type ServerStatus,
+  type ServerLogEntry,
+} from './resources/server.js';
+export {
   WsClient,
   type WebSocketConnection,
   type WebSocketConstructor,
