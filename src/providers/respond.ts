@@ -4,7 +4,7 @@ import type { Database } from '../db/driver.js';
 import { getAgent } from '../agents/repository.js';
 import { listMemoryFactsForAgent } from '../memory/repository.js';
 import { getConversationSummary } from '../memory/summary-repository.js';
-import type { RespondFn, RespondInput, TurnEvent } from '../runtime/engine.js';
+import { RunCancelledError, type RespondFn, type RespondInput, type TurnEvent } from '../runtime/engine.js';
 import { AiGateway } from '../gateway/gateway.js';
 import { ProviderError } from './errors.js';
 import type { DeviceConnectionHub } from '../devices/hub.js';
@@ -110,7 +110,12 @@ export function createProviderRespond(
       : undefined;
     const onEvent = (event: TurnEvent) => input.onEvent?.(event);
 
+    const stopIfCancelled = () => {
+      if (input.isCancelled?.()) throw new RunCancelledError('the run was cancelled');
+    };
+
     for (let round = 0; ; round += 1) {
+      stopIfCancelled();
       // On the last round the tools are withheld, so the model has to answer
       // with what it has instead of asking for one more thing.
       const offerTools = tools && round < MAX_TOOL_ROUNDS ? tools.definitions : undefined;
@@ -138,6 +143,7 @@ export function createProviderRespond(
 
       messages.push({ role: 'assistant', content: response.content, toolCalls: response.toolCalls });
       for (const call of response.toolCalls) {
+        stopIfCancelled();
         const started = Date.now();
         let outcome: ToolOutcome;
         try {

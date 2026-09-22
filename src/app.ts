@@ -20,6 +20,7 @@ import { AiGateway } from './gateway/gateway.js';
 import { installBudgets } from './usage/budgets.js';
 import { AgentStatusBroadcaster } from './agents/status.js';
 import { AgentRunQueue } from './runtime/queue.js';
+import { delegationToolset } from './runtime/delegation.js';
 import { priceCall } from './usage/pricing.js';
 import { registerUsageRoutes } from './usage/routes.js';
 import { registerRuntimeRoutes } from './runtime/routes.js';
@@ -54,6 +55,8 @@ export interface BuildAppOptions {
   version?: string;
   /** The AI gateway every model call goes through; built from `fetchImpl` when absent. */
   gateway?: AiGateway;
+  /** How many hops a chain of agent delegations may reach (at most 4). */
+  maxDelegationDepth?: number;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -151,11 +154,24 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   installBudgets(opts.db, gateway, hub, (kind, model, usage) => priceCall(opts.db, kind, model, usage));
   const agentStatus = new AgentStatusBroadcaster(opts.db, hub, () => ({ deviceHub, rateLimits: gateway.rateLimits }));
   app.decorate('agentStatus', agentStatus);
-  app.decorate('runQueue', new AgentRunQueue());
+  const runQueue = new AgentRunQueue();
+  app.decorate('runQueue', runQueue);
   // A provider failing or recovering moves every agent that uses it.
   gateway.onCall(() => agentStatus.refresh());
   registerUsageRoutes(app);
-  const respond = opts.respond ?? createProviderRespond(opts.db, globalThis.fetch.bind(globalThis), deviceHub, { gateway });
+  const respond: RespondFn = opts.respond ?? createProviderRespond(opts.db, globalThis.fetch.bind(globalThis), deviceHub, {
+    gateway,
+    toolsets: [
+      delegationToolset({
+        db: opts.db,
+        hub,
+        respond: () => respond,
+        status: agentStatus,
+        queue: runQueue,
+        maxDepth: opts.maxDelegationDepth,
+      }),
+    ],
+  });
   registerMessageRoutes(app, hub, respond);
   registerMemoryFactRoutes(app);
   registerConversationSummaryRoutes(app);
