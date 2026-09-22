@@ -85,6 +85,15 @@ export {
   type SecretGranteeType,
 } from './resources/secrets.js';
 export {
+  McpResource,
+  type AgentToolAssignment,
+  type McpCapability,
+  type McpServer,
+  type McpServerInput,
+  type McpTestResult,
+  type McpTool,
+} from './resources/mcp.js';
+export {
   WsClient,
   type WebSocketConnection,
   type WebSocketConstructor,
