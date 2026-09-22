@@ -9,7 +9,13 @@ export {
   type AuthSetupInput,
   type AuthUser,
 } from './resources/auth.js';
-export { AgentsResource, type CreateAgentInput } from './resources/agents.js';
+export {
+  AgentsResource,
+  type AgentRuntime,
+  type CreateAgentInput,
+  type RuntimePermissionMode,
+  type SetAgentRuntimeInput,
+} from './resources/agents.js';
 export {
   ConversationsResource,
   type AddConversationMemberInput,

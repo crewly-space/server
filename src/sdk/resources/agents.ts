@@ -1,4 +1,4 @@
-import type { Agent, AgentStatus, ModelPolicy } from '../../protocol/index.js';
+import type { Agent, AgentStatus, ModelPolicy, RuntimeKind } from '../../protocol/index.js';
 import type { HttpClient } from '../http-client.js';
 import { encodePathSegment } from '../path.js';
 
@@ -6,6 +6,39 @@ export interface CreateAgentInput {
   name: string;
   personality?: string;
   modelPolicy: ModelPolicy;
+}
+
+export type RuntimePermissionMode = 'ask' | 'auto_edit' | 'read_only';
+
+/** What an agent runs on, whether it can run now, and the devices it could run on. */
+export interface AgentRuntime {
+  runtimeKind: RuntimeKind;
+  binding: {
+    id: string;
+    deviceId: string | null;
+    deviceName: string | null;
+    workspaceId: string | null;
+    workspaceName: string;
+    options: { permissionMode: RuntimePermissionMode };
+    updatedAt: string;
+  } | null;
+  health: { available: boolean; reason: string | null };
+  sessions: Array<{ id: string; conversationId: string; status: string; updatedAt: string }>;
+  devices: Array<{
+    id: string;
+    name: string;
+    connected: boolean;
+    lastSeenAt: string | null;
+    runtimes: Array<{ id: string; name: string; authenticated: boolean }>;
+    workspaces: Array<{ id: string; name: string }>;
+  }>;
+}
+
+export interface SetAgentRuntimeInput {
+  runtimeKind: RuntimeKind;
+  deviceId?: string;
+  workspaceId?: string;
+  options?: { permissionMode?: RuntimePermissionMode };
 }
 
 export class AgentsResource {
@@ -29,6 +62,15 @@ export class AgentsResource {
 
   status(id: string): Promise<AgentStatus> {
     return this.http.request('GET', `/api/v1/agents/${encodePathSegment(id)}/status`);
+  }
+
+  runtime(id: string): Promise<AgentRuntime> {
+    return this.http.request('GET', `/api/v1/agents/${encodePathSegment(id)}/runtime`);
+  }
+
+  /** A coding runtime needs a paired device that has it, and one of that device's workspaces. */
+  setRuntime(id: string, input: SetAgentRuntimeInput): Promise<AgentRuntime> {
+    return this.http.request('PUT', `/api/v1/agents/${encodePathSegment(id)}/runtime`, input);
   }
 
   /** The agents this one may hand subtasks to with its `delegate_to_agent` tool. */
