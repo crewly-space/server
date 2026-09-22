@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { openSqlite, type Database } from '../db/driver.js';
 import { runMigrations } from '../db/migrate.js';
-import { createUser, getUserByEmail } from '../users/repository.js';
+import { createUser, getUserByEmail, setUserSuspended } from '../users/repository.js';
 import { hashPassword } from './password.js';
 
 const DEPLOYMENT_ID = '6f1b1a2c-6f2a-4b5e-9c3d-2f6a7b8c9d01';
@@ -132,6 +132,17 @@ describe('cloud handoff', () => {
     // The local password still works: a handoff links an account, it does not
     // take it over.
     expect(getUserByEmail(db, 'buyer@example.com')!.password_hash).not.toBeNull();
+    await app.close();
+  });
+
+  it('tells a suspended account so instead of handing it a session', async () => {
+    const app = await handoffApp();
+    const first = await app.inject({ method: 'POST', url: '/api/v1/auth/cloud-handoff', payload: { token: token() } });
+    setUserSuspended(db, first.json().user.id, true);
+    const response = await app.inject({ method: 'POST', url: '/api/v1/auth/cloud-handoff', payload: { token: token() } });
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({ error: 'account_suspended' });
+    expect((db.prepare('SELECT COUNT(*) AS count FROM sessions').get() as { count: number }).count).toBe(0);
     await app.close();
   });
 
