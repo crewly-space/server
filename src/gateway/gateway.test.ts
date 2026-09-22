@@ -137,7 +137,9 @@ describe('AiGateway', () => {
       new Response(JSON.stringify({ choices: [{ message: { content: 'cheap' }, finish_reason: 'stop' }] }), { status: 200 }),
     );
     const gateway = new AiGateway({ db, fetchImpl, sleep });
-    gateway.use((target) => (target.providerId === 'primary' ? { action: 'fallback', reason: 'budget' } : { action: 'allow' }));
+    gateway.use((_target, _context, { isFallback }) => (isFallback
+      ? { action: 'allow' }
+      : { action: 'fallback', reason: 'budget', error: new ProviderRequestError('no fallback') }));
     const result = await gateway.chat(request({ fallback: { providerId: 'backup', model: 'gpt-5-mini' } }));
     expect(result).toMatchObject({ content: 'cheap', usedFallback: true });
   });

@@ -5,7 +5,7 @@ import type { ProviderChatResult } from '../providers/client.js';
 import { ProviderError, ProviderNotConfiguredError, ProviderRateLimitError, ProviderUnavailableError } from '../providers/errors.js';
 import { resolveProviderClient } from '../providers/registry.js';
 import { getProviderConfig, type ProviderConfigRecord } from '../providers/repository.js';
-import { recordProviderCall } from './meter.js';
+import { recordProviderCall, type ProviderCallRecord } from './meter.js';
 import { RateLimitBoard } from './rate-limits.js';
 
 /** Which provider and model to call. */
@@ -67,10 +67,19 @@ export interface GatewayResult extends ProviderChatResult {
  * Consulted before every call. It may let the call through, send it to the
  * fallback target instead, or refuse it -- budgets are the first user.
  */
-export type GatewayGuard = (target: GatewayTarget, context: GatewayContext) =>
+export type GatewayGuard = (
+  target: GatewayTarget,
+  context: GatewayContext,
+  /** True when `target` is already the fallback, so a guard can let a cheaper model through. */
+  meta: { isFallback: boolean },
+) =>
   | { action: 'allow' }
-  | { action: 'fallback'; reason: string }
+  /** Use the fallback target instead; `error` is thrown when there is none. */
+  | { action: 'fallback'; reason: string; error: ProviderError }
   | { action: 'block'; error: ProviderError };
+
+/** Hears every metered call once it is recorded -- budgets use it to raise alerts. */
+export type GatewayCallListener = (record: ProviderCallRecord) => void;
 
 /** Prices a finished call, in millionths of a dollar; null when the model has no price. */
 export type GatewayPricer = (kind: ProviderKind, model: string, usage: { inputTokens: number; outputTokens: number }) => number | null;
@@ -128,6 +137,7 @@ export function withoutTools(messages: ChatMessage[]): ChatMessage[] {
 export class AiGateway {
   readonly rateLimits: RateLimitBoard;
   private readonly guards: GatewayGuard[] = [];
+  private readonly listeners: GatewayCallListener[] = [];
   private pricer: GatewayPricer = () => null;
   private readonly db: Database;
   private readonly fetchImpl: typeof fetch;
@@ -150,6 +160,10 @@ export class AiGateway {
     this.pricer = pricer;
   }
 
+  onCall(listener: GatewayCallListener): void {
+    this.listeners.push(listener);
+  }
+
   async chat(request: GatewayRequest): Promise<GatewayResult> {
     const { context } = request;
     let target = request.target;
@@ -157,7 +171,7 @@ export class AiGateway {
     let usedFallback = false;
 
     for (;;) {
-      const verdict = this.consultGuards(target, context);
+      const verdict = this.consultGuards(target, context, usedFallback);
       if (verdict.action === 'fallback' && fallback && !usedFallback) {
         context.onEvent?.({ type: 'provider.fallback', from: target, to: fallback, reason: verdict.reason });
         target = fallback;
@@ -166,9 +180,7 @@ export class AiGateway {
         continue;
       }
       if (verdict.action !== 'allow') {
-        const error = verdict.action === 'block'
-          ? verdict.error
-          : new ProviderError(`no fallback is configured to take over from ${target.providerId}/${target.model}`);
+        const error = verdict.error;
         context.onEvent?.({
           type: 'gateway.blocked', providerId: target.providerId, model: target.model,
           code: error.code, reason: error.message,
@@ -189,9 +201,9 @@ export class AiGateway {
     }
   }
 
-  private consultGuards(target: GatewayTarget, context: GatewayContext): ReturnType<GatewayGuard> {
+  private consultGuards(target: GatewayTarget, context: GatewayContext, isFallback: boolean): ReturnType<GatewayGuard> {
     for (const guard of this.guards) {
-      const verdict = guard(target, context);
+      const verdict = guard(target, context, { isFallback });
       if (verdict.action !== 'allow') return verdict;
     }
     return { action: 'allow' };
@@ -282,6 +294,13 @@ export class AiGateway {
         costMicros,
         latencyMs: Math.max(0, this.now() - started),
       });
+      for (const listener of this.listeners) {
+        try {
+          listener(record);
+        } catch {
+          // A listener is bookkeeping; it must never turn an answer into a failure.
+        }
+      }
       if (failure instanceof ProviderRateLimitError) this.rateLimits.limited(target.providerId, failure.retryAfterMs);
       else if (response) this.rateLimits.observe(target.providerId, response.rateLimit);
       context.onEvent?.({
