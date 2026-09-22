@@ -1,4 +1,4 @@
-import type { Agent, ModelPolicy } from '../../protocol/index.js';
+import type { Agent, AgentStatus, ModelPolicy } from '../../protocol/index.js';
 import type { HttpClient } from '../http-client.js';
 import { encodePathSegment } from '../path.js';
 
@@ -20,5 +20,19 @@ export class AgentsResource {
   }
   update(id: string, input: CreateAgentInput): Promise<Agent> {
     return this.http.request('PATCH', `/api/v1/agents/${encodePathSegment(id)}`, input);
+  }
+
+  /** Every agent's canonical status. Changes arrive live as `agent.status` on the `agents` topic. */
+  statuses(): Promise<{ statuses: AgentStatus[] }> {
+    return this.http.request('GET', '/api/v1/agents/status');
+  }
+
+  status(id: string): Promise<AgentStatus> {
+    return this.http.request('GET', `/api/v1/agents/${encodePathSegment(id)}/status`);
+  }
+
+  /** `dnd` keeps the agent out of automatic invocation; `auto` returns presence to what it is doing. */
+  setAvailability(id: string, availability: 'auto' | 'dnd'): Promise<AgentStatus> {
+    return this.http.request('PUT', `/api/v1/agents/${encodePathSegment(id)}/availability`, { availability });
   }
 }

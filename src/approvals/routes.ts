@@ -35,7 +35,9 @@ export function registerApprovalRoutes(app: FastifyInstance): void {
     }
     const body = RespondBodySchema.parse(request.body);
     try {
-      reply.send(resolveApproval(app.db, id, body.decision));
+      const resolved = resolveApproval(app.db, id, body.decision);
+      if (resolved) app.agentStatus.refresh(resolved.agentId);
+      reply.send(resolved);
     } catch (err) {
       if (err instanceof ApprovalAlreadyResolvedError) {
         reply.code(409).send({ error: 'already_resolved' });

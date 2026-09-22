@@ -63,12 +63,15 @@ export function registerDeviceSocket(
           platform: device.platform,
         });
         socket.send(JSON.stringify({ type: 'authenticated', deviceId: device.id }));
+        app.agentStatus.refresh();
         return;
       }
 
       const heartbeat = AgentdHeartbeatSchema.safeParse(decoded);
       if (heartbeat.success) {
         touchDevice(app.db, authenticatedDeviceId, heartbeat.data.capabilities);
+        // A heartbeat can say a runtime was installed or signed out.
+        app.agentStatus.refresh();
         socket.send(JSON.stringify({ type: 'heartbeat.ack', at: new Date().toISOString() }));
         return;
       }
@@ -83,6 +86,7 @@ export function registerDeviceSocket(
       // which already owns the hub entry — only the live socket announces going
       // offline, so a reconnect does not look like a disconnect.
       const wasLive = hub.disconnect(authenticatedDeviceId, socket as WebSocket);
+      if (wasLive) app.agentStatus.refresh();
       if (wasLive && ownerUserId) {
         events?.publish(`user:${ownerUserId}`, 'device.disconnected', { deviceId: authenticatedDeviceId });
       }

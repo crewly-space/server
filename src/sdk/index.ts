@@ -85,7 +85,10 @@ export {
 
 export type {
   Agent,
+  AgentExecutionState,
+  AgentPresence,
   AgentRun,
+  AgentStatus,
   AgentRunStatus,
   ApprovalRequest,
   ChatMessage,

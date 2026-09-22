@@ -7,6 +7,7 @@ import { createMessage, listRecentMessagesForConversation } from '../messages/re
 import type { ConnectionHub } from '../ws/hub.js';
 import type { GatewayEvent } from '../gateway/gateway.js';
 import { ProviderError } from '../providers/errors.js';
+import type { AgentRunQueue } from './queue.js';
 import {
   appendRunEvent,
   completeAgentRun,
@@ -14,6 +15,7 @@ import {
   failAgentRun,
   getAgentRun,
   isRunCancelled,
+  startAgentRun,
 } from './runs.js';
 
 export interface AgentTurnResult {
@@ -50,6 +52,10 @@ export interface RunAgentTurnDeps {
   db: Database;
   hub: ConnectionHub;
   respond: RespondFn;
+  /** Serialises an agent's top-level runs; without one, runs go straight through. */
+  queue?: AgentRunQueue;
+  /** Told whenever something that moves an agent's status happened. */
+  onAgentChange?: (agentId: string) => void;
 }
 
 export interface RunAgentTurnInput {
@@ -103,6 +109,8 @@ export async function runAgentTurn(deps: RunAgentTurnDeps, input: RunAgentTurnIn
   const causationId = input.causationId ?? null;
   const topic = `conversation:${input.conversationId}`;
 
+  const queue = causationId === null ? deps.queue : undefined;
+  const waits = queue?.isBusy(input.agentId) ?? false;
   createAgentRun(deps.db, {
     runId,
     rootRunId,
@@ -110,14 +118,57 @@ export async function runAgentTurn(deps: RunAgentTurnDeps, input: RunAgentTurnIn
     hopCount,
     agentId: input.agentId,
     conversationId: input.conversationId,
+    status: waits ? 'queued' : 'running',
     trigger: input.trigger ?? 'message',
     triggerMessageId: input.triggerMessageId ?? null,
   });
   const trace = (type: string, data: Record<string, unknown> = {}) => appendRunEvent(deps.db, runId, type, data);
+  const changed = () => deps.onAgentChange?.(input.agentId);
+
+  let release: (() => void) | undefined;
+  if (queue) {
+    if (waits) {
+      trace('run.queued', { agentId: input.agentId });
+      changed();
+    }
+    release = await queue.enter(input.agentId);
+    if (waits && !startAgentRun(deps.db, runId)) {
+      // Cancelled while it waited: nothing ran, so there is nothing to post.
+      release();
+      changed();
+      const cancelled = new RunCancelledError('the run was cancelled before it started');
+      failedRuns.set(cancelled, runId);
+      throw cancelled;
+    }
+  }
+  try {
+    return await executeTurn(deps, input, { runId, rootRunId, causationId, hopCount, topic, trace, changed });
+  } finally {
+    release?.();
+    changed();
+  }
+}
+
+interface TurnContext {
+  runId: string;
+  rootRunId: string;
+  causationId: string | null;
+  hopCount: number;
+  topic: string;
+  trace: (type: string, data?: Record<string, unknown>) => unknown;
+  changed: () => void;
+}
+
+async function executeTurn(
+  deps: RunAgentTurnDeps,
+  input: RunAgentTurnInput,
+  { runId, rootRunId, causationId, hopCount, topic, trace, changed }: TurnContext,
+): Promise<RunAgentTurnOutcome> {
   trace('run.started', { agentId: input.agentId, trigger: input.trigger ?? 'message', hopCount, causationId });
   deps.hub.publish(topic, 'agent.run.started', {
     runId, rootRunId, causationId, agentId: input.agentId, conversationId: input.conversationId,
   });
+  changed();
 
   const finish = (status: 'completed' | 'failed' | 'cancelled', extra: Record<string, unknown> = {}) =>
     deps.hub.publish(topic, 'agent.run.finished', {

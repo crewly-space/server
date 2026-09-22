@@ -110,7 +110,7 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
         continue;
       }
       void runAgentTurn(
-        { db: app.db, hub, respond },
+        { db: app.db, hub, respond, queue: app.runQueue, onAgentChange: (changed) => app.agentStatus.refresh(changed) },
         { agentId, conversationId: id, trigger: 'message', triggerMessageId: message.id },
       ).catch((error: unknown) => {
         const failure = describeAgentFailure(error, agentName);
