@@ -101,6 +101,12 @@ export function registerAuthRoutes(
         return;
       }
       const user = applyHandoff(app.db, claims, options.onSetupComplete);
+      // Same answer the password form gives: a session here would only be
+      // refused on its first request, and the app could not say why.
+      if (user.suspended_at) {
+        reply.code(403).send({ error: 'account_suspended' });
+        return;
+      }
       const token = createSession(app.db, user.id);
       reply.code(201).send({ token, user: { id: user.id, email: user.email, role: user.role } });
     });
