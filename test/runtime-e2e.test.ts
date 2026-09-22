@@ -36,9 +36,16 @@ describe('runtime end-to-end: agent invocation, WS delivery, and max-hop protect
     db.close();
   });
 
-  function waitForMessage(socket: WebSocket): Promise<Record<string, unknown>> {
+  /** The first event of `type`; a run also announces itself starting and finishing. */
+  function waitForMessage(socket: WebSocket, type = 'message.created'): Promise<Record<string, unknown>> {
     return new Promise((resolve) => {
-      socket.once('message', (data) => resolve(JSON.parse(data.toString())));
+      const onMessage = (data: WebSocket.RawData) => {
+        const event = JSON.parse(data.toString()) as Record<string, unknown>;
+        if (event.type !== type) return;
+        socket.off('message', onMessage);
+        resolve(event);
+      };
+      socket.on('message', onMessage);
     });
   }
 

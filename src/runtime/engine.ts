@@ -6,7 +6,15 @@ import { SUMMARIZE_CONVERSATION_JOB_TYPE } from '../memory/summary.js';
 import { createMessage, listRecentMessagesForConversation } from '../messages/repository.js';
 import type { ConnectionHub } from '../ws/hub.js';
 import type { GatewayEvent } from '../gateway/gateway.js';
-import { createAgentRun } from './runs.js';
+import { ProviderError } from '../providers/errors.js';
+import {
+  appendRunEvent,
+  completeAgentRun,
+  createAgentRun,
+  failAgentRun,
+  getAgentRun,
+  isRunCancelled,
+} from './runs.js';
 
 export interface AgentTurnResult {
   body: string;
@@ -50,6 +58,9 @@ export interface RunAgentTurnInput {
   rootRunId?: string;
   causationId?: string | null;
   hopCount?: number;
+  /** What started the run, for the trace: `message`, `delegation`, `api`. */
+  trigger?: string;
+  triggerMessageId?: string | null;
 }
 
 export interface RunAgentTurnOutcome {
@@ -59,6 +70,25 @@ export interface RunAgentTurnOutcome {
 }
 
 export class MaxHopCountExceededError extends Error {}
+
+/** The run was cancelled while it was working; its answer is thrown away. */
+export class RunCancelledError extends Error {
+  readonly code = 'cancelled';
+}
+
+const failedRuns = new WeakMap<object, string>();
+
+/** The run a turn's failure belongs to, so whoever reports it can link to the trace. */
+export function runIdOfFailure(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null ? failedRuns.get(error) : undefined;
+}
+
+function failureOf(error: unknown): { code: string; message: string } {
+  if (error instanceof ProviderError || error instanceof RunCancelledError) {
+    return { code: error.code, message: error.message };
+  }
+  return { code: 'agent_run_failed', message: error instanceof Error ? error.message : String(error) };
+}
 
 export async function runAgentTurn(deps: RunAgentTurnDeps, input: RunAgentTurnInput): Promise<RunAgentTurnOutcome> {
   const hopCount = input.hopCount ?? 0;
@@ -71,23 +101,53 @@ export async function runAgentTurn(deps: RunAgentTurnDeps, input: RunAgentTurnIn
   const runId = randomUUID();
   const rootRunId = input.rootRunId ?? runId;
   const causationId = input.causationId ?? null;
+  const topic = `conversation:${input.conversationId}`;
 
-  const run = createAgentRun(deps.db, {
+  createAgentRun(deps.db, {
     runId,
     rootRunId,
     causationId,
     hopCount,
     agentId: input.agentId,
     conversationId: input.conversationId,
+    trigger: input.trigger ?? 'message',
+    triggerMessageId: input.triggerMessageId ?? null,
+  });
+  const trace = (type: string, data: Record<string, unknown> = {}) => appendRunEvent(deps.db, runId, type, data);
+  trace('run.started', { agentId: input.agentId, trigger: input.trigger ?? 'message', hopCount, causationId });
+  deps.hub.publish(topic, 'agent.run.started', {
+    runId, rootRunId, causationId, agentId: input.agentId, conversationId: input.conversationId,
   });
 
-  const recentMessages = listRecentMessagesForConversation(deps.db, input.conversationId, 20);
-  const result = await deps.respond({
-    agentId: input.agentId,
-    conversationId: input.conversationId,
-    recentMessages,
-    run: { runId, rootRunId, hopCount },
-  });
+  const finish = (status: 'completed' | 'failed' | 'cancelled', extra: Record<string, unknown> = {}) =>
+    deps.hub.publish(topic, 'agent.run.finished', {
+      runId, rootRunId, agentId: input.agentId, conversationId: input.conversationId, status, ...extra,
+    });
+
+  let result: AgentTurnResult;
+  try {
+    const recentMessages = listRecentMessagesForConversation(deps.db, input.conversationId, 20);
+    result = await deps.respond({
+      agentId: input.agentId,
+      conversationId: input.conversationId,
+      recentMessages,
+      run: { runId, rootRunId, hopCount },
+      onEvent: ({ type, ...data }) => trace(type, data),
+    });
+    if (isRunCancelled(deps.db, runId)) throw new RunCancelledError('the run was cancelled before it answered');
+  } catch (error) {
+    const failure = failureOf(error);
+    if (error instanceof RunCancelledError) {
+      trace('run.cancelled', failure);
+      finish('cancelled');
+    } else {
+      failAgentRun(deps.db, runId, failure);
+      trace('run.failed', failure);
+      finish('failed', { errorCode: failure.code });
+    }
+    if (typeof error === 'object' && error !== null) failedRuns.set(error, runId);
+    throw error;
+  }
 
   const message = createMessage(deps.db, {
     conversationId: input.conversationId,
@@ -97,12 +157,16 @@ export async function runAgentTurn(deps: RunAgentTurnDeps, input: RunAgentTurnIn
     mentions: [],
     replyToMessageId: null,
   });
-  deps.hub.publish(`conversation:${input.conversationId}`, 'message.created', { ...message });
+  completeAgentRun(deps.db, runId, message.id);
+  trace('run.completed', { resultMessageId: message.id });
+  deps.hub.publish(topic, 'message.created', { ...message });
+  finish('completed', { resultMessageId: message.id });
   enqueueJob(deps.db, {
     type: SUMMARIZE_CONVERSATION_JOB_TYPE,
     payload: { conversationId: input.conversationId },
     dedupeKey: `${SUMMARIZE_CONVERSATION_JOB_TYPE}:${input.conversationId}`,
   });
+  const run = getAgentRun(deps.db, runId)!;
 
   if (!result.handoffToAgentId) {
     return { run, message, handoff: { attempted: false, dispatched: false } };
@@ -119,6 +183,7 @@ export async function runAgentTurn(deps: RunAgentTurnDeps, input: RunAgentTurnIn
     rootRunId,
     causationId: runId,
     hopCount: nextHopCount,
+    trigger: 'handoff',
   });
 
   return {
