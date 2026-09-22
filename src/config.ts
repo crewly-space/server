@@ -17,6 +17,8 @@ export interface AppConfig {
   trustedAppOrigins: string[];
   /** How deep agents may delegate to each other: 1 to 4, from CREWLY_MAX_DELEGATION_DEPTH. */
   maxDelegationDepth?: number;
+  /** A platform-managed encryption key for stored secrets (CREWLY_SECRETS_KEY); absent when self-hosted. */
+  managedSecretsKey?: string;
 }
 
 const ARG_TO_ENV: Record<string, string> = {
@@ -78,6 +80,7 @@ export function loadConfig(
       : undefined,
     trustedAppOrigins,
     ...(maxDelegationDepth !== undefined ? { maxDelegationDepth } : {}),
+    ...(resolved.CREWLY_SECRETS_KEY?.trim() ? { managedSecretsKey: resolved.CREWLY_SECRETS_KEY.trim() } : {}),
   };
 }
 

@@ -77,6 +77,14 @@ export {
   type RunTreeNode,
 } from './resources/runs.js';
 export {
+  SecretsResource,
+  type Secret,
+  type SecretAuditEntry,
+  type SecretDependent,
+  type SecretGrant,
+  type SecretGranteeType,
+} from './resources/secrets.js';
+export {
   WsClient,
   type WebSocketConnection,
   type WebSocketConstructor,

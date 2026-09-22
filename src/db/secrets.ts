@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Database } from './driver.js';
@@ -38,6 +38,47 @@ export function loadOrCreateDatabaseSecretKey(dataDir: string): Buffer {
     }
     return existing;
   }
+}
+
+const MANAGED_MARKER = 'secrets.key.managed';
+
+function fingerprint(key: Buffer): string {
+  return createHash('sha256').update(key).digest('hex');
+}
+
+/**
+ * The key a server encrypts its secrets with.
+ *
+ * Self-hosted: generated on first boot into `<dataDir>/secrets.key` (0600).
+ * Managed (Crewly Cloud): `CREWLY_SECRETS_KEY` from the platform's secret
+ * store, never written to disk; only its fingerprint is, so a later boot
+ * with a different key -- or with none, which would quietly mint a new one
+ * and orphan every stored secret -- refuses to start instead.
+ */
+export function resolveDatabaseSecretKey(dataDir: string, managedKeyBase64?: string): Buffer {
+  const markerFile = path.join(dataDir, MANAGED_MARKER);
+  const marker = fs.existsSync(markerFile) ? fs.readFileSync(markerFile, 'utf8').trim() : null;
+  if (!managedKeyBase64) {
+    if (marker) {
+      throw new Error('This server encrypts its secrets with a managed key; set CREWLY_SECRETS_KEY to start it');
+    }
+    return loadOrCreateDatabaseSecretKey(dataDir);
+  }
+
+  const managed = Buffer.from(managedKeyBase64, 'base64');
+  if (managed.length !== KEY_BYTES) throw new Error(`CREWLY_SECRETS_KEY must be ${KEY_BYTES} bytes, base64-encoded`);
+  const localFile = path.join(dataDir, 'secrets.key');
+  if (fs.existsSync(localFile)) {
+    const local = fs.readFileSync(localFile);
+    if (local.length !== managed.length || !timingSafeEqual(local, managed)) {
+      throw new Error('CREWLY_SECRETS_KEY is not the key this server already encrypted its secrets with (secrets.key)');
+    }
+  }
+  if (marker && marker !== fingerprint(managed)) {
+    throw new Error('CREWLY_SECRETS_KEY is not the key this server already encrypted its secrets with');
+  }
+  if (!marker) fs.writeFileSync(markerFile, `${fingerprint(managed)}\n`, { mode: 0o600 });
+  return managed;
 }
 
 function keyFor(db: Database): Buffer {

@@ -23,6 +23,7 @@ import { AgentRunQueue } from './runtime/queue.js';
 import { delegationToolset } from './runtime/delegation.js';
 import { priceCall } from './usage/pricing.js';
 import { registerUsageRoutes } from './usage/routes.js';
+import { registerSecretRoutes } from './secrets/routes.js';
 import { registerRuntimeRoutes } from './runtime/routes.js';
 import { registerRunInspectorRoutes } from './runtime/inspector-routes.js';
 import { ConnectionHub } from './ws/hub.js';
@@ -159,6 +160,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   // A provider failing or recovering moves every agent that uses it.
   gateway.onCall(() => agentStatus.refresh());
   registerUsageRoutes(app);
+  registerSecretRoutes(app);
   const respond: RespondFn = opts.respond ?? createProviderRespond(opts.db, globalThis.fetch.bind(globalThis), deviceHub, {
     gateway,
     toolsets: [
