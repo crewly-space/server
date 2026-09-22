@@ -54,6 +54,7 @@ Usage: crewly-server [options]
     version: VERSION,
     cloudHandoff: config.cloudHandoff,
     trustedAppOrigins: config.trustedAppOrigins,
+    maxDelegationDepth: config.maxDelegationDepth,
   });
 
   const jobRunner = new JobRunner(db, {

@@ -40,4 +40,11 @@ describe('loadConfig', () => {
   it('rejects unknown options', () => {
     expect(() => loadConfig({}, ['--wat'])).toThrow(/unknown option/);
   });
+
+  it('reads how deep agents may delegate, and refuses a depth the run table cannot hold', () => {
+    expect(loadConfig({ CREWLY_MAX_DELEGATION_DEPTH: '2' }, []).maxDelegationDepth).toBe(2);
+    expect(loadConfig({}, []).maxDelegationDepth).toBeUndefined();
+    expect(() => loadConfig({ CREWLY_MAX_DELEGATION_DEPTH: '9' }, [])).toThrow(/1 to 4/);
+  });
 });
+

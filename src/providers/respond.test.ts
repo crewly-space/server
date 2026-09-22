@@ -9,6 +9,7 @@ import { createAgent } from '../agents/repository.js';
 import { createProviderConfig } from './repository.js';
 import { ProviderError, ProviderUnavailableError } from './errors.js';
 import { createProviderRespond, MAX_TOOL_ROUNDS } from './respond.js';
+import { RunCancelledError } from '../runtime/engine.js';
 
 describe('createProviderRespond', () => {
   let dataDir: string;
@@ -187,6 +188,22 @@ describe('createProviderRespond', () => {
     const result = await respond({ agentId: agent.id, conversationId: 'conversation_1', recentMessages: [] });
     expect(result.body).toBe('hi!');
     expect(offered).toEqual([...Array(MAX_TOOL_ROUNDS).fill(true), false]);
+    db.close();
+  });
+
+  it('stops before the next model call once its run has been cancelled', async () => {
+    const { db, agent } = freshSetup();
+    createProviderConfig(db, { id: 'primary', kind: 'anthropic', apiKey: 'sk-test' });
+    let calls = 0;
+    const respond = createProviderRespond(db, (async () => {
+      calls += 1;
+      return jsonResponse(successBody);
+    }) as unknown as typeof fetch);
+
+    await expect(respond({
+      agentId: agent.id, conversationId: 'conversation_1', recentMessages: [], isCancelled: () => true,
+    })).rejects.toBeInstanceOf(RunCancelledError);
+    expect(calls).toBe(0);
     db.close();
   });
 });

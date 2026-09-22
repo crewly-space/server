@@ -31,6 +31,8 @@ export interface RespondInput {
   run?: { runId: string; rootRunId: string; hopCount: number };
   /** Hears provider calls, retries, fallbacks and tool calls as they happen. */
   onEvent?: (event: TurnEvent) => void;
+  /** True once the run has been cancelled; a responder stops at its next step. */
+  isCancelled?: () => boolean;
 }
 
 /** One tool the model called during a turn. Sizes only: contents stay out of the trace. */
@@ -69,6 +71,23 @@ export interface RunAgentTurnInput {
   triggerMessageId?: string | null;
 }
 
+/** A run another agent asked for: it sees only the task, and its answer goes back, not into the chat. */
+export interface DelegatedTurnInput extends RunAgentTurnInput {
+  rootRunId: string;
+  causationId: string;
+  hopCount: number;
+  task: { text: string; fromAgentId: string };
+}
+
+type Delivery = { kind: 'post' } | { kind: 'return'; task: DelegatedTurnInput['task'] };
+
+interface TurnResult {
+  run: AgentRun;
+  message: Message | null;
+  body: string;
+  handoff: RunAgentTurnOutcome['handoff'];
+}
+
 export interface RunAgentTurnOutcome {
   run: AgentRun;
   message: Message;
@@ -97,6 +116,20 @@ function failureOf(error: unknown): { code: string; message: string } {
 }
 
 export async function runAgentTurn(deps: RunAgentTurnDeps, input: RunAgentTurnInput): Promise<RunAgentTurnOutcome> {
+  const result = await runTurn(deps, input, { kind: 'post' });
+  return { run: result.run, message: result.message!, handoff: result.handoff };
+}
+
+/**
+ * Runs a subtask for another agent and hands the answer back. Nothing is
+ * posted to the conversation: the delegating agent decides what to say.
+ */
+export async function runDelegatedTurn(deps: RunAgentTurnDeps, input: DelegatedTurnInput): Promise<{ run: AgentRun; body: string }> {
+  const result = await runTurn(deps, { ...input, trigger: 'delegation' }, { kind: 'return', task: input.task });
+  return { run: result.run, body: result.body };
+}
+
+async function runTurn(deps: RunAgentTurnDeps, input: RunAgentTurnInput, delivery: Delivery): Promise<TurnResult> {
   const hopCount = input.hopCount ?? 0;
   if (hopCount > DEFAULT_MAX_HOP_COUNT) {
     throw new MaxHopCountExceededError(
@@ -142,7 +175,7 @@ export async function runAgentTurn(deps: RunAgentTurnDeps, input: RunAgentTurnIn
     }
   }
   try {
-    return await executeTurn(deps, input, { runId, rootRunId, causationId, hopCount, topic, trace, changed });
+    return await executeTurn(deps, input, delivery, { runId, rootRunId, causationId, hopCount, topic, trace, changed });
   } finally {
     release?.();
     changed();
@@ -162,8 +195,9 @@ interface TurnContext {
 async function executeTurn(
   deps: RunAgentTurnDeps,
   input: RunAgentTurnInput,
+  delivery: Delivery,
   { runId, rootRunId, causationId, hopCount, topic, trace, changed }: TurnContext,
-): Promise<RunAgentTurnOutcome> {
+): Promise<TurnResult> {
   trace('run.started', { agentId: input.agentId, trigger: input.trigger ?? 'message', hopCount, causationId });
   deps.hub.publish(topic, 'agent.run.started', {
     runId, rootRunId, causationId, agentId: input.agentId, conversationId: input.conversationId,
@@ -177,13 +211,27 @@ async function executeTurn(
 
   let result: AgentTurnResult;
   try {
-    const recentMessages = listRecentMessagesForConversation(deps.db, input.conversationId, 20);
+    // A delegated run sees the task it was given and nothing else of the
+    // conversation: what it may know is what the delegating agent chose to say.
+    const recentMessages: Message[] = delivery.kind === 'return'
+      ? [{
+          id: `task:${runId}`,
+          conversationId: input.conversationId,
+          authorId: delivery.task.fromAgentId,
+          authorType: 'agent',
+          body: delivery.task.text,
+          mentions: [],
+          replyToMessageId: null,
+          createdAt: new Date().toISOString(),
+        }]
+      : listRecentMessagesForConversation(deps.db, input.conversationId, 20);
     result = await deps.respond({
       agentId: input.agentId,
       conversationId: input.conversationId,
       recentMessages,
       run: { runId, rootRunId, hopCount },
       onEvent: ({ type, ...data }) => trace(type, data),
+      isCancelled: () => isRunCancelled(deps.db, runId),
     });
     if (isRunCancelled(deps.db, runId)) throw new RunCancelledError('the run was cancelled before it answered');
   } catch (error) {
@@ -198,6 +246,18 @@ async function executeTurn(
     }
     if (typeof error === 'object' && error !== null) failedRuns.set(error, runId);
     throw error;
+  }
+
+  if (delivery.kind === 'return') {
+    completeAgentRun(deps.db, runId, null);
+    trace('run.completed', { deliveredTo: 'delegating_agent' });
+    finish('completed');
+    return {
+      run: getAgentRun(deps.db, runId)!,
+      message: null,
+      body: result.body,
+      handoff: { attempted: false, dispatched: false },
+    };
   }
 
   const message = createMessage(deps.db, {
@@ -220,12 +280,12 @@ async function executeTurn(
   const run = getAgentRun(deps.db, runId)!;
 
   if (!result.handoffToAgentId) {
-    return { run, message, handoff: { attempted: false, dispatched: false } };
+    return { run, message, body: result.body, handoff: { attempted: false, dispatched: false } };
   }
 
   const nextHopCount = hopCount + 1;
   if (nextHopCount > DEFAULT_MAX_HOP_COUNT) {
-    return { run, message, handoff: { attempted: true, dispatched: false, blockedReason: 'max_hop_count_exceeded' } };
+    return { run, message, body: result.body, handoff: { attempted: true, dispatched: false, blockedReason: 'max_hop_count_exceeded' } };
   }
 
   const nested = await runAgentTurn(deps, {
@@ -240,6 +300,7 @@ async function executeTurn(
   return {
     run,
     message,
+    body: result.body,
     handoff: { attempted: true, dispatched: true, blockedReason: nested.handoff.blockedReason },
   };
 }

@@ -15,6 +15,8 @@ export interface AppConfig {
   cloudHandoff?: { publicKey: string; deploymentId: string };
   /** Browser origins allowed to call this server's API, such as the hosted app. */
   trustedAppOrigins: string[];
+  /** How deep agents may delegate to each other: 1 to 4, from CREWLY_MAX_DELEGATION_DEPTH. */
+  maxDelegationDepth?: number;
 }
 
 const ARG_TO_ENV: Record<string, string> = {
@@ -56,6 +58,10 @@ export function loadConfig(
         throw new Error(`CREWLY_TRUSTED_APP_ORIGINS contains an invalid origin: ${origin}`);
       }
     });
+  const maxDelegationDepth = resolved.CREWLY_MAX_DELEGATION_DEPTH ? Number(resolved.CREWLY_MAX_DELEGATION_DEPTH) : undefined;
+  if (maxDelegationDepth !== undefined && (!Number.isInteger(maxDelegationDepth) || maxDelegationDepth < 1 || maxDelegationDepth > 4)) {
+    throw new Error(`CREWLY_MAX_DELEGATION_DEPTH must be an integer from 1 to 4, got ${resolved.CREWLY_MAX_DELEGATION_DEPTH}`);
+  }
   const logLevel = resolved.CREWLY_LOG_LEVEL ?? 'info';
   if (!['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'].includes(logLevel)) {
     throw new Error(`CREWLY_LOG_LEVEL is invalid: ${logLevel}`);
@@ -71,6 +77,7 @@ export function loadConfig(
       ? { publicKey: handoffPublicKey, deploymentId }
       : undefined,
     trustedAppOrigins,
+    ...(maxDelegationDepth !== undefined ? { maxDelegationDepth } : {}),
   };
 }
 

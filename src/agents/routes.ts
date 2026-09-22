@@ -3,7 +3,10 @@ import { z } from 'zod';
 import { ModelPolicySchema } from '../protocol/index.js';
 import { requireAuth } from '../auth/middleware.js';
 import { createAgent, getAgent, listAgentsForOwner, setAgentAvailability, updateAgent } from './repository.js';
+import { listDelegates, setDelegates } from '../runtime/delegation.js';
 import { getProviderConfig } from '../providers/repository.js';
+
+const DelegatesBodySchema = z.object({ agentIds: z.array(z.string().min(1)).max(50) });
 
 const AvailabilityBodySchema = z.object({ availability: z.enum(['auto', 'dnd']) });
 
@@ -77,5 +80,41 @@ export function registerAgentRoutes(app: FastifyInstance): void {
     setAgentAvailability(app.db, id, body.availability);
     app.agentStatus.refresh(id);
     reply.send(app.agentStatus.status(id));
+  });
+
+  /** Who this agent may hand subtasks to. */
+  app.get('/api/v1/agents/:id/delegates', { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!getAgent(app.db, id)) {
+      reply.code(404).send({ error: 'agent_not_found' });
+      return;
+    }
+    reply.send({ delegates: listDelegates(app.db, id).map(({ id: agentId, name }) => ({ agentId, name })) });
+  });
+
+  app.put('/api/v1/agents/:id/delegates', { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = DelegatesBodySchema.parse(request.body);
+    const agent = getAgent(app.db, id);
+    if (!agent) {
+      reply.code(404).send({ error: 'agent_not_found' });
+      return;
+    }
+    const role = request.user!.role;
+    if (agent.ownerUserId !== request.user!.id && role !== 'owner' && role !== 'admin') {
+      reply.code(403).send({ error: 'forbidden' });
+      return;
+    }
+    if (body.agentIds.includes(id)) {
+      reply.code(400).send({ error: 'cannot_delegate_to_self' });
+      return;
+    }
+    const unknown = body.agentIds.filter((agentId) => !getAgent(app.db, agentId));
+    if (unknown.length) {
+      reply.code(400).send({ error: 'unknown_agents', agentIds: unknown });
+      return;
+    }
+    setDelegates(app.db, id, body.agentIds);
+    reply.send({ delegates: listDelegates(app.db, id).map(({ id: agentId, name }) => ({ agentId, name })) });
   });
 }

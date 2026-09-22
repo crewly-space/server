@@ -31,6 +31,15 @@ export class AgentsResource {
     return this.http.request('GET', `/api/v1/agents/${encodePathSegment(id)}/status`);
   }
 
+  /** The agents this one may hand subtasks to with its `delegate_to_agent` tool. */
+  delegates(id: string): Promise<{ delegates: Array<{ agentId: string; name: string }> }> {
+    return this.http.request('GET', `/api/v1/agents/${encodePathSegment(id)}/delegates`);
+  }
+
+  setDelegates(id: string, agentIds: string[]): Promise<{ delegates: Array<{ agentId: string; name: string }> }> {
+    return this.http.request('PUT', `/api/v1/agents/${encodePathSegment(id)}/delegates`, { agentIds });
+  }
+
   /** `dnd` keeps the agent out of automatic invocation; `auto` returns presence to what it is doing. */
   setAvailability(id: string, availability: 'auto' | 'dnd'): Promise<AgentStatus> {
     return this.http.request('PUT', `/api/v1/agents/${encodePathSegment(id)}/availability`, { availability });
