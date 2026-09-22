@@ -21,6 +21,7 @@ import { installBudgets } from './usage/budgets.js';
 import { priceCall } from './usage/pricing.js';
 import { registerUsageRoutes } from './usage/routes.js';
 import { registerRuntimeRoutes } from './runtime/routes.js';
+import { registerRunInspectorRoutes } from './runtime/inspector-routes.js';
 import { ConnectionHub } from './ws/hub.js';
 import { registerWsRoutes } from './ws/routes.js';
 import { registerUserRoutes } from './users/routes.js';
@@ -153,6 +154,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerConversationSummaryRoutes(app);
   registerProviderRoutes(app, { fetchImpl: opts.fetchImpl });
   registerRuntimeRoutes(app, hub, respond);
+  registerRunInspectorRoutes(app, hub);
   registerApprovalRoutes(app);
   registerWsRoutes(app, hub, opts.trustedAppOrigins ?? []);
   registerDeviceSocket(app, deviceHub, hub);

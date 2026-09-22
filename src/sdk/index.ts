@@ -70,6 +70,13 @@ export {
   type UsageTotals,
 } from './resources/usage.js';
 export {
+  RunsResource,
+  type RunEvent,
+  type RunSummary,
+  type RunTrace,
+  type RunTreeNode,
+} from './resources/runs.js';
+export {
   WsClient,
   type WebSocketConnection,
   type WebSocketConstructor,
@@ -79,6 +86,7 @@ export {
 export type {
   Agent,
   AgentRun,
+  AgentRunStatus,
   ApprovalRequest,
   ChatMessage,
   ChatRequest,

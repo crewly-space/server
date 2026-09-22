@@ -13,6 +13,7 @@ import { UsersResource } from './resources/users.js';
 import { DevicesResource } from './resources/devices.js';
 import { ServerResource } from './resources/server.js';
 import { UsageResource } from './resources/usage.js';
+import { RunsResource } from './resources/runs.js';
 
 export class CrewlyClient {
   private readonly http: HttpClient;
@@ -31,6 +32,7 @@ export class CrewlyClient {
   readonly devices: DevicesResource;
   readonly server: ServerResource;
   readonly usage: UsageResource;
+  readonly runs: RunsResource;
 
   constructor(opts: { baseUrl: string; fetchImpl?: typeof fetch }) {
     this.baseUrl = opts.baseUrl;
@@ -48,6 +50,7 @@ export class CrewlyClient {
     this.devices = new DevicesResource(this.http);
     this.server = new ServerResource(this.http);
     this.usage = new UsageResource(this.http);
+    this.runs = new RunsResource(this.http);
   }
 
   setToken(token: string | undefined): void {

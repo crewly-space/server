@@ -13,6 +13,8 @@ export interface LogEntry {
   at: string;
   subject: string;
   detail: string;
+  /** For a failed run: the run to open in the inspector. */
+  runId?: string;
 }
 
 const count = (db: Database, sql: string, ...params: unknown[]): number =>
@@ -83,12 +85,24 @@ export function registerServerAdminRoutes(app: FastifyInstance, options: { versi
       )
       .all(limit) as { subject: string; detail: string; at: string }[];
 
-    const entries: LogEntry[] = rows.map((row) => ({
-      kind: 'job_failed',
-      at: row.at,
-      subject: row.subject,
-      detail: row.detail,
-    }));
+    const runs = app.db
+      .prepare(
+        `SELECT r.run_id AS runId, COALESCE(a.name, r.agent_id) AS subject,
+                COALESCE(r.error_code || ': ', '') || COALESCE(r.error_message, 'failed') AS detail,
+                COALESCE(r.finished_at, r.created_at) AS at
+         FROM agent_runs r LEFT JOIN agents a ON a.id = r.agent_id
+         WHERE r.status = 'failed'
+         ORDER BY at DESC LIMIT ?`,
+      )
+      .all(limit) as { runId: string; subject: string; detail: string; at: string }[];
+
+    const entries: LogEntry[] = [
+      ...rows.map((row): LogEntry => ({ kind: 'job_failed', at: row.at, subject: row.subject, detail: row.detail })),
+      // Each failed run links to its trace, so the dashboard can open the inspector.
+      ...runs.map((row): LogEntry => ({ kind: 'agent_run_failed', at: row.at, subject: row.subject, detail: row.detail, runId: row.runId })),
+    ]
+      .sort((a, b) => b.at.localeCompare(a.at))
+      .slice(0, limit);
     reply.send({ entries });
   });
 }

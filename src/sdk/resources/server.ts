@@ -21,6 +21,8 @@ export interface ServerLogEntry {
   at: string;
   subject: string;
   detail: string;
+  /** For a failed run: the run to open in the inspector. */
+  runId?: string;
 }
 
 export class ServerResource {

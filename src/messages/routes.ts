@@ -5,7 +5,7 @@ import { getConversation, isParticipant } from '../conversations/repository.js';
 import { getAgent } from '../agents/repository.js';
 import { getProviderConfig } from '../providers/repository.js';
 import { describeAgentFailure } from '../providers/errors.js';
-import { runAgentTurn, type RespondFn } from '../runtime/engine.js';
+import { runAgentTurn, runIdOfFailure, type RespondFn } from '../runtime/engine.js';
 import { enqueueJob } from '../jobs/repository.js';
 import { SUMMARIZE_CONVERSATION_JOB_TYPE } from '../memory/summary.js';
 import type { ConnectionHub } from '../ws/hub.js';
@@ -93,9 +93,9 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
     // A DM always goes to its agent. In a group only the mentioned agents
     // answer, so a busy channel does not wake every agent in it.
     const respondingAgentIds = dmAgentId ? [dmAgentId] : mentionedAgentIds(conversation, body.mentions);
-    const failed = (agentId: string, code: string, error: string) =>
+    const failed = (agentId: string, code: string, error: string, runId?: string) =>
       hub.publish(`user:${request.user!.id}`, 'agent.run.failed', {
-        conversationId: id, messageId: message.id, agentId, code, error,
+        conversationId: id, messageId: message.id, agentId, code, error, ...(runId ? { runId } : {}),
       });
 
     for (const agentId of respondingAgentIds) {
@@ -109,12 +109,13 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
         );
         continue;
       }
-      void runAgentTurn({ db: app.db, hub, respond }, { agentId, conversationId: id }).catch(
-        (error: unknown) => {
-          const failure = describeAgentFailure(error, agentName);
-          failed(agentId, failure.code, failure.message);
-        }
-      );
+      void runAgentTurn(
+        { db: app.db, hub, respond },
+        { agentId, conversationId: id, trigger: 'message', triggerMessageId: message.id },
+      ).catch((error: unknown) => {
+        const failure = describeAgentFailure(error, agentName);
+        failed(agentId, failure.code, failure.message, runIdOfFailure(error));
+      });
     }
   });
 
