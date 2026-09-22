@@ -26,6 +26,8 @@ import { registerUsageRoutes } from './usage/routes.js';
 import { registerSecretRoutes } from './secrets/routes.js';
 import { registerMcpRoutes } from './mcp/routes.js';
 import { mcpToolset, registerMcpSecretHooks } from './mcp/service.js';
+import { registerSkillRoutes } from './skills/routes.js';
+import { registerSkillSecretHooks, skillInstructions } from './skills/skills.js';
 import { registerRuntimeRoutes } from './runtime/routes.js';
 import { registerRunInspectorRoutes } from './runtime/inspector-routes.js';
 import { ConnectionHub } from './ws/hub.js';
@@ -172,8 +174,11 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     clientVersion: opts.version,
   };
   registerMcpRoutes(app, mcpOptions);
+  registerSkillSecretHooks();
+  registerSkillRoutes(app);
   const respond: RespondFn = opts.respond ?? createProviderRespond(opts.db, globalThis.fetch.bind(globalThis), deviceHub, {
     gateway,
+    instructions: [skillInstructions(opts.db)],
     toolsets: [
       mcpToolset(opts.db, mcpOptions),
       delegationToolset({
