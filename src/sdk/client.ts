@@ -16,6 +16,7 @@ import { UsageResource } from './resources/usage.js';
 import { RunsResource } from './resources/runs.js';
 import { SecretsResource } from './resources/secrets.js';
 import { McpResource } from './resources/mcp.js';
+import { SkillsResource } from './resources/skills.js';
 
 export class CrewlyClient {
   private readonly http: HttpClient;
@@ -37,6 +38,7 @@ export class CrewlyClient {
   readonly runs: RunsResource;
   readonly secrets: SecretsResource;
   readonly mcp: McpResource;
+  readonly skills: SkillsResource;
 
   constructor(opts: { baseUrl: string; fetchImpl?: typeof fetch }) {
     this.baseUrl = opts.baseUrl;
@@ -57,6 +59,7 @@ export class CrewlyClient {
     this.runs = new RunsResource(this.http);
     this.secrets = new SecretsResource(this.http);
     this.mcp = new McpResource(this.http);
+    this.skills = new SkillsResource(this.http);
   }
 
   setToken(token: string | undefined): void {

@@ -94,6 +94,13 @@ export {
   type McpTool,
 } from './resources/mcp.js';
 export {
+  SkillsResource,
+  type AgentSkill,
+  type Skill,
+  type SkillConfigField,
+  type SkillInput,
+} from './resources/skills.js';
+export {
   WsClient,
   type WebSocketConnection,
   type WebSocketConstructor,
