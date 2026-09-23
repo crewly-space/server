@@ -28,10 +28,16 @@ describe('sqlite driver', () => {
     expect(db().prepare('SELECT * FROM users WHERE id = ?').get('nope')).toBeUndefined();
   });
 
-  it('rejects a boolean rather than coercing it', () => {
-    expect(() =>
-      db().prepare('INSERT INTO users (id, email, n) VALUES (?, ?, ?)').run('u1', 'a@b.c', true)
-    ).toThrow();
+  it('never stores a boolean as anything but 1 or 0', () => {
+    // Node 24.13 rejects a boolean; 24.21 stores it as 1 or 0.
+    // Either is safe; what must not happen is a stored "true" string.
+    const database = db();
+    try {
+      database.prepare('INSERT INTO users (id, email, n) VALUES (?, ?, ?)').run('u1', 'a@b.c', true);
+    } catch {
+      return;
+    }
+    expect(database.prepare('SELECT n FROM users WHERE id = ?').get('u1')).toEqual({ n: 1 });
   });
 
   it('reports changes and lastInsertRowid', () => {
