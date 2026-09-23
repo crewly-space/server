@@ -22,6 +22,13 @@ const CODE_MESSAGES: Record<string, string> = {
   agent_not_found: 'That agent no longer exists.',
   conversation_not_found: 'That conversation no longer exists.',
   invalid_reply: 'That reply points at a message in another conversation.',
+  channel_not_found: 'That channel no longer exists, or you cannot see it.',
+  channel_name_taken: 'Another channel already has that name.',
+  channel_private: 'That channel is private. Ask an admin to add you.',
+  channel_archived: 'That channel is archived. Nobody can post in it until it is unarchived.',
+  channel_post_restricted: 'Only some roles can post in that channel.',
+  agent_blocked: 'That agent is blocked in this channel. Unblock it first.',
+  category_not_found: 'That section no longer exists.',
   invalid_request: 'Some of those details are not valid. Check the form and try again.',
   network_error: 'Cannot reach the Crewly server. Check that it is running.',
 };
