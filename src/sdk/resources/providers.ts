@@ -56,11 +56,26 @@ export interface ProviderOAuthStart {
   authorizeUrl: string;
 }
 
+/** What one paired device did when asked to switch a device-backed provider on. */
+export interface DeviceEnableOutcome {
+  deviceId: string;
+  deviceName: string;
+  enabled: boolean;
+  /** Why it refused: runtime_missing, provider_sign_in_expired, device_unavailable, ... */
+  error?: string;
+}
+
 export class ProvidersResource {
   constructor(private readonly http: HttpClient) {}
 
-  create(input: CreateProviderInput): Promise<ProviderConfigPublic> {
+  /** For a device-backed kind, the reply also says what each of your devices did. */
+  create(input: CreateProviderInput): Promise<ProviderConfigPublic & { devices?: DeviceEnableOutcome[] }> {
     return this.http.request('POST', '/api/v1/providers', input);
+  }
+
+  /** Asks your paired devices again to switch on an existing device-backed provider. */
+  enableOnDevices(providerId: string): Promise<{ devices: DeviceEnableOutcome[] }> {
+    return this.http.request('POST', `/api/v1/providers/${encodePathSegment(providerId)}/enable-on-devices`);
   }
 
   update(providerId: string, input: UpdateProviderInput): Promise<ProviderConfigPublic> {

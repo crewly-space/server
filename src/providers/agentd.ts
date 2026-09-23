@@ -3,7 +3,13 @@ import type { Database } from '../db/driver.js';
 import { listDevicesForUser } from '../devices/repository.js';
 import { DeviceConnectionHub, DeviceRequestError, DeviceUnavailableError } from '../devices/hub.js';
 import type { ProviderClient } from './client.js';
-import { ProviderUnavailableError } from './errors.js';
+import {
+  ProviderDeviceMissingError,
+  ProviderRuntimeMissingError,
+  ProviderSignInExpiredError,
+  ProviderUnavailableError,
+  type ProviderError,
+} from './errors.js';
 
 export class AgentdBackedProviderClient implements ProviderClient {
   constructor(
@@ -44,13 +50,24 @@ export class AgentdBackedProviderClient implements ProviderClient {
         return capabilities.providers?.some((provider) => provider.kind === this.kind) ?? false;
       } catch { return false; }
     });
-    if (!device) throw new ProviderUnavailableError(`no connected device advertises ${this.kind}`);
+    if (!device) throw new ProviderDeviceMissingError(`no connected device advertises ${this.kind}`);
     return device.id;
   }
 }
 
-function providerUnavailable(kind: ProviderKind, error: unknown): ProviderUnavailableError {
+/*
+ * A device failure, told apart by what would fix it: an expired sign-in wants
+ * `claude login`, a missing runtime wants an install, a missing device wants
+ * pairing, and only the rest is worth retrying.
+ */
+function providerUnavailable(kind: ProviderKind, error: unknown): ProviderError {
   if (error instanceof ProviderUnavailableError) return error;
+  if (error instanceof DeviceRequestError && error.code === 'provider_sign_in_expired') {
+    return new ProviderSignInExpiredError(`${kind} sign-in on the device has expired: ${error.message}`);
+  }
+  if (error instanceof DeviceRequestError && error.code === 'runtime_missing') {
+    return new ProviderRuntimeMissingError(`${kind} cannot run on the device: ${error.message}`);
+  }
   if (error instanceof DeviceRequestError || error instanceof DeviceUnavailableError) {
     return new ProviderUnavailableError(`${kind} device unavailable: ${error.message}`);
   }

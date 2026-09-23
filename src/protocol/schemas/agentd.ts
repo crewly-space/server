@@ -5,6 +5,8 @@ export const AgentdOperationNameSchema = z.enum([
   'runtime.resume',
   'provider.chat',
   'provider.models',
+  /** Turn a device-backed provider on in the device's own configuration. */
+  'provider.enable',
   'workspace.list',
   'approval.respond',
 ]);

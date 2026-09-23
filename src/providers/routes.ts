@@ -21,6 +21,7 @@ import {
 } from './oauth.js';
 import { resolveProviderClient } from './registry.js';
 import { providerHealth } from '../gateway/health.js';
+import { enableOnDevices } from './device-enable.js';
 
 function isAgentdBackedKind(kind: ProviderKind): boolean {
   return (AGENTD_BACKED_PROVIDER_KINDS as readonly ProviderKind[]).includes(kind);
@@ -161,8 +162,40 @@ export function registerProviderRoutes(
       return;
     }
     const config = createProviderConfig(app.db, body);
+    // A device-backed provider also has to be switched on where it runs. The
+    // requester's own signed-in devices are asked to do that now, so nobody
+    // has to open a terminal; each outcome is returned so the app can say
+    // which device took it, or why none could.
+    const devices = (AGENTD_BACKED_PROVIDER_KINDS as readonly string[]).includes(config.kind)
+      ? await enableOnDevices(app.db, app.deviceHub, request.user!.id, config.kind)
+      : undefined;
     app.agentStatus.refresh();
-    reply.code(201).send(redact(config));
+    reply.code(201).send({ ...redact(config), ...(devices ? { devices } : {}) });
+  });
+
+  /*
+   * Asks again. A device that was signed out, asleep or missing Claude Code
+   * when the provider was connected can be fixed later; this is how the app
+   * tries once more without deleting and recreating the provider.
+   */
+  app.post('/api/v1/providers/:id/enable-on-devices', { preHandler: requireAuth }, async (request, reply) => {
+    if (!can(request.user!.role as Role, 'provider:manage')) {
+      reply.code(403).send({ error: 'forbidden' });
+      return;
+    }
+    const { id } = request.params as { id: string };
+    const config = getProviderConfig(app.db, id);
+    if (!config) {
+      reply.code(404).send({ error: 'provider_not_found' });
+      return;
+    }
+    if (!(AGENTD_BACKED_PROVIDER_KINDS as readonly string[]).includes(config.kind)) {
+      reply.code(400).send({ error: 'not_device_backed' });
+      return;
+    }
+    const devices = await enableOnDevices(app.db, app.deviceHub, request.user!.id, config.kind);
+    app.agentStatus.refresh();
+    reply.send({ devices });
   });
 
   app.get('/api/v1/providers', { preHandler: requireAuth }, async (request, reply) => {
