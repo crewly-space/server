@@ -51,3 +51,21 @@ All routes require an owner or admin.
 
 `POST /api/v1/invites` accepts an optional `email`. The invite is then also sent through the
 configured provider, and the response includes the delivery.
+
+## Custom sending domains (Crewly Mail)
+
+Crewly Mail sends from the shared Crewly address until you verify a domain of your own:
+
+1. Add the domain (`POST /api/v1/server/mail/domains` `{domain}`). Crewly returns the DNS records
+   its mail provider needs, such as DKIM, SPF and the return path.
+2. Add those records at your DNS host, then check (`POST /api/v1/server/mail/domains/:id/check`).
+   If a record is still missing, the check names it. Crewly also rechecks pending domains in the
+   background.
+3. Once the domain is verified, Crewly Mail sends from its first allowed sender. Set the allowed
+   senders with `PUT /api/v1/server/mail/domains/:id/senders` `{senders: [{localPart, name?}]}`.
+   A `From` that isn't on the list, or on a domain that isn't verified, is refused.
+
+Removing a domain (`DELETE /api/v1/server/mail/domains/:id`) stops Crewly Mail from sending from it
+immediately. A domain belongs to one server at a time: to move it, remove it first, from the server
+or from the account's **Connected servers** page in Crewly. Custom domains apply only to Crewly Mail.
+SMTP, Resend and Postmark configured on the server are unaffected.

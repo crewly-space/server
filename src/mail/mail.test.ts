@@ -297,3 +297,61 @@ describe('mail routes and invites', () => {
     expect(sent[0]).toContain(`http://crew.example.com/join#invite=${invite.code}`);
   });
 });
+
+describe('custom sending domains', () => {
+  let db: Database;
+  let app: Awaited<ReturnType<typeof buildApp>>;
+  let owner: { authorization: string };
+  let calls: Array<{ method: string; url: string; auth: string | undefined; body: unknown }>;
+
+  beforeEach(async () => {
+    db = openSqlite(':memory:');
+    runMigrations(db);
+    calls = [];
+    const fetchImpl: typeof fetch = async (url, init) => {
+      const headers = init?.headers as Record<string, string>;
+      calls.push({ method: init?.method ?? 'GET', url: String(url), auth: headers?.authorization, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (init?.method === 'DELETE') return new Response(null, { status: 204 });
+      if (String(url).endsWith('/api/v1/instance/mail/domains') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ error: 'That domain is already in use with Crewly Mail; remove it there first' }), { status: 409 });
+      }
+      return new Response(JSON.stringify({ domain: { id: 'dom-1', domain: 'acme.com', status: 'pending' } }), { status: 200 });
+    };
+    app = await buildApp({ db, fetchImpl });
+    owner = { authorization: `Bearer ${createSession(db, createUser(db, { email: 'o@example.com', displayName: 'O', passwordHash: 'x', role: 'owner' }).id)}` };
+  });
+  afterEach(async () => {
+    await app.close();
+    db.close();
+  });
+
+  it('needs the Crewly connection with mail:send', async () => {
+    const response = await app.inject({ method: 'GET', url: '/api/v1/server/mail/domains', headers: owner });
+    expect(response.statusCode).toBe(409);
+    expect(calls).toEqual([]);
+  });
+
+  it('carries requests to Crewly with the instance credential, and passes its refusals on', async () => {
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO crewly_connection (id, cloud_url, status, instance_id, credential_ciphertext, credential_version, scopes, connected_at, updated_at)
+       VALUES (1, 'https://crewly.test', 'connected', 'inst-1', ?, 1, '["mail:send"]', ?, ?)`,
+    ).run(encryptDatabaseSecret(db, 'crewly_inst_x'), now, now);
+
+    const check = await app.inject({ method: 'POST', url: '/api/v1/server/mail/domains/dom-1/check', headers: owner });
+    expect(check.json().domain.status).toBe('pending');
+    expect(calls[0]).toMatchObject({ method: 'POST', url: 'https://crewly.test/api/v1/instance/mail/domains/dom-1/check', auth: 'Bearer crewly_inst_x' });
+
+    const senders = await app.inject({ method: 'PUT', url: '/api/v1/server/mail/domains/dom-1/senders', headers: owner, payload: { senders: [{ localPart: 'crew', name: 'Acme' }] } });
+    expect(senders.statusCode).toBe(200);
+    expect(calls[1]!.body).toEqual({ senders: [{ localPart: 'crew', name: 'Acme' }] });
+
+    const taken = await app.inject({ method: 'POST', url: '/api/v1/server/mail/domains', headers: owner, payload: { domain: 'acme.com' } });
+    expect(taken.statusCode).toBe(409);
+    expect(taken.json().message).toBe('That domain is already in use with Crewly Mail; remove it there first');
+    // The credential never comes back to the browser.
+    expect(taken.body).not.toContain('crewly_inst_x');
+
+    expect((await app.inject({ method: 'DELETE', url: '/api/v1/server/mail/domains/dom-1', headers: owner })).statusCode).toBe(204);
+  });
+});

@@ -37,6 +37,25 @@ export interface MailDelivery {
   sentAt: string | null;
 }
 
+export interface MailSender {
+  localPart: string;
+  name?: string | null;
+}
+
+/** A sending domain for Crewly Mail, with the DNS records its provider asked for. */
+export interface MailDomain {
+  id: string;
+  domain: string;
+  status: 'pending' | 'verified' | 'failed';
+  /** Why it is not verified yet, in words to act on. */
+  failureReason: string | null;
+  records: Array<{ type: string; name: string; value: string; priority?: number; purpose: string }>;
+  senders: MailSender[];
+  lastCheckedAt: string | null;
+  verifiedAt: string | null;
+  createdAt: string;
+}
+
 export interface MailOverview {
   settings: MailSettings;
   providers: MailProvider[];
@@ -71,6 +90,29 @@ export class MailResource {
 
   retry(id: string): Promise<{ delivery: MailDelivery }> {
     return this.http.request('POST', `/api/v1/server/mail/deliveries/${encodePathSegment(id)}/retry`);
+  }
+
+  /** Custom sending domains for Crewly Mail, verified in Crewly. Needs the Crewly connection with `mail:send`. */
+  domains(): Promise<{ domains: MailDomain[] }> {
+    return this.http.request('GET', '/api/v1/server/mail/domains');
+  }
+
+  /** Returns the DNS records to add; the domain is used once `check` reports it verified. */
+  addDomain(domain: string): Promise<{ domain: MailDomain }> {
+    return this.http.request('POST', '/api/v1/server/mail/domains', { domain });
+  }
+
+  checkDomain(id: string): Promise<{ domain: MailDomain }> {
+    return this.http.request('POST', `/api/v1/server/mail/domains/${encodePathSegment(id)}/check`);
+  }
+
+  /** The addresses on the domain this server may send from; the first is the default. */
+  setDomainSenders(id: string, senders: MailSender[]): Promise<{ domain: MailDomain }> {
+    return this.http.request('PUT', `/api/v1/server/mail/domains/${encodePathSegment(id)}/senders`, { senders });
+  }
+
+  removeDomain(id: string): Promise<void> {
+    return this.http.request('DELETE', `/api/v1/server/mail/domains/${encodePathSegment(id)}`);
   }
 
   /** What Crewly Mail has counted for this server this month, when it uses Crewly Mail. */

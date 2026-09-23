@@ -110,6 +110,8 @@ export { CrewlyResource, type CrewlyAuditEntry, type CrewlyConnection } from './
 export {
   MailResource,
   type MailDelivery,
+  type MailDomain,
+  type MailSender,
   type MailErrorClass,
   type MailOverview,
   type MailProvider,

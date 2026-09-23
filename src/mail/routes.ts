@@ -17,6 +17,10 @@ const SettingsBodySchema = z.object({
   secret: z.string().min(1).max(4096).optional(),
 });
 const TestBodySchema = z.object({ to: z.string().email().max(320) });
+const DomainBodySchema = z.object({ domain: z.string().trim().min(4).max(253) });
+const SendersBodySchema = z.object({
+  senders: z.array(z.object({ localPart: z.string().min(1).max(64), name: z.string().max(80).nullable().optional() })).min(1).max(20),
+});
 const DeliveriesQuerySchema = z.object({
   status: z.enum(['queued', 'sent', 'retrying', 'failed']).optional(),
   limit: z.coerce.number().int().positive().max(500).default(100),
@@ -85,6 +89,69 @@ export function registerMailRoutes(app: FastifyInstance, mail: MailService, opti
       return;
     }
     reply.send({ delivery });
+  });
+
+  /*
+   * Custom sending domains for Crewly Mail. They live in Crewly, which owns
+   * verification; these routes carry the admin's request there with this
+   * server's instance credential, which never leaves the server.
+   */
+  const toCrewly = async (reply: FastifyReply, method: string, path: string, body?: unknown): Promise<void> => {
+    const connection = crewlyServiceCredential(app.db, 'mail:send');
+    if (!connection) {
+      reply.code(409).send({ error: 'crewly_mail_unavailable', message: 'Connect this server to Crewly with the email service first' });
+      return;
+    }
+    let response: Response;
+    try {
+      response = await options.fetchImpl(new URL(path, connection.cloudUrl), {
+        method,
+        headers: {
+          authorization: `Bearer ${connection.credential}`,
+          accept: 'application/json',
+          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        redirect: 'error',
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch {
+      reply.code(502).send({ error: 'crewly_unreachable', message: 'Crewly could not be reached' });
+      return;
+    }
+    if (response.status === 204) {
+      reply.code(204).send();
+      return;
+    }
+    const answer = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    // Crewly's own words for a refusal are written for the person reading them.
+    reply.code(response.status).send(response.ok ? answer : { error: 'crewly_refused', message: String(answer.error ?? 'Crewly refused') });
+  };
+  const domainPath = (id: string) => `/api/v1/instance/mail/domains/${encodeURIComponent(id)}`;
+
+  app.get('/api/v1/server/mail/domains', { preHandler: requireAuth }, async (request, reply) => {
+    if (!isAdmin(request, reply)) return;
+    await toCrewly(reply, 'GET', '/api/v1/instance/mail/domains');
+  });
+
+  app.post('/api/v1/server/mail/domains', { preHandler: requireAuth }, async (request, reply) => {
+    if (!isAdmin(request, reply)) return;
+    await toCrewly(reply, 'POST', '/api/v1/instance/mail/domains', DomainBodySchema.parse(request.body));
+  });
+
+  app.post('/api/v1/server/mail/domains/:id/check', { preHandler: requireAuth }, async (request, reply) => {
+    if (!isAdmin(request, reply)) return;
+    await toCrewly(reply, 'POST', `${domainPath((request.params as { id: string }).id)}/check`);
+  });
+
+  app.put('/api/v1/server/mail/domains/:id/senders', { preHandler: requireAuth }, async (request, reply) => {
+    if (!isAdmin(request, reply)) return;
+    await toCrewly(reply, 'PUT', `${domainPath((request.params as { id: string }).id)}/senders`, SendersBodySchema.parse(request.body));
+  });
+
+  app.delete('/api/v1/server/mail/domains/:id', { preHandler: requireAuth }, async (request, reply) => {
+    if (!isAdmin(request, reply)) return;
+    await toCrewly(reply, 'DELETE', domainPath((request.params as { id: string }).id));
   });
 
   /** What Crewly Mail has counted against this server, as Crewly reports it. */
