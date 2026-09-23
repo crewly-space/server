@@ -106,6 +106,16 @@ export {
   type SkillConfigField,
   type SkillInput,
 } from './resources/skills.js';
+export { CrewlyResource, type CrewlyAuditEntry, type CrewlyConnection } from './resources/crewly.js';
+export {
+  MailResource,
+  type MailDelivery,
+  type MailErrorClass,
+  type MailOverview,
+  type MailProvider,
+  type MailSettings,
+  type MailSettingsInput,
+} from './resources/mail.js';
 export {
   WsClient,
   type WebSocketConnection,

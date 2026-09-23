@@ -5,6 +5,7 @@ import type { DeviceConnectionHub } from './devices/hub.js';
 import type { AiGateway } from './gateway/gateway.js';
 import type { AgentStatusBroadcaster } from './agents/status.js';
 import type { AgentRunQueue } from './runtime/queue.js';
+import type { MailService } from './mail/service.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -14,6 +15,7 @@ declare module 'fastify' {
     gateway: AiGateway;
     agentStatus: AgentStatusBroadcaster;
     runQueue: AgentRunQueue;
+    mail: MailService;
   }
   interface FastifyRequest {
     user?: { id: string; role: string };

@@ -106,4 +106,24 @@ describe('SDK end-to-end against a real running server', () => {
 
     ws.close();
   });
+
+  it('configures mail and reads the Crewly connection through the SDK', async () => {
+    const client = new CrewlyClient({ baseUrl });
+    const setup = await client.auth.setup({ email: 'owner@example.com', displayName: 'Owner', password: 'super-secret-1' });
+    client.setToken(setup.token);
+
+    await expect(client.crewly.get()).resolves.toMatchObject({ status: 'disconnected', link: null });
+
+    const overview = await client.mail.get();
+    expect(overview).toMatchObject({ settings: { provider: 'disabled' }, crewlyMailAvailable: false });
+    const saved = await client.mail.update({
+      provider: 'smtp',
+      fromAddress: 'crew@example.com',
+      config: { host: 'smtp.example.com', port: 587, security: 'starttls', username: 'u' },
+      secret: 'smtp-password',
+    });
+    expect(saved.settings).toMatchObject({ provider: 'smtp', hasSecret: true });
+    expect(JSON.stringify(saved)).not.toContain('smtp-password');
+    await expect(client.mail.deliveries()).resolves.toEqual({ deliveries: [] });
+  });
 });

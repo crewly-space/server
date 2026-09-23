@@ -69,6 +69,9 @@ Usage: crewly-server [options]
   pruneOperationalData(db);
   const maintenanceTimer = setInterval(() => pruneOperationalData(db), 6 * 60 * 60 * 1000);
   maintenanceTimer.unref?.();
+  // Mail that failed in a way worth retrying is tried again on its schedule.
+  const mailRetryTimer = setInterval(() => { app.mail.retryDue().catch((error) => app.log.error(error)); }, 30_000);
+  mailRetryTimer.unref?.();
 
   let closing = false;
   const close = async (signal: string) => {
@@ -77,6 +80,7 @@ Usage: crewly-server [options]
     app.log.info({ signal }, 'shutting down');
     jobRunner.stop();
     clearInterval(maintenanceTimer);
+    clearInterval(mailRetryTimer);
     await app.close();
     db.close();
   };

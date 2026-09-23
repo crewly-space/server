@@ -34,6 +34,8 @@ const CreateUserBodySchema = z.object({
 const CreateInviteBodySchema = z.object({
   role: z.enum(['admin', 'member']).default('member'),
   label: z.string().trim().max(120).optional(),
+  /** Also send the invite by email, through whatever mail provider the server uses. */
+  email: z.string().email().max(320).optional(),
 });
 
 const AcceptInviteBodySchema = z.object({
@@ -110,15 +112,32 @@ export function registerUserRoutes(app: FastifyInstance): void {
       reply.code(403).send({ error: 'owner_required_for_admin' });
       return;
     }
+    // Checked before the invite exists, so asking for an email that cannot be sent creates nothing.
+    if (body.email && !app.mail.enabled()) {
+      reply.code(409).send({ error: 'mail_disabled', message: 'Outbound email is disabled on this server' });
+      return;
+    }
     pruneExpiredInvites(app.db);
     const { invite, code } = createInvite(app.db, {
       role: body.role,
       createdBy: request.user!.id,
       label: body.label ?? null,
     });
+    // A failed send is a delivery to inspect, not a failed invite: the code
+    // below still works when handed over another way.
+    const delivery = body.email
+      ? await app.mail.send({
+        to: body.email,
+        template: {
+          id: 'member.invited',
+          variables: { inviteUrl: `${request.protocol}://${request.headers.host}/join#invite=${code}`, role: invite.role },
+        },
+        idempotencyKey: `invite:${invite.id}`,
+      })
+      : undefined;
     // The only time the code is ever returned: it is stored hashed, so nothing
     // can read it back afterwards.
-    reply.code(201).send({ invite: { ...invite, code } });
+    reply.code(201).send({ invite: { ...invite, code }, ...(delivery ? { delivery } : {}) });
   });
 
   app.get('/api/v1/invites', { preHandler: requireAuth }, async (request, reply) => {

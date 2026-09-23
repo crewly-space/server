@@ -38,6 +38,8 @@ import { registerDeviceRoutes } from './devices/routes.js';
 import { registerDeviceSocket } from './devices/socket.js';
 import { registerCrewlyRoutes } from './crewly/routes.js';
 import { DEFAULT_CREWLY_CLOUD_URL } from './crewly/connection.js';
+import { MailService } from './mail/service.js';
+import { registerMailRoutes } from './mail/routes.js';
 
 export interface BuildAppOptions {
   db: Database;
@@ -68,6 +70,8 @@ export interface BuildAppOptions {
   allowMcpStdio?: boolean;
   /** The Crewly this server may connect to for managed services; https://app.crewly.space by default. */
   crewlyCloudUrl?: string;
+  /** The outbound mail gateway; built from `fetchImpl` when absent. */
+  mail?: MailService;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -158,6 +162,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
     version: opts.version ?? '0.0.0-dev',
   });
+  const mail = opts.mail ?? new MailService(opts.db, { fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis) });
+  app.decorate('mail', mail);
+  registerMailRoutes(app, mail, { fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis) });
   registerDeviceRoutes(app, deviceHub);
   registerAgentRoutes(app);
   registerConversationRoutes(app);

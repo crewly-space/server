@@ -1,4 +1,5 @@
 import type { HttpClient } from '../http-client.js';
+import type { MailDelivery } from './mail.js';
 
 export type UserRole = 'owner' | 'admin' | 'member';
 
@@ -61,7 +62,8 @@ export class UsersResource {
   }
 
   /** The reply carries the code. It is stored hashed, so this is the only time it is readable. */
-  createInvite(input: { role?: Exclude<UserRole, 'owner'>; label?: string } = {}): Promise<{ invite: Invite }> {
+  /** With `email`, the server also sends the invite through its mail provider and returns the delivery. */
+  createInvite(input: { role?: Exclude<UserRole, 'owner'>; label?: string; email?: string } = {}): Promise<{ invite: Invite; delivery?: MailDelivery }> {
     return this.http.request('POST', '/api/v1/invites', input);
   }
 
