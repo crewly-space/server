@@ -3,6 +3,7 @@ import { verifySessionToken } from '../auth/session.js';
 import { listConversationsForParticipant } from '../conversations/repository.js';
 import type { ConnectionHub } from './hub.js';
 import { AGENT_STATUS_TOPIC } from '../agents/status.js';
+import { CHANNELS_TOPIC } from '../channels/routes.js';
 
 export function registerWsRoutes(
   app: FastifyInstance,
@@ -25,12 +26,14 @@ export function registerWsRoutes(
       return;
     }
 
-    const conversationTopics = listConversationsForParticipant(app.db, userId).map(
+    const conversationTopics = listConversationsForParticipant(app.db, userId, { includeChannels: true }).map(
       (c) => `conversation:${c.id}`
     );
     // Agent status is server-wide: everyone sees the same canonical state.
-    const topics = [`user:${userId}`, AGENT_STATUS_TOPIC, ...conversationTopics];
-    hub.subscribe(socket, topics);
+    // So are channel changes: the event names the channel, and each reader
+    // fetches what they may see of it.
+    const topics = [`user:${userId}`, AGENT_STATUS_TOPIC, CHANNELS_TOPIC, ...conversationTopics];
+    hub.subscribe(socket, topics, userId);
 
     const sinceSeqParam = url.searchParams.get('sinceSeq');
     if (sinceSeqParam !== null) {

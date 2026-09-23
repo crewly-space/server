@@ -3,6 +3,7 @@ export * from './schemas/common.js';
 export * from './schemas/agent.js';
 export * from './schemas/runtime.js';
 export * from './schemas/conversation.js';
+export * from './schemas/channel.js';
 export * from './schemas/message.js';
 export * from './schemas/provider.js';
 export * from './schemas/agentd.js';

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ActorTypeSchema } from './common.js';
 
-export const ConversationKindSchema = z.enum(['dm', 'group']);
+export const ConversationKindSchema = z.enum(['dm', 'group', 'channel']);
 export type ConversationKind = z.infer<typeof ConversationKindSchema>;
 
 export const ParticipantRefSchema = z.object({
@@ -15,13 +15,18 @@ export const ConversationSchema = z
     id: z.string().min(1),
     kind: ConversationKindSchema,
     name: z.string().min(1).nullable(),
-    participants: z.array(ParticipantRefSchema).min(2),
+    // A channel can be empty or have one member; a DM or group cannot.
+    participants: z.array(ParticipantRefSchema),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
-  .refine((c) => c.kind !== 'group' || c.name !== null, {
-    message: 'group conversations require a name',
+  .refine((c) => c.kind === 'dm' || c.name !== null, {
+    message: 'group conversations and channels require a name',
     path: ['name'],
+  })
+  .refine((c) => c.kind === 'channel' || c.participants.length >= 2, {
+    message: 'dm and group conversations require at least two participants',
+    path: ['participants'],
   })
   .refine((c) => c.kind !== 'dm' || c.participants.length === 2, {
     message: 'dm conversations require exactly two participants',

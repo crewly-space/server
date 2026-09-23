@@ -11,6 +11,7 @@ import { registerApprovalRoutes } from './approvals/routes.js';
 import { registerAuthRoutes } from './auth/routes.js';
 import type { CloudHandoffConfig } from './auth/cloud-handoff.js';
 import { registerConversationRoutes } from './conversations/routes.js';
+import { registerChannelRoutes } from './channels/routes.js';
 import { registerMessageRoutes } from './messages/routes.js';
 import { registerConversationSummaryRoutes, registerMemoryFactRoutes } from './memory/routes.js';
 import { registerProviderRoutes } from './providers/routes.js';
@@ -179,6 +180,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerDeviceRoutes(app, deviceHub);
   registerAgentRoutes(app);
   registerConversationRoutes(app);
+  registerChannelRoutes(app);
   const gateway = opts.gateway ?? new AiGateway({
     db: opts.db,
     fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),

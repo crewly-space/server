@@ -10,7 +10,8 @@ import { enqueueJob } from '../jobs/repository.js';
 import { SUMMARIZE_CONVERSATION_JOB_TYPE } from '../memory/summary.js';
 import type { ConnectionHub } from '../ws/hub.js';
 import { emitNotification } from '../notifications/service.js';
-import { getUserById } from '../users/repository.js';
+import { getUserById, type Role } from '../users/repository.js';
+import { canReadChannel, getChannel } from '../channels/repository.js';
 import { createMessage, listMessagesForConversation, ReplyNotInConversationError } from './repository.js';
 
 const CreateMessageBodySchema = z.object({
@@ -53,6 +54,17 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
     if (!isParticipant(app.db, id, request.user!.id, 'user')) {
       reply.code(403).send({ error: 'not_a_participant' });
       return;
+    }
+    if (conversation.kind === 'channel') {
+      const channel = getChannel(app.db, id, { id: request.user!.id, role: request.user!.role as Role });
+      if (channel?.archivedAt) {
+        reply.code(409).send({ error: 'channel_archived' });
+        return;
+      }
+      if (!channel?.canPost) {
+        reply.code(403).send({ error: 'channel_post_restricted' });
+        return;
+      }
     }
     const body = CreateMessageBodySchema.parse(request.body);
     const dmAgentId = conversation.kind === 'dm'
@@ -121,7 +133,7 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
       });
     }
 
-    // A DM always goes to its agent. In a group only the mentioned agents
+    // A DM always goes to its agent. In a group or channel only the mentioned agents
     // answer, so a busy channel does not wake every agent in it.
     const respondingAgentIds = dmAgentId ? [dmAgentId] : mentionedAgentIds(conversation, body.mentions);
     const failed = (agentId: string, code: string, error: string, runId?: string) =>
@@ -152,7 +164,8 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
 
   app.get('/api/v1/conversations/:id/messages', { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    if (!isParticipant(app.db, id, request.user!.id, 'user')) {
+    // A public channel can be read before it is joined; everything else takes membership.
+    if (!isParticipant(app.db, id, request.user!.id, 'user') && !canReadChannel(app.db, id, request.user!.id)) {
       reply.code(403).send({ error: 'not_a_participant' });
       return;
     }

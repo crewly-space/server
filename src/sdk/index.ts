@@ -22,6 +22,11 @@ export {
   type CreateDmInput,
   type CreateGroupInput,
 } from './resources/conversations.js';
+export {
+  ChannelsResource,
+  type CreateChannelInput,
+  type UpdateChannelInput,
+} from './resources/channels.js';
 export { HealthResource, type HealthStatus } from './resources/health.js';
 export { MessagesResource, type SendMessageInput } from './resources/messages.js';
 export {
@@ -147,6 +152,11 @@ export type {
   AgentStatus,
   AgentRunStatus,
   ApprovalRequest,
+  Channel,
+  ChannelCategory,
+  ChannelList,
+  ChannelPostRole,
+  ChannelVisibility,
   ChatMessage,
   ChatRequest,
   ChatResponse,

@@ -8,6 +8,7 @@ import type { ConnectionHub } from '../ws/hub.js';
 import { runDelegatedTurn, runIdOfFailure, RunCancelledError, type RespondFn } from './engine.js';
 import type { AgentRunQueue } from './queue.js';
 import { appendRunEvent, listAgentRunsForRoot } from './runs.js';
+import { isAgentBlocked } from '../channels/repository.js';
 
 export const DELEGATE_TOOL = 'delegate_to_agent';
 
@@ -109,6 +110,10 @@ export function delegationToolset(options: DelegationOptions): ToolsetProvider {
         const refuse = (message: string) => ({ content: JSON.stringify({ status: 'refused', error: message }), isError: true });
         if (!target) return refuse(`You cannot delegate to "${requested}".`);
         if (!task) return refuse('The task is empty.');
+        // A channel that keeps an agent out keeps it out of work done there too.
+        if (isAgentBlocked(db, input.conversationId, target.id)) {
+          return refuse(`${target.name} is blocked in this channel.`);
+        }
         if (agentsInChain(db, run.rootRunId, run.runId).has(target.id)) {
           return refuse(`${target.name} is already working on this chain; delegating back would loop.`);
         }

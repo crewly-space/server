@@ -64,4 +64,22 @@ describe('ConnectionHub', () => {
     expect((replayed[0].payload as { n: number }).n).toBe(2);
     db.close();
   });
+
+  it('adds and drops a topic on the sockets someone already has open', () => {
+    const { db, hub } = freshHub();
+    const mine = fakeSocket();
+    const theirs = fakeSocket();
+    hub.subscribe(mine, ['user:a'], 'a');
+    hub.subscribe(theirs, ['user:b'], 'b');
+
+    hub.addUserTopic('a', 'conversation:c1');
+    hub.publish('conversation:c1', 'message.created', { id: 'm1' });
+    expect(mine.send).toHaveBeenCalledTimes(1);
+    expect(theirs.send).not.toHaveBeenCalled();
+
+    hub.removeUserTopic('a', 'conversation:c1');
+    hub.publish('conversation:c1', 'message.created', { id: 'm2' });
+    expect(mine.send).toHaveBeenCalledTimes(1);
+    db.close();
+  });
 });

@@ -12,6 +12,8 @@ interface EventRow {
 
 export class ConnectionHub {
   private sockets = new Map<WebSocket, Set<string>>();
+  /** Whose each socket is, so a topic can follow a person onto their open sockets. */
+  private owners = new Map<WebSocket, string>();
 
   constructor(private db: Database) {}
 
@@ -31,12 +33,24 @@ export class ConnectionHub {
     return event;
   }
 
-  subscribe(socket: WebSocket, topics: string[]): void {
+  subscribe(socket: WebSocket, topics: string[], userId?: string): void {
     this.sockets.set(socket, new Set(topics));
+    if (userId) this.owners.set(socket, userId);
   }
 
   unsubscribe(socket: WebSocket): void {
     this.sockets.delete(socket);
+    this.owners.delete(socket);
+  }
+
+  /** Starts sending a topic to every socket someone already has open, e.g. on joining a channel. */
+  addUserTopic(userId: string, topic: string): void {
+    for (const [socket, owner] of this.owners) if (owner === userId) this.sockets.get(socket)?.add(topic);
+  }
+
+  /** Stops sending a topic to someone's open sockets, e.g. on leaving or being removed from a channel. */
+  removeUserTopic(userId: string, topic: string): void {
+    for (const [socket, owner] of this.owners) if (owner === userId) this.sockets.get(socket)?.delete(topic);
   }
 
   replaySince(topics: string[], sinceSeq: number): WsServerEvent[] {

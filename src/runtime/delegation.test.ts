@@ -177,6 +177,25 @@ describe('agent-to-agent delegation', () => {
     expect(toolResult(sent[1]!)).toMatchObject({ status: 'refused', error: 'Researcher is unavailable (dnd).' });
   });
 
+  it('will not bring in an agent the channel has blocked', async () => {
+    setDelegates(db, lead, [researcher]);
+    await boot();
+    const created = await app.inject({
+      method: 'POST', url: '/api/v1/channels', headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'research', members: [{ participantId: lead, participantType: 'agent' }] },
+    });
+    conversationId = created.json().id;
+    await app.inject({ method: 'PUT', url: `/api/v1/channels/${conversationId}/agents/${researcher}/block`, headers: { authorization: `Bearer ${token}` } });
+    replies.push(delegate('Researcher', 'dig'), text('I will do it myself.'));
+    const response = await app.inject({
+      method: 'POST', url: `/api/v1/conversations/${conversationId}/messages`, headers: { authorization: `Bearer ${token}` },
+      payload: { body: '@Lead go', mentions: [{ targetId: lead, targetType: 'agent' }] },
+    });
+    expect(response.statusCode).toBe(201);
+    for (let i = 0; i < 200 && sent.length < 2; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(toolResult(sent[1]!)).toMatchObject({ status: 'refused', error: 'Researcher is blocked in this channel.' });
+  });
+
   it('tells the delegating agent when the delegate failed, and lets it carry on', async () => {
     setDelegates(db, lead, [researcher]);
     await boot();

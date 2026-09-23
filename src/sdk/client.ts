@@ -3,6 +3,7 @@ import { AgentsResource } from './resources/agents.js';
 import { ApprovalsResource } from './resources/approvals.js';
 import { AuthResource } from './resources/auth.js';
 import { ConversationsResource } from './resources/conversations.js';
+import { ChannelsResource } from './resources/channels.js';
 import { HealthResource } from './resources/health.js';
 import { MemoryResource } from './resources/memory.js';
 import { MessagesResource } from './resources/messages.js';
@@ -28,6 +29,7 @@ export class CrewlyClient {
   readonly auth: AuthResource;
   readonly agents: AgentsResource;
   readonly conversations: ConversationsResource;
+  readonly channels: ChannelsResource;
   readonly health: HealthResource;
   readonly messages: MessagesResource;
   readonly memory: MemoryResource;
@@ -52,6 +54,7 @@ export class CrewlyClient {
     this.auth = new AuthResource(this.http);
     this.agents = new AgentsResource(this.http);
     this.conversations = new ConversationsResource(this.http);
+    this.channels = new ChannelsResource(this.http);
     this.health = new HealthResource(this.http);
     this.messages = new MessagesResource(this.http);
     this.memory = new MemoryResource(this.http);

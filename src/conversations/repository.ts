@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 interface ConversationRow {
   id: string;
-  kind: 'dm' | 'group';
+  kind: 'dm' | 'group' | 'channel';
   name: string | null;
   created_at: string;
   updated_at: string;
@@ -102,12 +102,21 @@ export function isParticipant(
   return row !== undefined;
 }
 
-export function listConversationsForParticipant(db: Database, participantId: string): Conversation[] {
+/**
+ * The conversations someone is in. Channels are left out unless asked for:
+ * they are listed through the channel routes, and a client from before
+ * channels would not know what to make of one.
+ */
+export function listConversationsForParticipant(
+  db: Database,
+  participantId: string,
+  opts: { includeChannels?: boolean } = {}
+): Conversation[] {
   const rows = db
     .prepare(
       `SELECT c.* FROM conversations c
        JOIN conversation_participants cp ON cp.conversation_id = c.id
-       WHERE cp.participant_id = ?
+       WHERE cp.participant_id = ? ${opts.includeChannels ? '' : "AND c.kind <> 'channel'"}
        ORDER BY c.updated_at DESC`
     )
     .all(participantId) as ConversationRow[];
