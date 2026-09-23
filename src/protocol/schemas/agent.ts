@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AvatarModeSchema } from './common.js';
 
 export const ModelPolicySchema = z.object({
   defaultProviderId: z.string().min(1),
@@ -32,6 +33,7 @@ export const AgentSchema = z
     relationships: z.array(RelationshipRefSchema).default([]),
     /** `dnd` keeps the agent out of automatic invocation; `auto` lets presence follow what it is doing. */
     availability: z.enum(['auto', 'dnd']).default('auto'),
+    avatarMode: AvatarModeSchema.default('bloop'),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
