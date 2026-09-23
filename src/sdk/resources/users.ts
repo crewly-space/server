@@ -2,6 +2,14 @@ import type { HttpClient } from '../http-client.js';
 import type { MailDelivery } from './mail.js';
 
 export type UserRole = 'owner' | 'admin' | 'member';
+export type AvatarMode = 'bloop' | 'blobatar' | 'name';
+
+/** Anyone on the server, as a conversation draws them. */
+export interface DirectoryUser {
+  id: string;
+  displayName: string;
+  avatarMode: AvatarMode;
+}
 
 export interface UserAccount {
   id: string;
@@ -11,6 +19,8 @@ export interface UserAccount {
   createdAt: string;
   /** Set while their access is withdrawn; null when they may use the server. */
   suspendedAt?: string | null;
+  /** Absent from servers older than avatar modes; treat as 'bloop'. */
+  avatarMode?: AvatarMode;
 }
 
 /** An invitation to join this server. The code is returned only when it is made. */
@@ -38,6 +48,16 @@ export class UsersResource {
 
   list(): Promise<UserAccount[]> {
     return this.http.request('GET', '/api/v1/users');
+  }
+
+  /** Names and avatars of everyone on the server. Open to members, unlike `list`. */
+  directory(): Promise<{ users: DirectoryUser[] }> {
+    return this.http.request('GET', '/api/v1/users/directory');
+  }
+
+  /** Changes the signed-in person's own name or avatar. */
+  updateMe(input: { displayName?: string; avatarMode?: AvatarMode }): Promise<UserAccount> {
+    return this.http.request('PATCH', '/api/v1/users/me', input);
   }
 
   create(input: CreateUserInput): Promise<UserAccount> {

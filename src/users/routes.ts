@@ -21,6 +21,7 @@ import {
   listUsers,
   setUserRole,
   setUserSuspended,
+  updateOwnProfile,
   type Role,
   type UserRow,
 } from './repository.js';
@@ -46,6 +47,10 @@ const AcceptInviteBodySchema = z.object({
 });
 
 const UpdateUserBodySchema = z.object({ role: z.enum(['owner', 'admin', 'member']) });
+const UpdateProfileBodySchema = z.object({
+  displayName: z.string().trim().min(1).max(100).optional(),
+  avatarMode: z.enum(['bloop', 'blobatar', 'name']).optional(),
+});
 const SuspensionBodySchema = z.object({ suspended: z.boolean() });
 
 function publicUser(user: UserRow) {
@@ -56,7 +61,13 @@ function publicUser(user: UserRow) {
     role: user.role,
     createdAt: user.created_at,
     suspendedAt: user.suspended_at ?? null,
+    avatarMode: user.avatar_mode ?? 'bloop',
   };
+}
+
+/** What anyone on the server may know about anyone else: enough to draw them. */
+function directoryEntry(user: UserRow) {
+  return { id: user.id, displayName: user.display_name, avatarMode: user.avatar_mode ?? 'bloop' };
 }
 
 function canManageUsers(role: string): role is Extract<Role, 'owner' | 'admin'> {
@@ -70,6 +81,23 @@ export function registerUserRoutes(app: FastifyInstance): void {
       return;
     }
     reply.send(listUsers(app.db).map(publicUser));
+  });
+
+  /*
+   * Everyone on the server, as a conversation shows them: name and avatar.
+   *
+   * Members cannot list users -- emails and roles are for whoever administers
+   * the server -- but they still see other people's messages, and have to be
+   * able to draw who wrote them.
+   */
+  app.get('/api/v1/users/directory', { preHandler: requireAuth }, async (_request, reply) => {
+    reply.send({ users: listUsers(app.db).filter((user) => !user.suspended_at).map(directoryEntry) });
+  });
+
+  /** A person's own name and avatar. Anyone may change their own; nobody else's. */
+  app.patch('/api/v1/users/me', { preHandler: requireAuth }, async (request, reply) => {
+    const body = UpdateProfileBodySchema.parse(request.body);
+    reply.send(publicUser(updateOwnProfile(app.db, request.user!.id, body)!));
   });
 
   app.post('/api/v1/users', { preHandler: requireAuth }, async (request, reply) => {

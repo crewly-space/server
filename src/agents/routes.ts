@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { ModelPolicySchema } from '../protocol/index.js';
+import { AvatarModeSchema, ModelPolicySchema } from '../protocol/index.js';
 import { requireAuth } from '../auth/middleware.js';
 import { createAgent, getAgent, listAgentsForOwner, setAgentAvailability, updateAgent } from './repository.js';
 import { listDelegates, setDelegates } from '../runtime/delegation.js';
@@ -14,6 +14,7 @@ const CreateAgentBodySchema = z.object({
   name: z.string().min(1),
   personality: z.string().default(''),
   modelPolicy: ModelPolicySchema,
+  avatarMode: AvatarModeSchema.optional(),
 });
 
 export function registerAgentRoutes(app: FastifyInstance): void {
@@ -29,6 +30,7 @@ export function registerAgentRoutes(app: FastifyInstance): void {
       personality: body.personality,
       modelPolicy: body.modelPolicy,
       permissions: { tools: [], canMessageAgents: true, canApproveOwnActions: false },
+      avatarMode: body.avatarMode,
     });
     reply.code(201).send(agent);
   });

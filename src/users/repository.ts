@@ -2,6 +2,7 @@ import type { Database } from '../db/driver.js';
 import { randomUUID } from 'node:crypto';
 
 export type Role = 'owner' | 'admin' | 'member';
+export type AvatarMode = 'bloop' | 'blobatar' | 'name';
 
 export interface UserRow {
   id: string;
@@ -13,6 +14,8 @@ export interface UserRow {
   created_at: string;
   /** Set while access is withdrawn; null when they may use the server. */
   suspended_at: string | null;
+  /** How they are drawn; the column defaults to 'bloop'. */
+  avatar_mode?: AvatarMode;
 }
 
 export function createUser(
@@ -79,6 +82,18 @@ export function deleteUser(db: Database, id: string): boolean {
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
     return db.prepare('DELETE FROM users WHERE id = ?').run(id).changes > 0;
   })();
+}
+
+/** What a person may change about themselves. */
+export function updateOwnProfile(
+  db: Database,
+  id: string,
+  input: { displayName?: string; avatarMode?: AvatarMode },
+): UserRow | undefined {
+  db.prepare(`UPDATE users SET display_name = COALESCE(?, display_name),
+    avatar_mode = COALESCE(?, avatar_mode) WHERE id = ?`)
+    .run(input.displayName ?? null, input.avatarMode ?? null, id);
+  return getUserById(db, id);
 }
 
 export function listUsers(db: Database): UserRow[] {

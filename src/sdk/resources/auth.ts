@@ -4,6 +4,9 @@ export interface AuthUser {
   id: string;
   email: string;
   role: string;
+  /** Returned by /auth/me; absent from a login or setup reply. */
+  displayName?: string;
+  avatarMode?: 'bloop' | 'blobatar' | 'name';
 }
 
 export interface AuthResult {

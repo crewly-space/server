@@ -1,4 +1,4 @@
-import { AgentSchema, type Agent, type ModelPolicy, type PermissionSet } from '../protocol/index.js';
+import { AgentSchema, type Agent, type AvatarMode, type ModelPolicy, type PermissionSet } from '../protocol/index.js';
 import type { Database } from '../db/driver.js';
 import { randomUUID } from 'node:crypto';
 
@@ -10,6 +10,7 @@ interface AgentRow {
   model_policy: string;
   permissions: string;
   availability?: 'auto' | 'dnd';
+  avatar_mode?: AvatarMode;
   created_at: string;
   updated_at: string;
 }
@@ -24,6 +25,7 @@ function rowToAgent(row: AgentRow): Agent {
     permissions: JSON.parse(row.permissions),
     relationships: [],
     availability: row.availability ?? 'auto',
+    avatarMode: row.avatar_mode ?? 'bloop',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   });
@@ -37,6 +39,7 @@ export function createAgent(
     personality: string;
     modelPolicy: ModelPolicy;
     permissions: PermissionSet;
+    avatarMode?: AvatarMode;
   }
 ): Agent {
   const now = new Date().toISOString();
@@ -47,12 +50,13 @@ export function createAgent(
     personality: input.personality,
     model_policy: JSON.stringify(input.modelPolicy),
     permissions: JSON.stringify(input.permissions),
+    avatar_mode: input.avatarMode ?? 'bloop',
     created_at: now,
     updated_at: now,
   };
   db.prepare(
-    `INSERT INTO agents (id, owner_user_id, name, personality, model_policy, permissions, created_at, updated_at)
-     VALUES (@id, @owner_user_id, @name, @personality, @model_policy, @permissions, @created_at, @updated_at)`
+    `INSERT INTO agents (id, owner_user_id, name, personality, model_policy, permissions, avatar_mode, created_at, updated_at)
+     VALUES (@id, @owner_user_id, @name, @personality, @model_policy, @permissions, @avatar_mode, @created_at, @updated_at)`
   ).run(row);
   return rowToAgent(row);
 }
@@ -68,11 +72,13 @@ export function listAgentsForOwner(db: Database, ownerUserId: string): Agent[] {
 }
 
 export function updateAgent(db: Database, id: string, ownerUserId: string, input: {
-  name: string; personality: string; modelPolicy: ModelPolicy;
+  name: string; personality: string; modelPolicy: ModelPolicy; avatarMode?: AvatarMode;
 }): Agent | undefined {
-  const info = db.prepare(`UPDATE agents SET name = ?, personality = ?, model_policy = ?, updated_at = ?
+  // An update that does not mention the avatar keeps the one it had.
+  const info = db.prepare(`UPDATE agents SET name = ?, personality = ?, model_policy = ?,
+    avatar_mode = COALESCE(?, avatar_mode), updated_at = ?
     WHERE id = ? AND owner_user_id = ?`).run(input.name, input.personality,
-    JSON.stringify(input.modelPolicy), new Date().toISOString(), id, ownerUserId);
+    JSON.stringify(input.modelPolicy), input.avatarMode ?? null, new Date().toISOString(), id, ownerUserId);
   return info.changes ? getAgent(db, id) : undefined;
 }
 

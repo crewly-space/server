@@ -156,7 +156,8 @@ export function registerAuthRoutes(
 
   app.get('/api/v1/auth/me', { preHandler: requireAuth }, async (request, reply) => {
     const user = getUserById(app.db, request.user!.id)!;
-    reply.send({ id: user.id, email: user.email, role: user.role });
+    reply.send({ id: user.id, email: user.email, role: user.role,
+      displayName: user.display_name, avatarMode: user.avatar_mode ?? 'bloop' });
   });
   app.post('/api/v1/auth/logout', { preHandler: requireAuth }, async (request, reply) => {
     revokeSession(app.db, request.headers.authorization!.slice(7));

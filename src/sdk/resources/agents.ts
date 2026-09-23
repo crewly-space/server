@@ -1,4 +1,4 @@
-import type { Agent, AgentStatus, ModelPolicy, RuntimeKind } from '../../protocol/index.js';
+import type { Agent, AgentStatus, AvatarMode, ModelPolicy, RuntimeKind } from '../../protocol/index.js';
 import type { HttpClient } from '../http-client.js';
 import { encodePathSegment } from '../path.js';
 
@@ -6,6 +6,8 @@ export interface CreateAgentInput {
   name: string;
   personality?: string;
   modelPolicy: ModelPolicy;
+  /** How the agent is drawn. Left out on update, it keeps the one it had. */
+  avatarMode?: AvatarMode;
 }
 
 export type RuntimePermissionMode = 'ask' | 'auto_edit' | 'read_only';
