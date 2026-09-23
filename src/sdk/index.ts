@@ -31,6 +31,7 @@ export {
 } from './resources/memory.js';
 export {
   ProvidersResource,
+  type DeviceEnableOutcome,
   type CreateProviderInput,
   type ProviderAvailability,
   type ProviderConfigPublic,
