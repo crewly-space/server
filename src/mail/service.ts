@@ -336,6 +336,11 @@ export class MailService {
     return this.attempt(id);
   }
 
+  getDelivery(id: string): MailDelivery | undefined {
+    const row = this.db.prepare('SELECT * FROM mail_deliveries WHERE id = ?').get(id) as DeliveryRow | undefined;
+    return row ? toDelivery(row) : undefined;
+  }
+
   listDeliveries(filter: { status?: MailDelivery['status']; limit: number }): MailDelivery[] {
     const rows = (filter.status
       ? this.db.prepare('SELECT * FROM mail_deliveries WHERE status = ? ORDER BY created_at DESC, rowid DESC LIMIT ?').all(filter.status, filter.limit)

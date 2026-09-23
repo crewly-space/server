@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { emitNotification } from '../notifications/service.js';
 import type { Database } from '../db/driver.js';
 import type { AiGateway, GatewayGuard } from '../gateway/gateway.js';
 import type { ProviderCallRecord } from '../gateway/meter.js';
@@ -242,6 +243,14 @@ export function installBudgets(db: Database, gateway: AiGateway, hub: Connection
     const admins = db.prepare("SELECT id FROM users WHERE role IN ('owner', 'admin') AND suspended_at IS NULL").all() as { id: string }[];
     for (const alert of alerts) {
       for (const admin of admins) hub.publish(`user:${admin.id}`, 'budget.threshold', { ...alert });
+      const percent = Math.round(alert.threshold * 100);
+      void emitNotification(db, {
+        type: 'billing.warning',
+        recipients: admins.map((admin) => ({ userId: admin.id })),
+        dedupeKey: `budget:${alert.budgetId}:${alert.periodStart}:${alert.threshold}`,
+        title: `A ${alert.period} budget reached ${percent}%`,
+        body: `Spent $${(alert.spentMicros / 1e6).toFixed(2)} of $${(alert.limitMicros / 1e6).toFixed(2)}${alert.action === 'block' ? '; calls stop at the limit' : ''}.`,
+      });
     }
   });
 }

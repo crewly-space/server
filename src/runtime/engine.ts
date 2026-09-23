@@ -8,6 +8,7 @@ import type { ConnectionHub } from '../ws/hub.js';
 import type { GatewayEvent } from '../gateway/gateway.js';
 import { ProviderError } from '../providers/errors.js';
 import type { AgentRunQueue } from './queue.js';
+import { conversationPeople, emitNotification } from '../notifications/service.js';
 import {
   appendRunEvent,
   completeAgentRun,
@@ -192,6 +193,9 @@ interface TurnContext {
   changed: () => void;
 }
 
+const agentName = (db: Database, agentId: string): string =>
+  (db.prepare('SELECT name FROM agents WHERE id = ?').pluck().get(agentId) as string | undefined) ?? 'An agent';
+
 async function executeTurn(
   deps: RunAgentTurnDeps,
   input: RunAgentTurnInput,
@@ -243,6 +247,15 @@ async function executeTurn(
       failAgentRun(deps.db, runId, failure);
       trace('run.failed', failure);
       finish('failed', { errorCode: failure.code });
+      void emitNotification(deps.db, {
+        type: 'agent.needs_attention',
+        recipients: conversationPeople(deps.db, input.conversationId),
+        dedupeKey: `run-failed:${runId}`,
+        collapseKey: `conversation:${input.conversationId}`,
+        title: `${agentName(deps.db, input.agentId)} could not finish`,
+        body: failure.message,
+        conversationId: input.conversationId,
+      });
     }
     if (typeof error === 'object' && error !== null) failedRuns.set(error, runId);
     throw error;
@@ -272,6 +285,15 @@ async function executeTurn(
   trace('run.completed', { resultMessageId: message.id });
   deps.hub.publish(topic, 'message.created', { ...message });
   finish('completed', { resultMessageId: message.id });
+  void emitNotification(deps.db, {
+    type: 'agent.completed',
+    recipients: conversationPeople(deps.db, input.conversationId),
+    dedupeKey: `run-completed:${runId}`,
+    collapseKey: `conversation:${input.conversationId}`,
+    title: `${agentName(deps.db, input.agentId)} replied`,
+    body: result.body.length > 280 ? `${result.body.slice(0, 277)}...` : result.body,
+    conversationId: input.conversationId,
+  });
   enqueueJob(deps.db, {
     type: SUMMARIZE_CONVERSATION_JOB_TYPE,
     payload: { conversationId: input.conversationId },

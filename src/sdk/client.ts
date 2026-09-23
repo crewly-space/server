@@ -19,6 +19,7 @@ import { McpResource } from './resources/mcp.js';
 import { SkillsResource } from './resources/skills.js';
 import { CrewlyResource } from './resources/crewly.js';
 import { MailResource } from './resources/mail.js';
+import { NotificationsResource } from './resources/notifications.js';
 
 export class CrewlyClient {
   private readonly http: HttpClient;
@@ -43,6 +44,7 @@ export class CrewlyClient {
   readonly skills: SkillsResource;
   readonly crewly: CrewlyResource;
   readonly mail: MailResource;
+  readonly notifications: NotificationsResource;
 
   constructor(opts: { baseUrl: string; fetchImpl?: typeof fetch }) {
     this.baseUrl = opts.baseUrl;
@@ -66,6 +68,7 @@ export class CrewlyClient {
     this.skills = new SkillsResource(this.http);
     this.crewly = new CrewlyResource(this.http);
     this.mail = new MailResource(this.http);
+    this.notifications = new NotificationsResource(this.http);
   }
 
   setToken(token: string | undefined): void {

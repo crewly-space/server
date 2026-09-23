@@ -9,6 +9,8 @@ import { runAgentTurn, runIdOfFailure, type RespondFn } from '../runtime/engine.
 import { enqueueJob } from '../jobs/repository.js';
 import { SUMMARIZE_CONVERSATION_JOB_TYPE } from '../memory/summary.js';
 import type { ConnectionHub } from '../ws/hub.js';
+import { emitNotification } from '../notifications/service.js';
+import { getUserById } from '../users/repository.js';
 import { createMessage, listMessagesForConversation, ReplyNotInConversationError } from './repository.js';
 
 const CreateMessageBodySchema = z.object({
@@ -89,6 +91,35 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
       dedupeKey: `${SUMMARIZE_CONVERSATION_JOB_TYPE}:${id}`,
     });
     reply.code(201).send(message);
+
+    // People told about this message: whoever it mentions, and the other person in a DM.
+    const author = getUserById(app.db, request.user!.id)?.display_name ?? 'Someone';
+    const preview = body.body.length > 280 ? `${body.body.slice(0, 277)}...` : body.body;
+    const mentioned = [...new Set(body.mentions
+      .filter((mention) => mention.targetType === 'user' && mention.targetId !== request.user!.id && isParticipant(app.db, id, mention.targetId, 'user'))
+      .map((mention) => mention.targetId))];
+    void emitNotification(app.db, {
+      type: 'mention.created',
+      recipients: mentioned.map((userId) => ({ userId })),
+      dedupeKey: `mention:${message.id}`,
+      collapseKey: `conversation:${id}`,
+      title: `${author} mentioned you${conversation.name ? ` in ${conversation.name}` : ''}`,
+      body: preview,
+      conversationId: id,
+    });
+    if (conversation.kind === 'dm') {
+      const others = conversation.participants
+        .filter((p) => p.participantType === 'user' && p.participantId !== request.user!.id && !mentioned.includes(p.participantId));
+      void emitNotification(app.db, {
+        type: 'dm.created',
+        recipients: others.map((p) => ({ userId: p.participantId })),
+        dedupeKey: `dm:${message.id}`,
+        collapseKey: `conversation:${id}`,
+        title: `New message from ${author}`,
+        body: preview,
+        conversationId: id,
+      });
+    }
 
     // A DM always goes to its agent. In a group only the mentioned agents
     // answer, so a busy channel does not wake every agent in it.

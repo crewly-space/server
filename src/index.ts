@@ -59,6 +59,7 @@ Usage: crewly-server [options]
     maxDelegationDepth: config.maxDelegationDepth,
     allowMcpStdio: config.allowMcpStdio,
     crewlyCloudUrl: config.crewlyCloudUrl,
+    publicUrl: config.publicUrl,
   });
 
   const jobRunner = new JobRunner(db, {
@@ -72,7 +73,11 @@ Usage: crewly-server [options]
   const maintenanceTimer = setInterval(() => pruneOperationalData(db), 6 * 60 * 60 * 1000);
   maintenanceTimer.unref?.();
   // Mail that failed in a way worth retrying is tried again on its schedule.
-  const mailRetryTimer = setInterval(() => { app.mail.retryDue().catch((error) => app.log.error(error)); }, 30_000);
+  const mailRetryTimer = setInterval(() => {
+    app.mail.retryDue()
+      .then(() => app.notifications.retryDue())
+      .catch((error) => app.log.error(error));
+  }, 30_000);
   mailRetryTimer.unref?.();
   // Email replies wait in Crewly until this server takes them; it asks when it can receive.
   const inboundTimer = setInterval(() => {

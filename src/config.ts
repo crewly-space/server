@@ -23,6 +23,8 @@ export interface AppConfig {
   allowMcpStdio: boolean;
   /** Where Connect Crewly links to (CREWLY_CLOUD_URL). Only an origin; defaults to Crewly's own. */
   crewlyCloudUrl?: string;
+  /** Where people reach this server (CREWLY_PUBLIC_URL), for links in email. Only an origin. */
+  publicUrl?: string;
 }
 
 const ARG_TO_ENV: Record<string, string> = {
@@ -76,6 +78,14 @@ export function loadConfig(
       throw new Error(`CREWLY_CLOUD_URL is not a valid URL: ${resolved.CREWLY_CLOUD_URL}`);
     }
   }
+  let publicUrl: string | undefined;
+  if (resolved.CREWLY_PUBLIC_URL?.trim()) {
+    try {
+      publicUrl = new URL(resolved.CREWLY_PUBLIC_URL.trim()).origin;
+    } catch {
+      throw new Error(`CREWLY_PUBLIC_URL is not a valid URL: ${resolved.CREWLY_PUBLIC_URL}`);
+    }
+  }
   const logLevel = resolved.CREWLY_LOG_LEVEL ?? 'info';
   if (!['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'].includes(logLevel)) {
     throw new Error(`CREWLY_LOG_LEVEL is invalid: ${logLevel}`);
@@ -94,6 +104,7 @@ export function loadConfig(
     ...(maxDelegationDepth !== undefined ? { maxDelegationDepth } : {}),
     allowMcpStdio: parseBoolean(resolved.CREWLY_MCP_STDIO),
     ...(crewlyCloudUrl ? { crewlyCloudUrl } : {}),
+    ...(publicUrl ? { publicUrl } : {}),
     ...(resolved.CREWLY_SECRETS_KEY?.trim() ? { managedSecretsKey: resolved.CREWLY_SECRETS_KEY.trim() } : {}),
   };
 }

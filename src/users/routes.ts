@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
+import { emitNotification } from '../notifications/service.js';
 import { hashPassword } from '../auth/password.js';
 import { createSession } from '../auth/session.js';
 import {
@@ -125,16 +126,21 @@ export function registerUserRoutes(app: FastifyInstance): void {
     });
     // A failed send is a delivery to inspect, not a failed invite: the code
     // below still works when handed over another way.
-    const delivery = body.email
-      ? await app.mail.send({
-        to: body.email,
+    const delivered = body.email
+      ? await emitNotification(app.db, {
+        type: 'member.invited',
+        recipients: [{ email: body.email }],
+        dedupeKey: `invite:${invite.id}`,
+        title: 'You are invited',
+        body: 'You have been invited to a Crewly server.',
         template: {
           id: 'member.invited',
           variables: { inviteUrl: `${request.protocol}://${request.headers.host}/join#invite=${code}`, role: invite.role },
         },
-        idempotencyKey: `invite:${invite.id}`,
       })
-      : undefined;
+      : [];
+    const mailDeliveryId = delivered.find((entry) => entry.channel === 'email')?.mailDeliveryId;
+    const delivery = mailDeliveryId ? app.mail.getDelivery(mailDeliveryId) : undefined;
     // The only time the code is ever returned: it is stored hashed, so nothing
     // can read it back afterwards.
     reply.code(201).send({ invite: { ...invite, code }, ...(delivery ? { delivery } : {}) });

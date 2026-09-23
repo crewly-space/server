@@ -40,6 +40,8 @@ import { registerCrewlyRoutes } from './crewly/routes.js';
 import { DEFAULT_CREWLY_CLOUD_URL } from './crewly/connection.js';
 import { MailService } from './mail/service.js';
 import { registerMailRoutes } from './mail/routes.js';
+import { emailChannel, inAppChannel, NotificationService, registerNotificationService } from './notifications/service.js';
+import { registerNotificationRoutes } from './notifications/routes.js';
 
 export interface BuildAppOptions {
   db: Database;
@@ -72,6 +74,8 @@ export interface BuildAppOptions {
   crewlyCloudUrl?: string;
   /** The outbound mail gateway; built from `fetchImpl` when absent. */
   mail?: MailService;
+  /** Where people reach this server, for links in notifications (CREWLY_PUBLIC_URL). */
+  publicUrl?: string;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -165,6 +169,13 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   const mail = opts.mail ?? new MailService(opts.db, { fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis) });
   app.decorate('mail', mail);
   registerMailRoutes(app, mail, { fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis) });
+  const notifications = new NotificationService(opts.db, [
+    inAppChannel(opts.db, hub),
+    emailChannel(opts.db, mail, opts.fetchImpl ?? globalThis.fetch.bind(globalThis)),
+  ], { publicUrl: opts.publicUrl });
+  registerNotificationService(opts.db, notifications);
+  app.decorate('notifications', notifications);
+  registerNotificationRoutes(app, notifications);
   registerDeviceRoutes(app, deviceHub);
   registerAgentRoutes(app);
   registerConversationRoutes(app);

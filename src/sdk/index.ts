@@ -121,6 +121,15 @@ export {
   type MailSettingsInput,
 } from './resources/mail.js';
 export {
+  NotificationsResource,
+  type Notification,
+  type NotificationChannel,
+  type NotificationDelivery,
+  type NotificationMode,
+  type NotificationPreference,
+  type NotificationType,
+} from './resources/notifications.js';
+export {
   WsClient,
   type WebSocketConnection,
   type WebSocketConstructor,
