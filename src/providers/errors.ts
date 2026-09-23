@@ -16,6 +16,20 @@ export class ProviderUnavailableError extends ProviderError {
 export class ProviderAuthError extends ProviderError {
   override readonly code: string = 'provider_auth_failed';
 }
+/** A subscription whose sign-in on the paired device has lapsed: `claude login` there fixes it. */
+export class ProviderSignInExpiredError extends ProviderAuthError {
+  override readonly code: string = 'provider_sign_in_expired';
+}
+/** No connected device offers this provider. Waiting will not help; pairing or starting one will. */
+export class ProviderDeviceMissingError extends ProviderUnavailableError {
+  override readonly code: string = 'provider_device_missing';
+  override readonly retryable: boolean = false;
+}
+/** The device is there but lacks what the provider runs on, such as Claude Code. */
+export class ProviderRuntimeMissingError extends ProviderUnavailableError {
+  override readonly code: string = 'provider_runtime_missing';
+  override readonly retryable: boolean = false;
+}
 export class ProviderRateLimitError extends ProviderError {
   override readonly code: string = 'provider_rate_limited';
   override readonly retryable: boolean = true;
