@@ -56,6 +56,29 @@ export interface MailDomain {
   createdAt: string;
 }
 
+/** An email Crewly Mail delivered to this server, and what became of it. */
+export interface InboundMail {
+  id: string;
+  kind: 'reply' | 'route';
+  sender: string;
+  recipient: string;
+  status: 'delivered' | 'rejected';
+  /** Why it was not posted, e.g. `sender_mismatch`. */
+  reason: string | null;
+  conversationId: string | null;
+  messageId: string | null;
+  receivedAt: string;
+  processedAt: string;
+}
+
+/** An address on a verified domain whose mail is posted into a conversation. */
+export interface InboundRoute {
+  address: string;
+  conversationId: string;
+  postedBy: string;
+  createdAt: string;
+}
+
 export interface MailOverview {
   settings: MailSettings;
   providers: MailProvider[];
@@ -113,6 +136,29 @@ export class MailResource {
 
   removeDomain(id: string): Promise<void> {
     return this.http.request('DELETE', `/api/v1/server/mail/domains/${encodePathSegment(id)}`);
+  }
+
+  /** Email received through Crewly Mail (`mail:receive`), newest first. */
+  inbound(limit = 100): Promise<{ messages: InboundMail[] }> {
+    return this.http.request('GET', `/api/v1/server/mail/inbound?limit=${limit}`);
+  }
+
+  /** What Crewly refused before it reached this server, and why. Never contents. */
+  inboundRejections(): Promise<{ rejections: Array<{ id: string; recipient: string; reason: string; receivedAt: string }> }> {
+    return this.http.request('GET', '/api/v1/server/mail/inbound/rejections');
+  }
+
+  inboundRoutes(): Promise<{ routes: InboundRoute[] }> {
+    return this.http.request('GET', '/api/v1/server/mail/inbound/routes');
+  }
+
+  /** Posts mail to `address` (on a verified sending domain) into a conversation, as you. */
+  addInboundRoute(address: string, conversationId: string): Promise<{ route: InboundRoute }> {
+    return this.http.request('POST', '/api/v1/server/mail/inbound/routes', { address, conversationId });
+  }
+
+  removeInboundRoute(address: string): Promise<void> {
+    return this.http.request('DELETE', `/api/v1/server/mail/inbound/routes/${encodePathSegment(address)}`);
   }
 
   /** What Crewly Mail has counted for this server this month, when it uses Crewly Mail. */

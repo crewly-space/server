@@ -69,3 +69,33 @@ Removing a domain (`DELETE /api/v1/server/mail/domains/:id`) stops Crewly Mail f
 immediately. A domain belongs to one server at a time: to move it, remove it first, from the server
 or from the account's **Connected servers** page in Crewly. Custom domains apply only to Crewly Mail.
 SMTP, Resend and Postmark configured on the server are unaffected.
+
+## Inbound email (Crewly Mail)
+
+With the `mail:receive` capability, email can come back into Crewly. Crewly verifies the
+provider's webhook (signature, replay window), normalises the message, and refuses
+auto-replies, bulk mail, mail loops, oversized payloads and unknown addresses. It keeps
+nothing of a refused message except who it was for and why. The server pulls its mail
+every 30 seconds with its own credential, so it doesn't need to be reachable from the
+internet. Crewly deletes the contents as soon as the server acknowledges them, and a
+message delivered twice is only posted once.
+
+- **Replies.** `replyAddress(db, fetch, conversationId, userId)` gives the address a person
+  can reply to (`reply+<server key>.<token>@<inbound domain>`). A reply is posted in that
+  conversation as that person, without the quoted text, but only if it comes from their
+  own address and the sender didn't fail SPF/DKIM.
+- **Routed addresses.** `POST /api/v1/server/mail/inbound/routes` `{address, conversationId}`
+  posts mail sent to an address such as `support@company.com` into a conversation. The
+  message is posted as the admin who set up the route and quotes the external sender. The
+  address must be on one of the server's verified sending domains, and it stops routing
+  when that domain is removed.
+
+Attachments are listed by name and not stored. Only images, PDFs and plain text or CSV
+files are listed.
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/v1/server/mail/inbound` | What came in, where it was posted, or why it wasn't. |
+| GET | `/api/v1/server/mail/inbound/rejections` | What Crewly refused for this server. Recipients and reasons only. |
+| GET/POST | `/api/v1/server/mail/inbound/routes` | List or add routed addresses. |
+| DELETE | `/api/v1/server/mail/inbound/routes/:address` | Stop routing an address. |

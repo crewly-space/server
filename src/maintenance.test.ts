@@ -34,7 +34,7 @@ describe('operational maintenance', () => {
     call.run('last-month', '2025-12-10T00:00:00.000Z');
 
     expect(pruneOperationalData(db, new Date('2026-01-10T00:00:00.000Z'), 24 * 60 * 60 * 1000)).toEqual({
-      events: 1, jobs: 1, sessions: 1, providerCalls: 1, mailDeliveries: 0,
+      events: 1, jobs: 1, sessions: 1, providerCalls: 1, mailDeliveries: 0, inboundMail: 0,
     });
     // Usage outlives the operational retention: budgets and reports need it.
     expect(db.prepare('SELECT id FROM provider_calls').pluck().all()).toEqual(['last-month']);

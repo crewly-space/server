@@ -331,6 +331,24 @@ export function crewlyServiceCredential(db: Database, scope: string): { cloudUrl
   return { cloudUrl: current.cloud_url, instanceId: current.instance_id, credential: decryptDatabaseSecret(db, current.credential_ciphertext) };
 }
 
+/**
+ * One call to a Crewly-managed service as this server, holding `scope`.
+ * Throws CrewlyConnectionError (409) when the connection or scope is missing,
+ * and (502) when Crewly cannot be reached; otherwise returns Crewly's answer.
+ */
+export async function crewlyServiceRequest(
+  db: Database,
+  fetchImpl: typeof fetch,
+  scope: string,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const connection = crewlyServiceCredential(db, scope);
+  if (!connection) throw new CrewlyConnectionError(`Connect this server to Crewly with ${scope} first`, 409);
+  return callCloud(fetchImpl, connection.cloudUrl, path, { method, body, credential: connection.credential });
+}
+
 export interface CrewlyAuditEntry {
   id: string;
   action: string;

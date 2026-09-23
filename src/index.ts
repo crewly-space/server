@@ -3,6 +3,8 @@ import { loadConfig } from './config.js';
 import { openDatabase } from './db/connection.js';
 import { runMigrations } from './db/migrate.js';
 import { JobRunner } from './jobs/runner.js';
+import { crewlyServiceCredential } from './crewly/connection.js';
+import { pullInboundMail } from './mail/inbound.js';
 import { SUMMARIZE_CONVERSATION_JOB_TYPE, updateConversationSummary } from './memory/summary.js';
 import { countUsers } from './users/repository.js';
 import { prepareSetupClaim } from './auth/setup-claim.js';
@@ -72,6 +74,12 @@ Usage: crewly-server [options]
   // Mail that failed in a way worth retrying is tried again on its schedule.
   const mailRetryTimer = setInterval(() => { app.mail.retryDue().catch((error) => app.log.error(error)); }, 30_000);
   mailRetryTimer.unref?.();
+  // Email replies wait in Crewly until this server takes them; it asks when it can receive.
+  const inboundTimer = setInterval(() => {
+    if (!crewlyServiceCredential(db, 'mail:receive')) return;
+    pullInboundMail(db, globalThis.fetch.bind(globalThis), app.hub).catch((error) => app.log.warn({ err: error }, 'inbound mail pull failed'));
+  }, 30_000);
+  inboundTimer.unref?.();
 
   let closing = false;
   const close = async (signal: string) => {
@@ -81,6 +89,7 @@ Usage: crewly-server [options]
     jobRunner.stop();
     clearInterval(maintenanceTimer);
     clearInterval(mailRetryTimer);
+    clearInterval(inboundTimer);
     await app.close();
     db.close();
   };

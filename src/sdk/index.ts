@@ -109,6 +109,8 @@ export {
 export { CrewlyResource, type CrewlyAuditEntry, type CrewlyConnection } from './resources/crewly.js';
 export {
   MailResource,
+  type InboundMail,
+  type InboundRoute,
   type MailDelivery,
   type MailDomain,
   type MailSender,
