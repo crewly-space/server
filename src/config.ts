@@ -21,6 +21,8 @@ export interface AppConfig {
   managedSecretsKey?: string;
   /** CREWLY_MCP_STDIO=1 lets admins run local MCP servers as this process's user. Off by default. */
   allowMcpStdio: boolean;
+  /** Where Connect Crewly links to (CREWLY_CLOUD_URL). Only an origin; defaults to Crewly's own. */
+  crewlyCloudUrl?: string;
 }
 
 const ARG_TO_ENV: Record<string, string> = {
@@ -66,6 +68,14 @@ export function loadConfig(
   if (maxDelegationDepth !== undefined && (!Number.isInteger(maxDelegationDepth) || maxDelegationDepth < 1 || maxDelegationDepth > 4)) {
     throw new Error(`CREWLY_MAX_DELEGATION_DEPTH must be an integer from 1 to 4, got ${resolved.CREWLY_MAX_DELEGATION_DEPTH}`);
   }
+  let crewlyCloudUrl: string | undefined;
+  if (resolved.CREWLY_CLOUD_URL?.trim()) {
+    try {
+      crewlyCloudUrl = new URL(resolved.CREWLY_CLOUD_URL.trim()).origin;
+    } catch {
+      throw new Error(`CREWLY_CLOUD_URL is not a valid URL: ${resolved.CREWLY_CLOUD_URL}`);
+    }
+  }
   const logLevel = resolved.CREWLY_LOG_LEVEL ?? 'info';
   if (!['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'].includes(logLevel)) {
     throw new Error(`CREWLY_LOG_LEVEL is invalid: ${logLevel}`);
@@ -83,6 +93,7 @@ export function loadConfig(
     trustedAppOrigins,
     ...(maxDelegationDepth !== undefined ? { maxDelegationDepth } : {}),
     allowMcpStdio: parseBoolean(resolved.CREWLY_MCP_STDIO),
+    ...(crewlyCloudUrl ? { crewlyCloudUrl } : {}),
     ...(resolved.CREWLY_SECRETS_KEY?.trim() ? { managedSecretsKey: resolved.CREWLY_SECRETS_KEY.trim() } : {}),
   };
 }

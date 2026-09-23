@@ -36,6 +36,8 @@ import { registerUserRoutes } from './users/routes.js';
 import { DeviceConnectionHub } from './devices/hub.js';
 import { registerDeviceRoutes } from './devices/routes.js';
 import { registerDeviceSocket } from './devices/socket.js';
+import { registerCrewlyRoutes } from './crewly/routes.js';
+import { DEFAULT_CREWLY_CLOUD_URL } from './crewly/connection.js';
 
 export interface BuildAppOptions {
   db: Database;
@@ -64,6 +66,8 @@ export interface BuildAppOptions {
   maxDelegationDepth?: number;
   /** Whether admins may connect local (stdio) MCP servers, which run as this process's user. */
   allowMcpStdio?: boolean;
+  /** The Crewly this server may connect to for managed services; https://app.crewly.space by default. */
+  crewlyCloudUrl?: string;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -149,6 +153,11 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   });
   registerUserRoutes(app);
   registerServerAdminRoutes(app, { version: opts.version ?? '0.0.0-dev' });
+  registerCrewlyRoutes(app, {
+    cloudUrl: opts.crewlyCloudUrl ?? DEFAULT_CREWLY_CLOUD_URL,
+    fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
+    version: opts.version ?? '0.0.0-dev',
+  });
   registerDeviceRoutes(app, deviceHub);
   registerAgentRoutes(app);
   registerConversationRoutes(app);
