@@ -18,7 +18,8 @@ import type { ConnectionHub } from '../ws/hub.js';
  */
 
 export type NotificationChannelId = 'in_app' | 'email';
-export type NotificationMode = 'instant' | 'off';
+/** `digest`: email only, gathered into the person's scheduled digest instead of sent at once. */
+export type NotificationMode = 'instant' | 'off' | 'digest';
 
 interface EventPolicy {
   /** Security and account mail: cannot be switched off. */
@@ -41,6 +42,9 @@ export const NOTIFICATION_EVENTS = {
 
 export type NotificationType = keyof typeof NOTIFICATION_EVENTS;
 export const NOTIFICATION_TYPES = Object.keys(NOTIFICATION_EVENTS) as NotificationType[];
+
+/** The reason on an email delivery waiting for its person's next digest. */
+export const DIGEST_QUEUED = 'digest';
 
 /** Equivalent events for one person and channel inside this window become one. */
 export const BURST_WINDOW_MS = 60_000;
@@ -248,6 +252,7 @@ export class NotificationService {
     const policy: EventPolicy = NOTIFICATION_EVENTS[type];
     if (policy.mandatory) throw new NotificationPolicyError(`${policy.label} cannot be turned off`);
     if (!policy.defaults[channel]) throw new NotificationPolicyError(`${policy.label} are not sent by ${channel === 'email' ? 'email' : 'in-app'}`);
+    if (mode === 'digest' && channel !== 'email') throw new NotificationPolicyError('Only email can be gathered into a digest');
     this.db.prepare(
       `INSERT INTO notification_preferences (user_id, event_type, channel, mode, updated_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT (user_id, event_type, channel) DO UPDATE SET mode = excluded.mode, updated_at = excluded.updated_at`,
@@ -276,7 +281,9 @@ export class NotificationService {
       for (const channelId of ['in_app', 'email'] as const) {
         if (!userId && channelId === 'in_app') continue;
         const mode = this.mode(userId, event.type, channelId);
-        if (mode !== 'instant') continue;
+        if (mode !== 'instant' && mode !== 'digest') continue;
+        // Held for the digest, which summarises repeats itself; nothing is sent now.
+        const digest = mode === 'digest';
         const payload: ChannelMessage = {
           deliveryId: randomUUID(),
           type: event.type,
@@ -288,7 +295,7 @@ export class NotificationService {
           conversationId: event.conversationId ?? null,
           template: event.template,
         };
-        const collapsed = event.collapseKey !== undefined && this.db.prepare(
+        const collapsed = !digest && event.collapseKey !== undefined && this.db.prepare(
           `SELECT 1 FROM notification_deliveries
            WHERE recipient = ? AND channel = ? AND event_type = ? AND collapse_key = ? AND created_at > ? AND status <> 'failed'`,
         ).get(recipientKey, channelId, event.type, event.collapseKey, new Date(now.getTime() - BURST_WINDOW_MS).toISOString());
@@ -298,11 +305,11 @@ export class NotificationService {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           payload.deliveryId, event.type, event.dedupeKey, recipientKey, channelId, event.collapseKey ?? null,
-          collapsed ? 'skipped' : 'pending', collapsed ? 'collapsed' : null,
+          collapsed ? 'skipped' : 'pending', collapsed ? 'collapsed' : digest ? DIGEST_QUEUED : null,
           collapsed ? null : encryptDatabaseSecret(this.db, JSON.stringify(payload)), now.toISOString(), now.toISOString(),
         );
         // Emitted before: the delivery that already exists is the answer.
-        if (inserted.changes === 0 || collapsed) {
+        if (inserted.changes === 0 || collapsed || digest) {
           const existing = this.db.prepare('SELECT * FROM notification_deliveries WHERE dedupe_key = ? AND recipient = ? AND channel = ?')
             .get(event.dedupeKey, recipientKey, channelId) as DeliveryRow;
           results.push(toDelivery(existing));

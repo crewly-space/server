@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
+import { digestSchedule, setDigestSchedule } from './digest.js';
 import { NOTIFICATION_TYPES, NotificationPolicyError, type NotificationService } from './service.js';
 
 const ListQuerySchema = z.object({
@@ -10,7 +11,12 @@ const ListQuerySchema = z.object({
 const PreferenceBodySchema = z.object({
   type: z.enum(NOTIFICATION_TYPES as [string, ...string[]]),
   channel: z.enum(['in_app', 'email']),
-  mode: z.enum(['instant', 'off']),
+  mode: z.enum(['instant', 'off', 'digest']),
+});
+const DigestScheduleSchema = z.object({
+  frequency: z.enum(['daily', 'weekly']),
+  hourUtc: z.number().int().min(0).max(23),
+  weekday: z.number().int().min(0).max(6).nullable().default(null),
 });
 const DeliveriesQuerySchema = z.object({
   status: z.enum(['pending', 'delivered', 'failed', 'skipped']).optional(),
@@ -53,6 +59,15 @@ export function registerNotificationRoutes(app: FastifyInstance, service: Notifi
       throw error;
     }
     reply.send({ preferences: service.preferences(request.user!.id) });
+  });
+
+  /** When the person's digest email goes out, for events they set to `digest`. */
+  app.get('/api/v1/notifications/digest', { preHandler: requireAuth }, async (request, reply) => {
+    reply.send({ schedule: digestSchedule(app.db, request.user!.id) });
+  });
+
+  app.put('/api/v1/notifications/digest', { preHandler: requireAuth }, async (request, reply) => {
+    reply.send({ schedule: setDigestSchedule(app.db, request.user!.id, DigestScheduleSchema.parse(request.body)) });
   });
 
   app.get('/api/v1/server/notifications/deliveries', { preHandler: requireAuth }, async (request, reply) => {

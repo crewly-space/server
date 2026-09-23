@@ -5,6 +5,7 @@ import { runMigrations } from './db/migrate.js';
 import { JobRunner } from './jobs/runner.js';
 import { crewlyServiceCredential } from './crewly/connection.js';
 import { pullInboundMail } from './mail/inbound.js';
+import { sendDueDigests } from './notifications/digest.js';
 import { SUMMARIZE_CONVERSATION_JOB_TYPE, updateConversationSummary } from './memory/summary.js';
 import { countUsers } from './users/repository.js';
 import { prepareSetupClaim } from './auth/setup-claim.js';
@@ -75,6 +76,7 @@ Usage: crewly-server [options]
   // Mail that failed in a way worth retrying is tried again on its schedule.
   const mailRetryTimer = setInterval(() => {
     app.mail.retryDue()
+      .then(() => sendDueDigests(db, app.notifications, app.mail))
       .then(() => app.notifications.retryDue())
       .catch((error) => app.log.error(error));
   }, 30_000);

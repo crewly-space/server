@@ -122,6 +122,7 @@ export {
 } from './resources/mail.js';
 export {
   NotificationsResource,
+  type DigestSchedule,
   type Notification,
   type NotificationChannel,
   type NotificationDelivery,

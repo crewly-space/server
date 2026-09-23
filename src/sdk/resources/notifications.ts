@@ -11,7 +11,16 @@ export type NotificationType =
   | 'server.alert'
   | 'billing.warning';
 export type NotificationChannel = 'in_app' | 'email';
-export type NotificationMode = 'instant' | 'off';
+/** `digest` is email only: gathered into the scheduled digest instead of sent at once. */
+export type NotificationMode = 'instant' | 'off' | 'digest';
+
+export interface DigestSchedule {
+  frequency: 'daily' | 'weekly';
+  /** 0-23, UTC. */
+  hourUtc: number;
+  /** Weekly only: 0 = Sunday. */
+  weekday: number | null;
+}
 
 /** One entry in a person's notification feed. Arrives live as the `notification.created` event on `user:<id>`. */
 export interface Notification {
@@ -74,6 +83,14 @@ export class NotificationsResource {
   /** Mandatory events and channels an event does not use are refused. */
   setPreference(type: NotificationType, channel: NotificationChannel, mode: NotificationMode): Promise<{ preferences: NotificationPreference[] }> {
     return this.http.request('PUT', '/api/v1/notifications/preferences', { type, channel, mode });
+  }
+
+  digestSchedule(): Promise<{ schedule: DigestSchedule }> {
+    return this.http.request('GET', '/api/v1/notifications/digest');
+  }
+
+  setDigestSchedule(schedule: DigestSchedule): Promise<{ schedule: DigestSchedule }> {
+    return this.http.request('PUT', '/api/v1/notifications/digest', schedule);
   }
 
   /** Owners and admins: how deliveries went, including failures. */
