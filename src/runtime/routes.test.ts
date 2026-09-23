@@ -158,4 +158,30 @@ describe('runtime routes', () => {
 
     await app.close();
   });
+
+  it('rejects running an agent in a conversation it is not a participant of with 403', async () => {
+    const app = await buildApp({ db, respond: async () => ({ body: 'leaked' }) });
+    const { agentId } = await setupOwnerAndAgent(app);
+
+    const bob = createUser(db, { email: 'bob@example.com', displayName: 'Bob', passwordHash: 'x', role: 'member' });
+    const bobToken = createSession(db, bob.id);
+    const carol = createUser(db, { email: 'carol@example.com', displayName: 'Carol', passwordHash: 'x', role: 'member' });
+    const bobAndCarol = await app.inject({
+      method: 'POST',
+      url: '/api/v1/conversations',
+      headers: { authorization: `Bearer ${bobToken}` },
+      payload: { participantId: carol.id, participantType: 'user' },
+    });
+
+    const invoke = await app.inject({
+      method: 'POST',
+      url: `/api/v1/agents/${agentId}/runs`,
+      headers: { authorization: `Bearer ${bobToken}` },
+      payload: { conversationId: bobAndCarol.json().id },
+    });
+    expect(invoke.statusCode).toBe(403);
+    expect(invoke.json().error).toBe('agent_not_a_participant');
+
+    await app.close();
+  });
 });

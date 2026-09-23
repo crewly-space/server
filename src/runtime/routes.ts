@@ -151,6 +151,12 @@ export function registerRuntimeRoutes(app: FastifyInstance, hub: ConnectionHub, 
       reply.code(403).send({ error: 'not_a_participant' });
       return;
     }
+    // Without this any member could run any agent by id into a conversation it
+    // was never added to, reading that history and speaking there as the agent.
+    if (!isParticipant(app.db, body.conversationId, id, 'agent')) {
+      reply.code(403).send({ error: 'agent_not_a_participant' });
+      return;
+    }
     try {
       const outcome = await runAgentTurn(
         { db: app.db, hub, respond, queue: app.runQueue, onAgentChange: (changed) => app.agentStatus.refresh(changed) },
