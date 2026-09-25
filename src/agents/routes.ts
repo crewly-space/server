@@ -1,14 +1,30 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { AvatarModeSchema, ModelPolicySchema } from '../protocol/index.js';
+import { AgentRoutingModeSchema, AvatarModeSchema, ModelPolicySchema } from '../protocol/index.js';
 import { requireAuth } from '../auth/middleware.js';
-import { createAgent, getAgent, listAgentsForOwner, setAgentAvailability, updateAgent } from './repository.js';
+import {
+  clearAgentRoutingOverride,
+  createAgent,
+  getAgent,
+  getAgentRouting,
+  listAgentsForOwner,
+  setAgentAvailability,
+  setAgentRoutingMode,
+  updateAgent,
+} from './repository.js';
 import { listDelegates, setDelegates } from '../runtime/delegation.js';
 import { getProviderConfig } from '../providers/repository.js';
+import { getChannel } from '../channels/repository.js';
+import type { Role } from '../users/repository.js';
 
 const DelegatesBodySchema = z.object({ agentIds: z.array(z.string().min(1)).max(50) });
 
 const AvailabilityBodySchema = z.object({ availability: z.enum(['auto', 'dnd']) });
+
+const RoutingBodySchema = z.object({
+  mode: z.union([AgentRoutingModeSchema, z.literal('inherit')]),
+  conversationId: z.string().min(1).nullable().default(null),
+});
 
 const CreateAgentBodySchema = z.object({
   name: z.string().min(1),
@@ -82,6 +98,52 @@ export function registerAgentRoutes(app: FastifyInstance): void {
     setAgentAvailability(app.db, id, body.availability);
     app.agentStatus.refresh(id);
     reply.send(app.agentStatus.status(id));
+  });
+
+  /** Global routing, with an optional channel-specific override. */
+  app.get('/api/v1/agents/:id/routing', { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const agent = getAgent(app.db, id);
+    if (!agent) {
+      reply.code(404).send({ error: 'agent_not_found' });
+      return;
+    }
+    const role = request.user!.role;
+    if (agent.ownerUserId !== request.user!.id && role !== 'owner' && role !== 'admin') {
+      reply.code(403).send({ error: 'forbidden' });
+      return;
+    }
+    reply.send(getAgentRouting(app.db, id));
+  });
+
+  app.put('/api/v1/agents/:id/routing', { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = RoutingBodySchema.parse(request.body);
+    const agent = getAgent(app.db, id);
+    if (!agent) {
+      reply.code(404).send({ error: 'agent_not_found' });
+      return;
+    }
+    const role = request.user!.role;
+    if (agent.ownerUserId !== request.user!.id && role !== 'owner' && role !== 'admin') {
+      reply.code(403).send({ error: 'forbidden' });
+      return;
+    }
+    if (body.conversationId !== null) {
+      const channel = getChannel(app.db, body.conversationId, { id: request.user!.id, role: role as Role });
+      if (!channel) {
+        reply.code(404).send({ error: 'channel_not_found' });
+        return;
+      }
+      if (body.mode === 'inherit') {
+        reply.send(clearAgentRoutingOverride(app.db, id, body.conversationId));
+        return;
+      }
+    } else if (body.mode === 'inherit') {
+      reply.code(400).send({ error: 'global_routing_requires_mode' });
+      return;
+    }
+    reply.send(setAgentRoutingMode(app.db, id, body.mode, body.conversationId, request.user!.id));
   });
 
   /** Who this agent may hand subtasks to. */

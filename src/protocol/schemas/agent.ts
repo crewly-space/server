@@ -22,6 +22,9 @@ export const RelationshipRefSchema = z.object({
 });
 export type RelationshipRef = z.infer<typeof RelationshipRefSchema>;
 
+export const AgentRoutingModeSchema = z.enum(['always', 'mention_only', 'relevant', 'disabled']);
+export type AgentRoutingMode = z.infer<typeof AgentRoutingModeSchema>;
+
 export const AgentSchema = z
   .object({
     id: z.string().min(1),
@@ -33,6 +36,8 @@ export const AgentSchema = z
     relationships: z.array(RelationshipRefSchema).default([]),
     /** `dnd` keeps the agent out of automatic invocation; `auto` lets presence follow what it is doing. */
     availability: z.enum(['auto', 'dnd']).default('auto'),
+    /** How this agent is addressed in shared conversations unless overridden. */
+    routingMode: AgentRoutingModeSchema.default('mention_only'),
     avatarMode: AvatarModeSchema.default('bloop'),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),

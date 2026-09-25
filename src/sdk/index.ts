@@ -11,6 +11,8 @@ export {
 } from './resources/auth.js';
 export {
   AgentsResource,
+  type AgentRoutingConfig,
+  type AgentRoutingOverride,
   type AgentRuntime,
   type CreateAgentInput,
   type RuntimePermissionMode,
@@ -146,6 +148,7 @@ export {
 
 export type {
   Agent,
+  AgentRoutingMode,
   AgentExecutionState,
   AgentPresence,
   AgentRun,

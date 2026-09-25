@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
 import { getConversation, isParticipant } from '../conversations/repository.js';
-import { getAgent } from '../agents/repository.js';
+import { effectiveAgentRoutingMode, getAgent } from '../agents/repository.js';
 import { getProviderConfig } from '../providers/repository.js';
 import { describeAgentFailure } from '../providers/errors.js';
 import { runAgentTurn, runIdOfFailure, type RespondFn } from '../runtime/engine.js';
@@ -11,8 +11,9 @@ import { SUMMARIZE_CONVERSATION_JOB_TYPE } from '../memory/summary.js';
 import type { ConnectionHub } from '../ws/hub.js';
 import { emitNotification } from '../notifications/service.js';
 import { getUserById, type Role } from '../users/repository.js';
-import { canReadChannel, getChannel } from '../channels/repository.js';
+import { blockedAgentIds, canReadChannel, getChannel } from '../channels/repository.js';
 import { createMessage, listMessagesForConversation, ReplyNotInConversationError } from './repository.js';
+import { decideAgentRouting } from './routing.js';
 
 const CreateMessageBodySchema = z.object({
   body: z.string().min(1),
@@ -28,19 +29,8 @@ const ListMessagesQuerySchema = z.object({
 
 type MentionRef = { targetId: string; targetType: 'user' | 'agent' };
 
-/** Agents mentioned in the message that actually belong to the conversation. */
-function mentionedAgentIds(
-  conversation: { participants: { participantId: string; participantType: string }[] },
-  mentions: MentionRef[]
-): string[] {
-  const members = new Set(
-    conversation.participants.filter((p) => p.participantType === 'agent').map((p) => p.participantId)
-  );
-  return [
-    ...new Set(
-      mentions.filter((m) => m.targetType === 'agent' && members.has(m.targetId)).map((m) => m.targetId)
-    ),
-  ];
+function explicitlyMentioned(mentions: MentionRef[], agentId: string): boolean {
+  return mentions.some((mention) => mention.targetType === 'agent' && mention.targetId === agentId);
 }
 
 export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, respond: RespondFn): void {
@@ -133,16 +123,35 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
       });
     }
 
-    // A DM always goes to its agent. In a group or channel only the mentioned agents
-    // answer, so a busy channel does not wake every agent in it.
-    const respondingAgentIds = dmAgentId ? [dmAgentId] : mentionedAgentIds(conversation, body.mentions);
+    // A DM always goes to its agent. In shared conversations, each participant's
+    // effective global/channel mode decides whether it is woken. Explicit mentions
+    // are direct requests; channel blocks remain the permission boundary.
+    const candidates = dmAgentId
+      ? [dmAgentId]
+      : conversation.participants
+        .filter((participant) => participant.participantType === 'agent')
+        .map((participant) => participant.participantId);
+    const blocked = new Set(conversation.kind === 'channel' ? blockedAgentIds(app.db, id) : []);
+    const decisions = candidates.map((agentId) => {
+      const agent = getAgent(app.db, agentId);
+      const mode = dmAgentId ? 'always' as const : (effectiveAgentRoutingMode(app.db, agentId, id) ?? 'mention_only');
+      return {
+        agentId,
+        agent,
+        decision: agent
+          ? decideAgentRouting(agent, mode, body.body, explicitlyMentioned(body.mentions, agentId), blocked.has(agentId), Boolean(dmAgentId))
+          : { shouldRespond: false, mode, reason: 'blocked' as const },
+      };
+    });
+    const respondingAgentIds = [...new Set(decisions.filter(({ decision }) => decision.shouldRespond).map(({ agentId }) => agentId))];
     const failed = (agentId: string, code: string, error: string, runId?: string) =>
       hub.publish(`user:${request.user!.id}`, 'agent.run.failed', {
         conversationId: id, messageId: message.id, agentId, code, error, ...(runId ? { runId } : {}),
       });
 
     for (const agentId of respondingAgentIds) {
-      const agent = getAgent(app.db, agentId);
+      const agent = decisions.find((entry) => entry.agentId === agentId)?.agent ?? getAgent(app.db, agentId);
+      const decision = decisions.find((entry) => entry.agentId === agentId)?.decision;
       const agentName = agent?.name ?? 'The agent';
       if (!agent || !getProviderConfig(app.db, agent.modelPolicy.defaultProviderId)) {
         failed(
@@ -154,7 +163,13 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
       }
       void runAgentTurn(
         { db: app.db, hub, respond, queue: app.runQueue, onAgentChange: (changed) => app.agentStatus.refresh(changed) },
-        { agentId, conversationId: id, trigger: 'message', triggerMessageId: message.id },
+        {
+          agentId,
+          conversationId: id,
+          trigger: 'message',
+          triggerMessageId: message.id,
+          routingDecision: decision ? { mode: decision.mode, reason: decision.reason } : undefined,
+        },
       ).catch((error: unknown) => {
         const failure = describeAgentFailure(error, agentName);
         failed(agentId, failure.code, failure.message, runIdOfFailure(error));

@@ -70,6 +70,8 @@ export interface RunAgentTurnInput {
   /** What started the run, for the trace: `message`, `delegation`, `api`. */
   trigger?: string;
   triggerMessageId?: string | null;
+  /** Why this message woke the agent, retained in the run trace for debugging. */
+  routingDecision?: { mode: string; reason: string };
 }
 
 /** A run another agent asked for: it sees only the task, and its answer goes back, not into the chat. */
@@ -203,6 +205,7 @@ async function executeTurn(
   { runId, rootRunId, causationId, hopCount, topic, trace, changed }: TurnContext,
 ): Promise<TurnResult> {
   trace('run.started', { agentId: input.agentId, trigger: input.trigger ?? 'message', hopCount, causationId });
+  if (input.routingDecision) trace('routing.decision', input.routingDecision);
   deps.hub.publish(topic, 'agent.run.started', {
     runId, rootRunId, causationId, agentId: input.agentId, conversationId: input.conversationId,
   });

@@ -1,4 +1,4 @@
-import type { Agent, AgentStatus, AvatarMode, ModelPolicy, RuntimeKind } from '../../protocol/index.js';
+import type { Agent, AgentRoutingMode, AgentStatus, AvatarMode, ModelPolicy, RuntimeKind } from '../../protocol/index.js';
 import type { HttpClient } from '../http-client.js';
 import { encodePathSegment } from '../path.js';
 
@@ -41,6 +41,17 @@ export interface SetAgentRuntimeInput {
   deviceId?: string;
   workspaceId?: string;
   options?: { permissionMode?: RuntimePermissionMode };
+}
+
+export interface AgentRoutingOverride {
+  conversationId: string;
+  conversationName: string;
+  mode: AgentRoutingMode;
+}
+
+export interface AgentRoutingConfig {
+  defaultMode: AgentRoutingMode;
+  overrides: AgentRoutingOverride[];
 }
 
 export class AgentsResource {
@@ -87,5 +98,16 @@ export class AgentsResource {
   /** `dnd` keeps the agent out of automatic invocation; `auto` returns presence to what it is doing. */
   setAvailability(id: string, availability: 'auto' | 'dnd'): Promise<AgentStatus> {
     return this.http.request('PUT', `/api/v1/agents/${encodePathSegment(id)}/availability`, { availability });
+  }
+
+  routing(id: string): Promise<AgentRoutingConfig> {
+    return this.http.request('GET', `/api/v1/agents/${encodePathSegment(id)}/routing`);
+  }
+
+  setRouting(id: string, input: { mode: AgentRoutingMode | 'inherit'; conversationId?: string | null }): Promise<AgentRoutingConfig> {
+    return this.http.request('PUT', `/api/v1/agents/${encodePathSegment(id)}/routing`, {
+      mode: input.mode,
+      conversationId: input.conversationId ?? null,
+    });
   }
 }
