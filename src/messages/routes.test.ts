@@ -5,6 +5,7 @@ import { createSession } from '../auth/session.js';
 import { runMigrations } from '../db/migrate.js';
 import { createUser } from '../users/repository.js';
 import { createAgent } from '../agents/repository.js';
+import { setAgentRoutingMode } from '../agents/repository.js';
 import { createProviderConfig } from '../providers/repository.js';
 import type { RespondFn } from '../runtime/engine.js';
 
@@ -133,11 +134,11 @@ describe('message routes', () => {
     for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
   }
 
-  function newAgent(ownerUserId: string, name: string, defaultProviderId = 'anthropic') {
+  function newAgent(ownerUserId: string, name: string, defaultProviderId = 'anthropic', personality = '') {
     return createAgent(db, {
       ownerUserId,
       name,
-      personality: '',
+      personality,
       modelPolicy: { defaultProviderId, defaultModel: 'claude-sonnet-5' },
       permissions: { tools: [], canMessageAgents: true, canApproveOwnActions: false },
     });
@@ -217,6 +218,97 @@ describe('message routes', () => {
     });
     await settle();
 
+    expect(asked).toEqual([]);
+
+    await app.close();
+  });
+
+  it('applies global routing modes once and records the decision in the run trace', async () => {
+    const asked: string[] = [];
+    const respond: RespondFn = async ({ agentId }) => {
+      asked.push(agentId);
+      return { body: 'on it' };
+    };
+    const app = await buildApp({ db, respond });
+    const setup = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/setup',
+      payload: { email: 'owner@example.com', displayName: 'Owner', password: 'super-secret-1' },
+    });
+    const token = setup.json().token as string;
+    const ownerId = setup.json().user.id as string;
+    const always = newAgent(ownerId, 'Always');
+    const disabled = newAgent(ownerId, 'Disabled');
+    setAgentRoutingMode(db, always.id, 'always', null, ownerId);
+    setAgentRoutingMode(db, disabled.id, 'disabled', null, ownerId);
+    const group = await app.inject({
+      method: 'POST',
+      url: '/api/v1/conversations/group',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Routing', participants: [
+        { participantId: always.id, participantType: 'agent' },
+        { participantId: disabled.id, participantType: 'agent' },
+      ] },
+    });
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${group.json().id}/messages`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { body: 'one shared message' },
+    });
+    await settle();
+
+    expect(asked).toEqual([always.id]);
+    const trace = db.prepare("SELECT type, data FROM run_events WHERE type = 'routing.decision'").get() as
+      | { type: string; data: string }
+      | undefined;
+    expect(trace?.type).toBe('routing.decision');
+    expect(JSON.parse(trace?.data ?? '{}')).toMatchObject({ mode: 'always', reason: 'always' });
+
+    await app.close();
+  });
+
+  it('uses the lightweight relevance layer before invoking an agent', async () => {
+    const asked: string[] = [];
+    const respond: RespondFn = async ({ agentId }) => {
+      asked.push(agentId);
+      return { body: 'on it' };
+    };
+    const app = await buildApp({ db, respond });
+    const setup = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/setup',
+      payload: { email: 'owner@example.com', displayName: 'Owner', password: 'super-secret-1' },
+    });
+    const token = setup.json().token as string;
+    const ownerId = setup.json().user.id as string;
+    const agent = newAgent(ownerId, 'Release Helper', 'anthropic', 'triage deployment incidents and release failures');
+    setAgentRoutingMode(db, agent.id, 'relevant', null, ownerId);
+    const group = await app.inject({
+      method: 'POST',
+      url: '/api/v1/conversations/group',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Relevant', participants: [{ participantId: agent.id, participantType: 'agent' }] },
+    });
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${group.json().id}/messages`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { body: 'Please triage this deployment incident.' },
+    });
+    await settle();
+    expect(asked).toEqual([agent.id]);
+
+    asked.length = 0;
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${group.json().id}/messages`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { body: 'What should we order for lunch?' },
+    });
+    await settle();
     expect(asked).toEqual([]);
 
     await app.close();
