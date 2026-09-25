@@ -7,6 +7,17 @@ const LogQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(50),
 });
 
+const BrandingInputSchema = z.object({
+  displayName: z.string().trim().min(1).max(60).optional(),
+  tagline: z.string().trim().max(160).optional(),
+  iconDataUrl: z.union([
+    z.string()
+      .max(350_000)
+      .regex(/^data:image\/(?:png|jpeg|svg\+xml);base64,[A-Za-z0-9+/]+=*$/, 'icon must be a base64 PNG, JPEG or SVG data URL'),
+    z.null(),
+  ]).optional(),
+});
+
 /** One line of what has gone wrong lately, in the order it happened. */
 export interface LogEntry {
   kind: 'job_failed' | 'agent_run_failed';
@@ -24,6 +35,18 @@ function canAdminister(role: string): boolean {
   return role === 'owner' || role === 'admin';
 }
 
+function brandingView(db: Database) {
+  const row = db.prepare('SELECT display_name, tagline, icon_data_url, updated_at FROM server_branding WHERE id = 1').get() as
+    | { display_name: string; tagline: string; icon_data_url: string | null; updated_at: string }
+    | undefined;
+  return {
+    displayName: row?.display_name ?? 'Crewly',
+    tagline: row?.tagline ?? '',
+    iconDataUrl: row?.icon_data_url ?? null,
+    updatedAt: row?.updated_at ?? null,
+  };
+}
+
 /**
  * What the people who run a server need to see about it.
  *
@@ -34,6 +57,30 @@ function canAdminister(role: string): boolean {
  */
 export function registerServerAdminRoutes(app: FastifyInstance, options: { version: string }): void {
   const startedAt = Date.now();
+
+  app.get('/api/v1/server/branding', { preHandler: requireAuth }, async (_request, reply) => {
+    reply.send(brandingView(app.db));
+  });
+
+  app.patch('/api/v1/server/branding', { preHandler: requireAuth }, async (request, reply) => {
+    if (!canAdminister(request.user!.role)) {
+      reply.code(403).send({ error: 'forbidden' });
+      return;
+    }
+    const input = BrandingInputSchema.parse(request.body);
+    const current = brandingView(app.db);
+    app.db.prepare(
+      `UPDATE server_branding
+       SET display_name = ?, tagline = ?, icon_data_url = ?, updated_at = ?
+       WHERE id = 1`,
+    ).run(
+      input.displayName ?? current.displayName,
+      input.tagline ?? current.tagline,
+      input.iconDataUrl === undefined ? current.iconDataUrl : input.iconDataUrl,
+      new Date().toISOString(),
+    );
+    reply.send(brandingView(app.db));
+  });
 
   app.get('/api/v1/server/status', { preHandler: requireAuth }, async (request, reply) => {
     if (!canAdminister(request.user!.role)) {

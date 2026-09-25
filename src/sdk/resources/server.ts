@@ -25,6 +25,13 @@ export interface ServerLogEntry {
   runId?: string;
 }
 
+export interface ServerBranding {
+  displayName: string;
+  tagline: string;
+  iconDataUrl: string | null;
+  updatedAt: string | null;
+}
+
 export class ServerResource {
   constructor(private readonly http: HttpClient) {}
 
@@ -35,5 +42,13 @@ export class ServerResource {
   /** Recent failures somebody administering the server can act on. */
   logs(limit = 50): Promise<{ entries: ServerLogEntry[] }> {
     return this.http.request('GET', `/api/v1/server/logs?limit=${limit}`);
+  }
+
+  branding(): Promise<ServerBranding> {
+    return this.http.request('GET', '/api/v1/server/branding');
+  }
+
+  updateBranding(input: { displayName?: string; tagline?: string; iconDataUrl?: string | null }): Promise<ServerBranding> {
+    return this.http.request('PATCH', '/api/v1/server/branding', input);
   }
 }

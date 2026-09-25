@@ -34,6 +34,43 @@ describe('what the dashboard can say about a running server', () => {
 
   const as = (token: string) => ({ authorization: `Bearer ${token}` });
 
+  it('lets admins update scoped server branding and rejects invalid or member changes', async () => {
+    const initial = await app.inject({ method: 'GET', url: '/api/v1/server/branding', headers: as(owner) });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json()).toMatchObject({ displayName: 'Crewly', tagline: '', iconDataUrl: null });
+
+    const updated = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/server/branding',
+      headers: as(owner),
+      payload: { displayName: 'Acme Ops', tagline: 'A calm place to work' },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ displayName: 'Acme Ops', tagline: 'A calm place to work' });
+
+    const invalid = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/server/branding',
+      headers: as(owner),
+      payload: { iconDataUrl: 'data:text/plain;base64,Zm9v' },
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const invited = await app.inject({
+      method: 'POST',
+      url: '/api/v1/users',
+      headers: as(owner),
+      payload: { email: 'member-branding@example.com', displayName: 'Member', password: 'member-secret-1' },
+    });
+    const member = (await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: 'member-branding@example.com', password: 'member-secret-1' },
+    })).json().token;
+    expect(invited.statusCode).toBe(201);
+    expect((await app.inject({ method: 'PATCH', url: '/api/v1/server/branding', headers: as(member), payload: { displayName: 'Nope' } })).statusCode).toBe(403);
+  });
+
   it('reports what the server is running and how much of it there is', async () => {
     const agent = createAgent(db, {
       ownerUserId: ownerId,
