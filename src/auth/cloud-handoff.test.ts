@@ -16,6 +16,7 @@ interface Claims {
   cloudUserId: string;
   email: string;
   displayName: string;
+  avatarMode?: 'bloop' | 'blobatar' | 'name';
   orgRole: 'owner' | 'admin' | 'member';
   nonce: string;
   iat: number;
@@ -111,10 +112,11 @@ describe('cloud handoff', () => {
     const demoted = await app.inject({
       method: 'POST',
       url: '/api/v1/auth/cloud-handoff',
-      payload: { token: token({ orgRole: 'member' }) },
+      payload: { token: token({ orgRole: 'member', displayName: 'Renamed Buyer', avatarMode: 'name' }) },
     });
     expect(demoted.json().user.id).toBe(owner.json().user.id);
     expect(demoted.json().user.role).toBe('owner');
+    expect(getUserByEmail(db, 'buyer@example.com')).toMatchObject({ display_name: 'Renamed Buyer', avatar_mode: 'name' });
     await app.close();
   });
 

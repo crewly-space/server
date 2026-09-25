@@ -1,6 +1,6 @@
 import { createPublicKey, timingSafeEqual, verify as verifySignature, type KeyObject } from 'node:crypto';
 import type { Database } from '../db/driver.js';
-import { createUser, getUserByEmail, getUserById, type Role, type UserRow } from '../users/repository.js';
+import { createUser, getUserByEmail, getUserById, type AvatarMode, type Role, type UserRow } from '../users/repository.js';
 
 /** What Crewly Cloud says about the person arriving. */
 export interface HandoffClaims {
@@ -8,6 +8,7 @@ export interface HandoffClaims {
   cloudUserId: string;
   email: string;
   displayName: string;
+  avatarMode?: AvatarMode;
   orgRole: Role;
   nonce: string;
   iat: number;
@@ -145,7 +146,8 @@ export function applyHandoff(db: Database, claims: HandoffClaims, onFirstUser?: 
       ).run(CLOUD_IDENTITY_PROVIDER, claims.cloudUserId, existing.id, new Date().toISOString());
     }
     const role: Role = ROLE_RANK[arrivingRole] > ROLE_RANK[existing.role] ? arrivingRole : existing.role;
-    db.prepare('UPDATE users SET display_name = ?, role = ? WHERE id = ?').run(displayName, role, existing.id);
+    db.prepare('UPDATE users SET display_name = ?, role = ?, avatar_mode = COALESCE(?, avatar_mode) WHERE id = ?')
+      .run(displayName, role, claims.avatarMode ?? null, existing.id);
     return getUserById(db, existing.id)!;
   });
 
