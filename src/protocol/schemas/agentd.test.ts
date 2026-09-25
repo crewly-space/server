@@ -34,8 +34,16 @@ describe('signed agentd connection messages', () => {
       timestamp: '2026-09-18T00:00:00.000Z',
       nonce: 'nonce',
       signature: 'x'.repeat(40),
-    }).deviceId).toBe('dev_0123456789abcdef0123');
-    expect(AgentdHeartbeatSchema.parse({ type: 'heartbeat', capabilities: { providers: [] } }).capabilities)
+      protocolVersion: '0.1.0',
+      clientVersion: '0.1.0-dev',
+      capabilities: { 'agentd.heartbeat.v1': true },
+    }).protocolVersion).toBe('0.1.0');
+    expect(AgentdHeartbeatSchema.parse({
+      type: 'heartbeat',
+      protocolVersion: '0.1.0',
+      clientVersion: '0.1.0-dev',
+      capabilities: { providers: [] },
+    }).capabilities)
       .toEqual({ providers: [] });
   });
 });

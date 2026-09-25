@@ -31,6 +31,8 @@ describe('HttpClient', () => {
     const fetchImpl = fakeFetch((url, init) => {
       expect(url).toBe('http://localhost:4000/api/v1/agents');
       expect(init.method).toBe('POST');
+      expect((init.headers as Record<string, string>)['x-crewly-protocol-version']).toBe('0.1.0');
+      expect((init.headers as Record<string, string>)['x-crewly-client-version']).toBe('0.0.0-dev');
       expect(JSON.parse(init.body as string)).toEqual({ name: 'Assistant' });
       return new Response(JSON.stringify({ id: 'agent_1', name: 'Assistant' }), { status: 201 });
     });

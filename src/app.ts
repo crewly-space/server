@@ -43,6 +43,7 @@ import { MailService } from './mail/service.js';
 import { registerMailRoutes } from './mail/routes.js';
 import { emailChannel, inAppChannel, NotificationService, registerNotificationService } from './notifications/service.js';
 import { registerNotificationRoutes } from './notifications/routes.js';
+import { PROTOCOL_CAPABILITIES, PROTOCOL_VERSION } from './protocol/index.js';
 
 export interface BuildAppOptions {
   db: Database;
@@ -150,6 +151,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   await app.register(websocketPlugin);
 
   app.get('/api/v1/health', async () => ({ ok: true }));
+  app.get('/api/v1/protocol', async () => ({
+    protocolVersion: PROTOCOL_VERSION,
+    capabilities: PROTOCOL_CAPABILITIES,
+  }));
   app.get('/healthz', async () => ({ ok: true }));
   app.get('/readyz', async () => {
     opts.db.prepare('SELECT 1').get();
@@ -228,7 +233,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerRunInspectorRoutes(app, hub);
   registerApprovalRoutes(app);
   registerWsRoutes(app, hub, opts.trustedAppOrigins ?? []);
-  registerDeviceSocket(app, deviceHub, hub);
+  registerDeviceSocket(app, deviceHub, hub, { version: opts.version ?? '0.0.0-dev' });
 
   if (opts.webDir && fs.existsSync(path.join(opts.webDir, 'index.html'))) {
     await app.register(fastifyStatic, { root: opts.webDir, prefix: '/', index: false });

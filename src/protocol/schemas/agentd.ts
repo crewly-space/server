@@ -48,11 +48,16 @@ export const AgentdAuthenticateSchema = z.object({
   timestamp: z.string().datetime(),
   nonce: z.string().min(1),
   signature: z.string().min(40),
+  protocolVersion: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
+  clientVersion: z.string().max(40).optional(),
+  capabilities: z.record(z.string(), z.unknown()).optional(),
 });
 export type AgentdAuthenticate = z.infer<typeof AgentdAuthenticateSchema>;
 
 export const AgentdHeartbeatSchema = z.object({
   type: z.literal('heartbeat'),
   capabilities: z.record(z.string(), z.unknown()).optional(),
+  protocolVersion: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
+  clientVersion: z.string().max(40).optional(),
 });
 export type AgentdHeartbeat = z.infer<typeof AgentdHeartbeatSchema>;

@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { buildApp } from '../app.js';
 import { openSqlite, type Database } from '../db/driver.js';
 import { runMigrations } from '../db/migrate.js';
+import { PROTOCOL_VERSION } from '../protocol/index.js';
 
 function nextMessage(socket: WebSocket): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
@@ -61,8 +62,14 @@ describe('signed device socket', () => {
     const timestamp = new Date().toISOString();
     const payload = Buffer.from(`${deviceId}\n${timestamp}\n${challenge.nonce}`, 'utf8');
     const signature = sign(null, payload, privateKey).toString('base64').replace(/=+$/, '');
-    connected.send(JSON.stringify({ type: 'authenticate', deviceId, timestamp, nonce: challenge.nonce, signature }));
-    expect(await nextMessage(connected)).toEqual({ type: 'authenticated', deviceId });
+    connected.send(JSON.stringify({
+      type: 'authenticate', deviceId, timestamp, nonce: challenge.nonce, signature,
+      protocolVersion: PROTOCOL_VERSION, clientVersion: '0.1.0-dev',
+    }));
+    expect(await nextMessage(connected)).toMatchObject({
+      type: 'authenticated', deviceId, protocolVersion: PROTOCOL_VERSION,
+      capabilities: ['agentd.heartbeat.v1', 'agentd.capabilities.v1'],
+    });
     return connected;
   }
 
@@ -84,7 +91,10 @@ describe('signed device socket', () => {
   it('authenticates a paired Ed25519 identity and records heartbeat capabilities', async () => {
     const { token, deviceId, privateKey } = await pairDevice();
     socket = await authenticate(deviceId, privateKey);
-    socket.send(JSON.stringify({ type: 'heartbeat', capabilities: { providers: [{ kind: 'ollama' }] } }));
+    socket.send(JSON.stringify({
+      type: 'heartbeat', protocolVersion: PROTOCOL_VERSION, clientVersion: '0.1.0-dev',
+      capabilities: { providers: [{ kind: 'ollama' }] },
+    }));
     expect(await nextMessage(socket)).toMatchObject({ type: 'heartbeat.ack' });
 
     const pending = app.deviceHub.request(deviceId, 'provider.models', { kind: 'ollama', providerId: 'local' });
@@ -94,7 +104,30 @@ describe('signed device socket', () => {
     await expect(pending).resolves.toEqual({ models: [] });
 
     const devices = await app.inject({ method: 'GET', url: '/api/v1/devices', headers: { authorization: `Bearer ${token}` } });
-    expect(devices.json()[0]).toMatchObject({ id: deviceId, connected: true, capabilities: { providers: [{ kind: 'ollama' }] } });
+    expect(devices.json()[0]).toMatchObject({
+      id: deviceId,
+      connected: true,
+      capabilities: { providers: [{ kind: 'ollama' }], protocolVersion: PROTOCOL_VERSION, clientVersion: '0.1.0-dev' },
+    });
+  });
+
+  it('fails clearly when a device speaks an incompatible protocol major', async () => {
+    const { deviceId, privateKey } = await pairDevice();
+    const address = app.server.address();
+    if (!address || typeof address === 'string') throw new Error('missing server address');
+    const connected = new WebSocket(`ws://127.0.0.1:${address.port}/api/v1/agentd/connect`);
+    socket = connected;
+    const challenge = await nextMessage(connected);
+    const timestamp = new Date().toISOString();
+    const payload = Buffer.from(`${deviceId}\n${timestamp}\n${challenge.nonce}`, 'utf8');
+    const signature = sign(null, payload, privateKey).toString('base64').replace(/=+$/, '');
+    connected.send(JSON.stringify({
+      type: 'authenticate', deviceId, timestamp, nonce: challenge.nonce, signature,
+      protocolVersion: '1.0.0', clientVersion: '1.0.0',
+    }));
+    expect(await nextMessage(connected)).toMatchObject({
+      type: 'protocol.error', code: 'protocol_incompatible', protocolVersion: PROTOCOL_VERSION,
+    });
   });
   it('tells the owner when a device comes online and when it goes offline', async () => {
     const { ownerId, deviceId, privateKey } = await pairDevice();

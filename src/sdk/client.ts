@@ -48,9 +48,9 @@ export class CrewlyClient {
   readonly mail: MailResource;
   readonly notifications: NotificationsResource;
 
-  constructor(opts: { baseUrl: string; fetchImpl?: typeof fetch }) {
+  constructor(opts: { baseUrl: string; fetchImpl?: typeof fetch; clientVersion?: string }) {
     this.baseUrl = opts.baseUrl;
-    this.http = new HttpClient(opts.baseUrl, opts.fetchImpl);
+    this.http = new HttpClient(opts.baseUrl, opts.fetchImpl, opts.clientVersion);
     this.auth = new AuthResource(this.http);
     this.agents = new AgentsResource(this.http);
     this.conversations = new ConversationsResource(this.http);

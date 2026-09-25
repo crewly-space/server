@@ -1,12 +1,15 @@
 import { CrewlyApiError, describeStatus } from './errors.js';
+import { PROTOCOL_VERSION } from '../protocol/version.js';
 
 export class HttpClient {
   private token: string | undefined;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly clientVersion: string;
 
-  constructor(baseUrl: string, fetchImpl?: typeof fetch) {
+  constructor(baseUrl: string, fetchImpl?: typeof fetch, clientVersion = '0.0.0-dev') {
     this.baseUrl = baseUrl;
+    this.clientVersion = clientVersion;
     // fetch must stay bound to its realm. A bare reference stored on the instance
     // and called as this.fetchImpl(...) throws "Illegal invocation" in browsers.
     this.fetchImpl = fetchImpl ?? globalThis.fetch.bind(globalThis);
@@ -19,6 +22,8 @@ export class HttpClient {
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const headers: Record<string, string> = {};
     if (body !== undefined) headers['content-type'] = 'application/json';
+    headers['x-crewly-protocol-version'] = PROTOCOL_VERSION;
+    headers['x-crewly-client-version'] = this.clientVersion;
     if (this.token) headers.authorization = `Bearer ${this.token}`;
 
     let response: Response;

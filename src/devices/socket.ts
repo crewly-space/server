@@ -1,7 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { createPublicKey, randomBytes, verify } from 'node:crypto';
 import type { WebSocket } from 'ws';
-import { AgentdAuthenticateSchema, AgentdHeartbeatSchema, AgentdResponseSchema } from '../protocol/index.js';
+import {
+  AgentdAuthenticateSchema,
+  AgentdHeartbeatSchema,
+  AgentdResponseSchema,
+  negotiateProtocol,
+  PROTOCOL_CAPABILITIES,
+  PROTOCOL_VERSION,
+} from '../protocol/index.js';
 import type { DeviceConnectionHub } from './hub.js';
 import type { ConnectionHub } from '../ws/hub.js';
 import { getDevice, touchDevice } from './repository.js';
@@ -16,7 +23,8 @@ function signaturePayload(deviceId: string, timestamp: string, nonce: string): B
 export function registerDeviceSocket(
   app: FastifyInstance,
   hub: DeviceConnectionHub,
-  events?: ConnectionHub
+  events?: ConnectionHub,
+  options: { version?: string } = {}
 ): void {
   app.get('/api/v1/agentd/connect', { websocket: true }, (socket) => {
     const nonce = randomBytes(24).toString('base64url');
@@ -52,6 +60,18 @@ export function registerDeviceSocket(
           socket.close(4001, 'invalid authentication');
           return;
         }
+        const negotiation = negotiateProtocol(parsed.data.protocolVersion);
+        if (!negotiation.compatible) {
+          socket.send(JSON.stringify({
+            type: 'protocol.error',
+            code: 'protocol_incompatible',
+            message: `This server speaks protocol ${PROTOCOL_VERSION}; update the connected Crewly client.`,
+            serverVersion: options.version ?? '0.0.0-dev',
+            protocolVersion: PROTOCOL_VERSION,
+          }));
+          socket.close(4003, 'protocol incompatible');
+          return;
+        }
         authenticatedDeviceId = device.id;
         ownerUserId = device.owner_user_id;
         clearTimeout(authTimer);
@@ -62,14 +82,26 @@ export function registerDeviceSocket(
           name: device.name,
           platform: device.platform,
         });
-        socket.send(JSON.stringify({ type: 'authenticated', deviceId: device.id }));
+        socket.send(JSON.stringify({
+          type: 'authenticated',
+          deviceId: device.id,
+          serverVersion: options.version ?? '0.0.0-dev',
+          protocolVersion: PROTOCOL_VERSION,
+          capabilities: PROTOCOL_CAPABILITIES,
+          compatibility: negotiation.reason,
+        }));
         app.agentStatus.refresh();
         return;
       }
 
       const heartbeat = AgentdHeartbeatSchema.safeParse(decoded);
       if (heartbeat.success) {
-        touchDevice(app.db, authenticatedDeviceId, heartbeat.data.capabilities);
+        const capabilities = {
+          ...(heartbeat.data.capabilities ?? {}),
+          ...(heartbeat.data.protocolVersion ? { protocolVersion: heartbeat.data.protocolVersion } : {}),
+          ...(heartbeat.data.clientVersion ? { clientVersion: heartbeat.data.clientVersion } : {}),
+        };
+        touchDevice(app.db, authenticatedDeviceId, capabilities);
         // A heartbeat can say a runtime was installed or signed out.
         app.agentStatus.refresh();
         socket.send(JSON.stringify({ type: 'heartbeat.ack', at: new Date().toISOString() }));
