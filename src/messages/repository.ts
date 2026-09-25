@@ -1,6 +1,7 @@
 import { MessageSchema, type ActorType, type MentionRef, type Message } from '../protocol/index.js';
 import type { Database } from '../db/driver.js';
 import { randomUUID } from 'node:crypto';
+import { attachToMessage, listAttachmentsForMessage, type AttachmentView } from '../attachments/service.js';
 
 interface MessageRow {
   id: string;
@@ -25,7 +26,7 @@ function getMentions(db: Database, messageId: string): MentionRef[] {
   return rows.map((r) => ({ targetId: r.target_id, targetType: r.target_type }));
 }
 
-function rowToMessage(row: MessageRow, mentions: MentionRef[]): Message {
+function rowToMessage(row: MessageRow, mentions: MentionRef[], attachments: AttachmentView[] = []): Message {
   return MessageSchema.parse({
     id: row.id,
     conversationId: row.conversation_id,
@@ -35,6 +36,7 @@ function rowToMessage(row: MessageRow, mentions: MentionRef[]): Message {
     mentions,
     replyToMessageId: row.reply_to_message_id,
     createdAt: row.created_at,
+    attachments,
   });
 }
 
@@ -47,8 +49,12 @@ export function createMessage(
     body: string;
     mentions: MentionRef[];
     replyToMessageId: string | null;
+    attachmentIds?: string[];
   }
 ): Message {
+  if (!input.body.trim() && !input.attachmentIds?.length) {
+    throw new Error('message_body_or_attachment_required');
+  }
   if (input.replyToMessageId) {
     const replyTarget = db.prepare('SELECT conversation_id FROM messages WHERE id = ?').get(input.replyToMessageId) as
       | { conversation_id: string }
@@ -79,22 +85,30 @@ export function createMessage(
     for (const m of input.mentions) {
       insertMention.run(row.id, m.targetId, m.targetType);
     }
+    if (input.attachmentIds?.length) {
+      attachToMessage(db, {
+        messageId: row.id,
+        conversationId: input.conversationId,
+        uploadedBy: input.authorId,
+        attachmentIds: input.attachmentIds,
+      });
+    }
     touchConversation.run(now, input.conversationId);
   });
   createTx();
-  return rowToMessage(row, input.mentions);
+  return rowToMessage(row, input.mentions, listAttachmentsForMessage(db, row.id));
 }
 
 export function listMessagesForConversation(db: Database, conversationId: string, limit = 50): Message[] {
   const rows = db
     .prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?')
     .all(conversationId, limit) as MessageRow[];
-  return rows.reverse().map((row) => rowToMessage(row, getMentions(db, row.id)));
+  return rows.reverse().map((row) => rowToMessage(row, getMentions(db, row.id), listAttachmentsForMessage(db, row.id)));
 }
 
 export function listRecentMessagesForConversation(db: Database, conversationId: string, limit = 20): Message[] {
   const rows = db
     .prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?')
     .all(conversationId, limit) as MessageRow[];
-  return rows.reverse().map((row) => rowToMessage(row, getMentions(db, row.id)));
+  return rows.reverse().map((row) => rowToMessage(row, getMentions(db, row.id), listAttachmentsForMessage(db, row.id)));
 }

@@ -63,7 +63,7 @@ export function deliverWebhook(db: Database, input: { id: string; secret: string
     const previous = db.prepare('SELECT message_id FROM incoming_webhook_events WHERE webhook_id = ? AND external_event_id = ?').get(input.id, input.externalEventId) as { message_id: string | null } | undefined;
     if (previous?.message_id) {
       const existing = db.prepare('SELECT * FROM messages WHERE id = ?').get(previous.message_id) as { id: string; conversation_id: string; author_id: string; author_type: 'integration'; body: string; reply_to_message_id: string | null; created_at: string };
-      return { duplicate: true, message: { id: existing.id, conversationId: existing.conversation_id, authorId: existing.author_id, authorType: existing.author_type, body: existing.body, mentions: [], replyToMessageId: existing.reply_to_message_id, createdAt: existing.created_at } };
+      return { duplicate: true, message: { id: existing.id, conversationId: existing.conversation_id, authorId: existing.author_id, authorType: existing.author_type, body: existing.body, mentions: [], replyToMessageId: existing.reply_to_message_id, attachments: [], createdAt: existing.created_at } };
     }
   }
   const message = createMessage(db, { conversationId: current.channel_id, authorId: `webhook:${current.id}`, authorType: 'integration', body: messageBody(input.payload), mentions: [], replyToMessageId: null });

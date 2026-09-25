@@ -47,6 +47,8 @@ import { negotiateProtocol, PROTOCOL_CAPABILITIES, PROTOCOL_VERSION } from './pr
 import { registerConnectorRoutes } from './connectors/routes.js';
 import type { ConnectorOAuthConfig } from './connectors/providers.js';
 import { registerWebhookRoutes } from './webhooks/routes.js';
+import { registerAttachmentRoutes } from './attachments/routes.js';
+import { DEFAULT_ATTACHMENT_MAX_BYTES } from './attachments/service.js';
 
 export interface BuildAppOptions {
   db: Database;
@@ -83,6 +85,10 @@ export interface BuildAppOptions {
   publicUrl?: string;
   /** Optional GitHub OAuth app credentials for the first first-class connector. */
   githubOAuth?: ConnectorOAuthConfig;
+  /** Private filesystem path for uploaded attachment bytes. */
+  attachmentDir?: string;
+  /** Maximum decoded size of one uploaded attachment. */
+  attachmentMaxBytes?: number;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -90,7 +96,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   const app = Fastify({
     logger: opts.logger ?? false,
     trustProxy: opts.trustProxy ?? false,
-    bodyLimit: 1024 * 1024,
+    bodyLimit: Math.max(1024 * 1024, Math.ceil((opts.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES) * 4 / 3) + 128 * 1024),
     requestIdHeader: 'x-request-id',
   });
   app.decorate('db', opts.db);
@@ -254,6 +260,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerConversationSummaryRoutes(app);
   registerProviderRoutes(app, { fetchImpl: opts.fetchImpl });
   registerConnectorRoutes(app, { fetchImpl: opts.fetchImpl, githubOAuth: opts.githubOAuth });
+  registerAttachmentRoutes(app, {
+    directory: opts.attachmentDir ?? path.join(process.cwd(), '.crewly-attachments'),
+    maxBytes: opts.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES,
+  });
   registerRuntimeRoutes(app, hub, respond);
   registerRunInspectorRoutes(app, hub);
   registerApprovalRoutes(app);

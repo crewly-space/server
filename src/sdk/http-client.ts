@@ -76,4 +76,37 @@ export class HttpClient {
 
     return data as T;
   }
+
+  async requestBlob(path: string): Promise<Blob> {
+    const headers: Record<string, string> = {
+      'x-crewly-protocol-version': PROTOCOL_VERSION,
+      'x-crewly-client-version': this.clientVersion,
+    };
+    if (this.token) headers.authorization = `Bearer ${this.token}`;
+    let response: Response;
+    try {
+      response = await this.fetchImpl(`${this.baseUrl.replace(/\/+$/, '')}${path}`, {
+        method: 'GET',
+        headers,
+      });
+    } catch (err) {
+      throw new CrewlyApiError(
+        describeStatus(0, 'network_error'),
+        0,
+        'network_error',
+        { detail: `GET ${path}: ${(err as Error).message}` },
+      );
+    }
+    if (!response.ok) {
+      let payload: unknown;
+      try { payload = await response.json(); } catch { payload = undefined; }
+      const object = payload && typeof payload === 'object' ? payload as Record<string, unknown> : undefined;
+      const code = object && 'error' in object ? String(object.error) : undefined;
+      const explained = object && typeof object.message === 'string' && object.message.length > 0
+        ? object.message
+        : undefined;
+      throw new CrewlyApiError(explained ?? describeStatus(response.status, code), response.status, code, payload);
+    }
+    return response.blob();
+  }
 }

@@ -31,6 +31,7 @@ export {
 } from './resources/channels.js';
 export { HealthResource, type HealthStatus } from './resources/health.js';
 export { MessagesResource, type SendMessageInput } from './resources/messages.js';
+export { AttachmentsResource, type UploadAttachmentInput } from './resources/attachments.js';
 export {
   MemoryResource,
   type CreateMemoryFactInput,
@@ -70,6 +71,7 @@ export {
   ServerResource,
   type ServerStatus,
   type ServerLogEntry,
+  type ServerBranding,
 } from './resources/server.js';
 export {
   UsageResource,
@@ -164,6 +166,7 @@ export type {
   AgentStatus,
   AgentRunStatus,
   ApprovalRequest,
+  Attachment,
   Channel,
   ChannelCategory,
   ChannelList,

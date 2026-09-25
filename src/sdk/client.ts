@@ -22,6 +22,7 @@ import { CrewlyResource } from './resources/crewly.js';
 import { MailResource } from './resources/mail.js';
 import { NotificationsResource } from './resources/notifications.js';
 import { ConnectorsResource } from './resources/connectors.js';
+import { AttachmentsResource } from './resources/attachments.js';
 
 export class CrewlyClient {
   private readonly http: HttpClient;
@@ -49,6 +50,7 @@ export class CrewlyClient {
   readonly mail: MailResource;
   readonly notifications: NotificationsResource;
   readonly connectors: ConnectorsResource;
+  readonly attachments: AttachmentsResource;
 
   constructor(opts: { baseUrl: string; fetchImpl?: typeof fetch; clientVersion?: string }) {
     this.baseUrl = opts.baseUrl;
@@ -75,6 +77,7 @@ export class CrewlyClient {
     this.mail = new MailResource(this.http);
     this.notifications = new NotificationsResource(this.http);
     this.connectors = new ConnectorsResource(this.http);
+    this.attachments = new AttachmentsResource(this.http);
   }
 
   setToken(token: string | undefined): void {

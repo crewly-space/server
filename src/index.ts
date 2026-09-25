@@ -25,6 +25,7 @@ Usage: crewly-server [options]
   --host <address>      Bind address (default: 127.0.0.1)
   --data-dir <path>     SQLite and configuration directory
   --web-dir <path>      Built Crewly app directory (omit for API only)
+  --attachments-dir <path> Private attachment storage (default: <data-dir>/attachments)
   --log-level <level>   fatal|error|warn|info|debug|trace|silent
   --trust-proxy [bool]  Trust reverse-proxy forwarding headers`);
     return;
@@ -61,6 +62,8 @@ Usage: crewly-server [options]
     allowMcpStdio: config.allowMcpStdio,
     crewlyCloudUrl: config.crewlyCloudUrl,
     publicUrl: config.publicUrl,
+    attachmentDir: config.attachmentsDir,
+    attachmentMaxBytes: config.attachmentMaxBytes,
   });
 
   const jobRunner = new JobRunner(db, {

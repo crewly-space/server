@@ -13,15 +13,17 @@ import { emitNotification } from '../notifications/service.js';
 import { getUserById, type Role } from '../users/repository.js';
 import { blockedAgentIds, canReadChannel, getChannel } from '../channels/repository.js';
 import { createMessage, listMessagesForConversation, ReplyNotInConversationError } from './repository.js';
+import { AttachmentNotOwnedError, AttachmentValidationError, ATTACHMENT_MAX_COUNT_PER_MESSAGE } from '../attachments/service.js';
 import { decideAgentRouting } from './routing.js';
 
 const CreateMessageBodySchema = z.object({
-  body: z.string().min(1),
+  body: z.string().max(100_000).default(''),
   mentions: z
     .array(z.object({ targetId: z.string().min(1), targetType: z.enum(['user', 'agent']) }))
     .default([]),
   replyToMessageId: z.string().min(1).nullable().default(null),
-});
+  attachmentIds: z.array(z.string().min(1)).max(ATTACHMENT_MAX_COUNT_PER_MESSAGE).default([]),
+}).refine((body) => body.body.trim().length > 0 || body.attachmentIds.length > 0, { message: 'message needs text or an attachment' });
 
 const ListMessagesQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(50),
@@ -77,10 +79,19 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
         body: body.body,
         mentions: body.mentions,
         replyToMessageId: body.replyToMessageId,
+        attachmentIds: body.attachmentIds,
       });
     } catch (err) {
       if (err instanceof ReplyNotInConversationError) {
         reply.code(400).send({ error: 'invalid_reply' });
+        return;
+      }
+      if (err instanceof AttachmentNotOwnedError) {
+        reply.code(409).send({ error: 'attachment_unavailable', message: err.message });
+        return;
+      }
+      if (err instanceof AttachmentValidationError || (err instanceof Error && err.message === 'message_body_or_attachment_required')) {
+        reply.code(400).send({ error: 'invalid_message', message: err.message });
         return;
       }
       throw err;

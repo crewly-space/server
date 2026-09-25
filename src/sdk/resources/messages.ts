@@ -6,6 +6,7 @@ export interface SendMessageInput {
   body: string;
   mentions?: MentionRef[];
   replyToMessageId?: string | null;
+  attachmentIds?: string[];
 }
 
 export class MessagesResource {

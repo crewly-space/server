@@ -229,6 +229,7 @@ async function executeTurn(
           body: delivery.task.text,
           mentions: [],
           replyToMessageId: null,
+          attachments: [],
           createdAt: new Date().toISOString(),
         }]
       : listRecentMessagesForConversation(deps.db, input.conversationId, 20);
@@ -283,6 +284,7 @@ async function executeTurn(
     body: result.body,
     mentions: [],
     replyToMessageId: null,
+    attachmentIds: [],
   });
   completeAgentRun(deps.db, runId, message.id);
   trace('run.completed', { resultMessageId: message.id });

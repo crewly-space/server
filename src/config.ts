@@ -25,6 +25,10 @@ export interface AppConfig {
   crewlyCloudUrl?: string;
   /** Where people reach this server (CREWLY_PUBLIC_URL), for links in email. Only an origin. */
   publicUrl?: string;
+  /** Private attachment storage directory. */
+  attachmentsDir: string;
+  /** Maximum decoded attachment size in bytes. */
+  attachmentMaxBytes: number;
 }
 
 const ARG_TO_ENV: Record<string, string> = {
@@ -34,7 +38,10 @@ const ARG_TO_ENV: Record<string, string> = {
   '--web-dir': 'CREWLY_WEB_DIR',
   '--log-level': 'CREWLY_LOG_LEVEL',
   '--trust-proxy': 'CREWLY_TRUST_PROXY',
+  '--attachments-dir': 'CREWLY_ATTACHMENTS_DIR',
 };
+
+const DEFAULT_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 
 export function loadConfig(
   env: NodeJS.ProcessEnv = process.env,
@@ -86,6 +93,12 @@ export function loadConfig(
       throw new Error(`CREWLY_PUBLIC_URL is not a valid URL: ${resolved.CREWLY_PUBLIC_URL}`);
     }
   }
+  const attachmentMaxBytes = resolved.CREWLY_ATTACHMENT_MAX_BYTES
+    ? Number(resolved.CREWLY_ATTACHMENT_MAX_BYTES)
+    : DEFAULT_ATTACHMENT_MAX_BYTES;
+  if (!Number.isInteger(attachmentMaxBytes) || attachmentMaxBytes < 1 || attachmentMaxBytes > 100 * 1024 * 1024) {
+    throw new Error(`CREWLY_ATTACHMENT_MAX_BYTES must be an integer from 1 to 104857600, got ${resolved.CREWLY_ATTACHMENT_MAX_BYTES}`);
+  }
   const logLevel = resolved.CREWLY_LOG_LEVEL ?? 'info';
   if (!['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'].includes(logLevel)) {
     throw new Error(`CREWLY_LOG_LEVEL is invalid: ${logLevel}`);
@@ -106,6 +119,8 @@ export function loadConfig(
     ...(crewlyCloudUrl ? { crewlyCloudUrl } : {}),
     ...(publicUrl ? { publicUrl } : {}),
     ...(resolved.CREWLY_SECRETS_KEY?.trim() ? { managedSecretsKey: resolved.CREWLY_SECRETS_KEY.trim() } : {}),
+    attachmentsDir: path.resolve(resolved.CREWLY_ATTACHMENTS_DIR ?? path.join(dataDir, 'attachments')),
+    attachmentMaxBytes,
   };
 }
 

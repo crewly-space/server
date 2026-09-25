@@ -83,7 +83,7 @@ describe('conversation summary orchestration', () => {
 
   it('defaultSummarize is pure: same input always produces the same output', async () => {
     const messages = [
-      { id: 'm1', conversationId: 'c1', authorId: 'u1', authorType: 'user' as const, body: 'hi', mentions: [], replyToMessageId: null, createdAt: new Date().toISOString() },
+      { id: 'm1', conversationId: 'c1', authorId: 'u1', authorType: 'user' as const, body: 'hi', mentions: [], replyToMessageId: null, attachments: [], createdAt: new Date().toISOString() },
     ];
     const first = await defaultSummarize({ conversationId: 'c1', priorSummary: null, messages });
     const second = await defaultSummarize({ conversationId: 'c1', priorSummary: null, messages });
