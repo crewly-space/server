@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import { ActorTypeSchema } from './common.js';
+import { ParticipantTypeSchema } from './common.js';
 
 export const ConversationKindSchema = z.enum(['dm', 'group', 'channel']);
 export type ConversationKind = z.infer<typeof ConversationKindSchema>;
 
 export const ParticipantRefSchema = z.object({
   participantId: z.string().min(1),
-  participantType: ActorTypeSchema,
+  participantType: ParticipantTypeSchema,
 });
 export type ParticipantRef = z.infer<typeof ParticipantRefSchema>;
 

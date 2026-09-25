@@ -46,6 +46,7 @@ import { registerNotificationRoutes } from './notifications/routes.js';
 import { negotiateProtocol, PROTOCOL_CAPABILITIES, PROTOCOL_VERSION } from './protocol/index.js';
 import { registerConnectorRoutes } from './connectors/routes.js';
 import type { ConnectorOAuthConfig } from './connectors/providers.js';
+import { registerWebhookRoutes } from './webhooks/routes.js';
 
 export interface BuildAppOptions {
   db: Database;
@@ -208,6 +209,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerAgentRoutes(app);
   registerConversationRoutes(app);
   registerChannelRoutes(app);
+  registerWebhookRoutes(app, { publicUrl: opts.publicUrl });
   const gateway = opts.gateway ?? new AiGateway({
     db: opts.db,
     fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),

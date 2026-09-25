@@ -1,4 +1,4 @@
-import { ConversationSchema, type ActorType, type Conversation, type ParticipantRef } from '../protocol/index.js';
+import { ConversationSchema, type ActorType, type Conversation, type ParticipantRef, type ParticipantType } from '../protocol/index.js';
 import type { Database } from '../db/driver.js';
 import { randomUUID } from 'node:crypto';
 
@@ -13,7 +13,7 @@ interface ConversationRow {
 interface ParticipantRow {
   conversation_id: string;
   participant_id: string;
-  participant_type: ActorType;
+  participant_type: ParticipantType;
   added_at: string;
 }
 
@@ -92,7 +92,7 @@ export function isParticipant(
   db: Database,
   conversationId: string,
   participantId: string,
-  participantType: ActorType
+  participantType: ParticipantType
 ): boolean {
   const row = db
     .prepare(
