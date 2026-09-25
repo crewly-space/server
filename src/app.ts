@@ -45,6 +45,7 @@ import { emailChannel, inAppChannel, NotificationService, registerNotificationSe
 import { registerNotificationRoutes } from './notifications/routes.js';
 import { negotiateProtocol, PROTOCOL_CAPABILITIES, PROTOCOL_VERSION } from './protocol/index.js';
 import { registerConnectorRoutes } from './connectors/routes.js';
+import { connectorToolset } from './connectors/toolset.js';
 import type { ConnectorOAuthConfig } from './connectors/providers.js';
 import { registerWebhookRoutes } from './webhooks/routes.js';
 import { registerAttachmentRoutes } from './attachments/routes.js';
@@ -89,6 +90,8 @@ export interface BuildAppOptions {
   publicUrl?: string;
   /** Optional GitHub OAuth app credentials for the first first-class connector. */
   githubOAuth?: ConnectorOAuthConfig;
+  /** Optional Linear OAuth app credentials for the first first-class connector. */
+  linearOAuth?: ConnectorOAuthConfig;
   /** Private filesystem path for uploaded attachment bytes. */
   attachmentDir?: string;
   /** Maximum decoded size of one uploaded attachment. */
@@ -254,6 +257,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     instructions: [skillInstructions(opts.db)],
     toolsets: [
       mcpToolset(opts.db, mcpOptions),
+      connectorToolset(opts.db, opts.fetchImpl ?? globalThis.fetch.bind(globalThis)),
       artifactToolset({ db: opts.db, store: attachmentStore }),
       delegationToolset({
         db: opts.db,
@@ -281,7 +285,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerMemoryFactRoutes(app);
   registerConversationSummaryRoutes(app);
   registerProviderRoutes(app, { fetchImpl: opts.fetchImpl });
-  registerConnectorRoutes(app, { fetchImpl: opts.fetchImpl, githubOAuth: opts.githubOAuth });
+  registerConnectorRoutes(app, { fetchImpl: opts.fetchImpl, githubOAuth: opts.githubOAuth, linearOAuth: opts.linearOAuth });
   registerAttachmentRoutes(app, {
     store: attachmentStore,
     directory: opts.attachmentDir ?? path.join(process.cwd(), '.crewly-attachments'),

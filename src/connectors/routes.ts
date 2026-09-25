@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
-import { CONNECTOR_CAPABILITIES, CONNECTOR_PROVIDERS, consumeConnectorState, exchangeGitHubCode, githubRequest, startGitHubAuthorization, ConnectorOAuthError, type ConnectorCapability, type ConnectorOAuthConfig } from './providers.js';
+import { CONNECTOR_CAPABILITIES, CONNECTOR_PROVIDERS, consumeConnectorState, exchangeGitHubCode, exchangeLinearCode, githubRequest, linearRequest, PROVIDERS, startGitHubAuthorization, startLinearAuthorization, ConnectorOAuthError, type ConnectorCapability, type ConnectorOAuthConfig } from './providers.js';
 import { connectConnector, createPendingConnector, getConnector, listConnectorAudit, listConnectorGrants, listConnectors, refreshConnector, revokeConnector, setConnectorGrants } from './service.js';
 import { hasPermission } from '../permissions/roles.js';
 
@@ -15,10 +15,12 @@ function admin(app: FastifyInstance, request: FastifyRequest, reply: FastifyRepl
   if (hasPermission(app.db, request.user!.id, 'integrations.manage')) return true;
   reply.code(403).send({ error: 'forbidden' }); return false;
 }
-function oauthConfig(options: { githubOAuth?: ConnectorOAuthConfig }): ConnectorOAuthConfig | undefined {
-  if (options.githubOAuth) return options.githubOAuth;
-  const clientId = process.env.CREWLY_GITHUB_CLIENT_ID;
-  const clientSecret = process.env.CREWLY_GITHUB_CLIENT_SECRET;
+function oauthConfig(options: { githubOAuth?: ConnectorOAuthConfig; linearOAuth?: ConnectorOAuthConfig }, provider: 'github' | 'linear'): ConnectorOAuthConfig | undefined {
+  const configured = provider === 'github' ? options.githubOAuth : options.linearOAuth;
+  if (configured) return configured;
+  const prefix = provider === 'github' ? 'GITHUB' : 'LINEAR';
+  const clientId = process.env[`CREWLY_${prefix}_CLIENT_ID`];
+  const clientSecret = process.env[`CREWLY_${prefix}_CLIENT_SECRET`];
   return clientId && clientSecret ? { clientId, clientSecret } : undefined;
 }
 function sendConnectorError(reply: FastifyReply, error: unknown): void {
@@ -27,24 +29,24 @@ function sendConnectorError(reply: FastifyReply, error: unknown): void {
   throw error;
 }
 
-export function registerConnectorRoutes(app: FastifyInstance, options: { fetchImpl?: typeof fetch; githubOAuth?: ConnectorOAuthConfig } = {}): void {
+export function registerConnectorRoutes(app: FastifyInstance, options: { fetchImpl?: typeof fetch; githubOAuth?: ConnectorOAuthConfig; linearOAuth?: ConnectorOAuthConfig } = {}): void {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   app.get('/api/v1/connectors/providers', { preHandler: requireAuth }, async (_request, reply) => {
-    reply.send({ providers: CONNECTOR_PROVIDERS.map((provider) => ({ provider, ...({ github: { label: 'GitHub', description: 'Repositories, issues and pull requests through a GitHub OAuth app.', capabilities: [...CONNECTOR_CAPABILITIES], scopes: ['read:user', 'repo'] } } as const)[provider] })) });
+    reply.send({ providers: CONNECTOR_PROVIDERS.map((provider) => ({ provider, label: PROVIDERS[provider].label, description: PROVIDERS[provider].description, capabilities: PROVIDERS[provider].capabilities, scopes: PROVIDERS[provider].scopes })) });
   });
   app.get('/api/v1/connectors', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request, reply)) return; reply.send({ connectors: listConnectors(app.db) });
   });
   app.post('/api/v1/connectors/oauth/github/start', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request, reply)) return;
-    const config = oauthConfig(options); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured' }); return; }
+    const config = oauthConfig(options, 'github'); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured' }); return; }
     const body = StartSchema.parse(request.body); const connectorId = randomUUID();
     createPendingConnector(app.db, { id: connectorId, provider: 'github', ownerUserId: request.user!.id }, { type: 'user', id: request.user!.id });
     reply.send(startGitHubAuthorization(app.db, { connectorId, userId: request.user!.id, callbackUrl: body.callbackUrl, scopes: body.scopes }, config));
   });
   app.post('/api/v1/connectors/oauth/github/complete', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request, reply)) return;
-    const config = oauthConfig(options); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured' }); return; }
+    const config = oauthConfig(options, 'github'); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured' }); return; }
     const body = CompleteSchema.parse(request.body);
     try {
       const pending = consumeConnectorState(app.db, { state: body.state, userId: request.user!.id });
@@ -52,6 +54,27 @@ export function registerConnectorRoutes(app: FastifyInstance, options: { fetchIm
       const profile = await githubRequest(token, '/user', fetchImpl);
       if (profile.status !== 200 || typeof profile.body.id !== 'number') throw new ConnectorOAuthError('GitHub did not return an account', 502);
       reply.code(201).send(connectConnector(app.db, pending.connector_id, { token, accountId: String(profile.body.id), accountName: String(profile.body.login ?? ''), accountUrl: typeof profile.body.html_url === 'string' ? profile.body.html_url : undefined, scopes: ['read:user', 'repo'] }, { type: 'user', id: request.user!.id }));
+    } catch (error) { sendConnectorError(reply, error); }
+  });
+  app.post('/api/v1/connectors/oauth/linear/start', { preHandler: requireAuth }, async (request, reply) => {
+    if (!admin(app, request, reply)) return;
+    const config = oauthConfig(options, 'linear'); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured' }); return; }
+    const body = StartSchema.parse(request.body); const connectorId = randomUUID();
+    createPendingConnector(app.db, { id: connectorId, provider: 'linear', ownerUserId: request.user!.id }, { type: 'user', id: request.user!.id });
+    reply.send(startLinearAuthorization(app.db, { connectorId, userId: request.user!.id, callbackUrl: body.callbackUrl, scopes: body.scopes }, config));
+  });
+  app.post('/api/v1/connectors/oauth/linear/complete', { preHandler: requireAuth }, async (request, reply) => {
+    if (!admin(app, request, reply)) return;
+    const config = oauthConfig(options, 'linear'); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured' }); return; }
+    const body = CompleteSchema.parse(request.body);
+    try {
+      const pending = consumeConnectorState(app.db, { state: body.state, userId: request.user!.id });
+      if (pending.provider !== 'linear') throw new ConnectorOAuthError('this connection attempt is for another provider', 400);
+      const token = await exchangeLinearCode({ code: body.code, codeVerifier: pending.code_verifier, redirectUri: pending.callback_url }, config, fetchImpl);
+      const profile = await linearRequest(token, 'query Viewer { viewer { id name url } }', {}, fetchImpl);
+      const viewer = (profile.body.data as { viewer?: Record<string, unknown> } | undefined)?.viewer;
+      if (profile.status !== 200 || !viewer?.id) throw new ConnectorOAuthError('Linear did not return a workspace account', 502);
+      reply.code(201).send(connectConnector(app.db, pending.connector_id, { token, accountId: String(viewer.id), accountName: String(viewer.name ?? 'Linear'), accountUrl: typeof viewer.url === 'string' ? viewer.url : undefined, scopes: PROVIDERS.linear.scopes }, { type: 'user', id: request.user!.id }));
     } catch (error) { sendConnectorError(reply, error); }
   });
   app.post('/api/v1/connectors/:id/refresh', { preHandler: requireAuth }, async (request, reply) => {

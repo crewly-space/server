@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Database } from '../db/driver.js';
 
-export const CONNECTOR_PROVIDERS = ['github'] as const;
+export const CONNECTOR_PROVIDERS = ['github', 'linear'] as const;
 export type ConnectorProvider = typeof CONNECTOR_PROVIDERS[number];
 export const CONNECTOR_CAPABILITIES = [
   'read_profile',
@@ -9,6 +9,8 @@ export const CONNECTOR_CAPABILITIES = [
   'read_issues',
   'create_issue',
   'comment_on_pull_request',
+  'read_projects',
+  'comment_on_issue',
 ] as const;
 export type ConnectorCapability = typeof CONNECTOR_CAPABILITIES[number];
 export const CONNECTOR_STATUSES = [
@@ -32,6 +34,13 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     description: 'Repositories, issues and pull requests through a GitHub OAuth app.',
     capabilities: [...CONNECTOR_CAPABILITIES],
     scopes: ['read:user', 'repo'],
+  },
+  linear: {
+    provider: 'linear',
+    label: 'Linear',
+    description: 'Issues, projects and workflow updates through a Linear workspace connection.',
+    capabilities: ['read_issues', 'read_projects', 'create_issue', 'comment_on_issue'],
+    scopes: ['read', 'write'],
   },
 };
 
@@ -78,6 +87,32 @@ export function startGitHubAuthorization(
   return { connectorId: input.connectorId, state, authorizeUrl: url.toString() };
 }
 
+export function startLinearAuthorization(
+  db: Database,
+  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  config: ConnectorOAuthConfig,
+): PendingConnectorAuthorization {
+  const state = base64Url(randomBytes(32));
+  const codeVerifier = base64Url(randomBytes(32));
+  const challenge = base64Url(createHash('sha256').update(codeVerifier).digest());
+  const now = Date.now();
+  db.prepare('DELETE FROM connector_oauth_states WHERE expires_at <= ?').run(new Date(now).toISOString());
+  db.prepare(`INSERT INTO connector_oauth_states
+    (state, connector_id, provider, code_verifier, user_id, callback_url, created_at, expires_at)
+    VALUES (?, ?, 'linear', ?, ?, ?, ?, ?)`)
+    .run(state, input.connectorId, codeVerifier, input.userId, input.callbackUrl,
+      new Date(now).toISOString(), new Date(now + STATE_TTL_MS).toISOString());
+  const url = new URL('https://linear.app/oauth/authorize');
+  url.searchParams.set('client_id', config.clientId);
+  url.searchParams.set('redirect_uri', input.callbackUrl);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', (input.scopes ?? PROVIDERS.linear.scopes).join(','));
+  url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  return { connectorId: input.connectorId, state, authorizeUrl: url.toString() };
+}
+
 interface OAuthStateRow {
   state: string; connector_id: string; provider: string; code_verifier: string;
   user_id: string; callback_url: string; expires_at: string;
@@ -117,6 +152,24 @@ export async function exchangeGitHubCode(
   return body.access_token;
 }
 
+export async function exchangeLinearCode(
+  input: { code: string; codeVerifier: string; redirectUri: string },
+  config: ConnectorOAuthConfig,
+  fetchImpl: typeof fetch,
+): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetchImpl('https://api.linear.app/oauth/token', {
+      method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: input.redirectUri, code: input.code, code_verifier: input.codeVerifier, grant_type: 'authorization_code' }),
+      redirect: 'error', signal: AbortSignal.timeout(10_000),
+    });
+  } catch { throw new ConnectorOAuthError('Linear could not be reached', 502); }
+  const body = await response.json().catch(() => ({})) as { access_token?: string; error_description?: string };
+  if (!response.ok || !body.access_token) throw new ConnectorOAuthError(body.error_description ?? 'Linear rejected the authorization', 502);
+  return body.access_token;
+}
+
 export async function githubRequest(
   token: string,
   path: string,
@@ -133,4 +186,22 @@ export async function githubRequest(
     });
   } catch { throw new ConnectorOAuthError('GitHub could not be reached', 502); }
   return { status: response.status, body: await response.json().catch(() => ({})) as Record<string, unknown>, headers: response.headers };
+}
+
+export async function linearRequest(
+  token: string,
+  query: string,
+  variables: Record<string, unknown>,
+  fetchImpl: typeof fetch,
+): Promise<{ status: number; body: Record<string, unknown>; headers: Headers }> {
+  let response: Response;
+  try {
+    response = await fetchImpl('https://api.linear.app/graphql', {
+      method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ query, variables }), redirect: 'error', signal: AbortSignal.timeout(10_000),
+    });
+  } catch { throw new ConnectorOAuthError('Linear could not be reached', 502); }
+  const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (response.ok && Array.isArray(body.errors) && body.errors.length) return { status: 502, body, headers: response.headers };
+  return { status: response.status, body, headers: response.headers };
 }

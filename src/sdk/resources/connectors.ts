@@ -1,9 +1,9 @@
 import type { HttpClient } from '../http-client.js';
 import { encodePathSegment } from '../path.js';
 
-export type ConnectorProvider = 'github';
+export type ConnectorProvider = 'github' | 'linear';
 export type ConnectorStatus = 'pending' | 'connected' | 'action_required' | 'permission_revoked' | 'rate_limited' | 'provider_unavailable' | 'revoked';
-export type ConnectorCapability = 'read_profile' | 'read_repository' | 'read_issues' | 'create_issue' | 'comment_on_pull_request';
+export type ConnectorCapability = 'read_profile' | 'read_repository' | 'read_issues' | 'create_issue' | 'comment_on_pull_request' | 'read_projects' | 'comment_on_issue';
 export interface Connector {
   id: string; provider: ConnectorProvider; accountId: string | null; accountName: string | null; accountUrl: string | null;
   scopes: string[]; status: ConnectorStatus; ownerUserId: string; createdAt: string; updatedAt: string;
@@ -18,6 +18,8 @@ export class ConnectorsResource {
   list(): Promise<{ connectors: Connector[] }> { return this.http.request('GET', '/api/v1/connectors'); }
   startGitHubOAuth(input: { callbackUrl: string; scopes?: string[] }): Promise<ConnectorOAuthStart> { return this.http.request('POST', '/api/v1/connectors/oauth/github/start', input); }
   completeGitHubOAuth(input: { state: string; code: string }): Promise<Connector> { return this.http.request('POST', '/api/v1/connectors/oauth/github/complete', input); }
+  startLinearOAuth(input: { callbackUrl: string; scopes?: string[] }): Promise<ConnectorOAuthStart> { return this.http.request('POST', '/api/v1/connectors/oauth/linear/start', input); }
+  completeLinearOAuth(input: { state: string; code: string }): Promise<Connector> { return this.http.request('POST', '/api/v1/connectors/oauth/linear/complete', input); }
   refresh(id: string): Promise<Connector> { return this.http.request('POST', `/api/v1/connectors/${encodePathSegment(id)}/refresh`); }
   revoke(id: string): Promise<Connector> { return this.http.request('POST', `/api/v1/connectors/${encodePathSegment(id)}/revoke`); }
   grants(id: string): Promise<{ grants: ConnectorGrant[] }> { return this.http.request('GET', `/api/v1/connectors/${encodePathSegment(id)}/grants`); }
