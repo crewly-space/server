@@ -13,8 +13,16 @@ interface OpenAiChatResponseBody {
   usage?: { prompt_tokens: number; completion_tokens: number };
 }
 
+interface OpenAiModelEntry {
+  id: string;
+  name?: string;
+  context_length?: number;
+  max_context_length?: number;
+}
+
 interface OpenAiModelsResponseBody {
-  data: { id: string }[];
+  data?: OpenAiModelEntry[];
+  models?: OpenAiModelEntry[];
 }
 
 export function toOpenAiMessages(messages: ChatMessage[]): Record<string, unknown>[] {
@@ -121,7 +129,15 @@ export class OpenAICompatibleClient implements ProviderClient {
       throw new ProviderUnavailableError(`${this.kind} models request failed: ${(err as Error).message}`);
     }
     if (!response.ok) throw errorForStatus(this.kind, response);
-    const data = (await response.json()) as OpenAiModelsResponseBody;
-    return data.data.map((m) => ({ id: m.id, providerId: this.kind, displayName: m.id, contextWindow: 4096 }));
+    const body = (await response.json()) as OpenAiModelsResponseBody | OpenAiModelEntry[];
+    const entries = Array.isArray(body) ? body : body.data ?? body.models ?? [];
+    return entries
+      .filter((model) => typeof model.id === 'string' && model.id.length > 0)
+      .map((model) => ({
+        id: model.id,
+        providerId: this.kind,
+        displayName: model.name?.trim() || model.id,
+        contextWindow: model.context_length ?? model.max_context_length ?? 4096,
+      }));
   }
 }

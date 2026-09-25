@@ -22,6 +22,7 @@ import {
 import { resolveProviderClient } from './registry.js';
 import { providerHealth } from '../gateway/health.js';
 import { enableOnDevices } from './device-enable.js';
+import { ProviderError } from './errors.js';
 
 function isAgentdBackedKind(kind: ProviderKind): boolean {
   return (AGENTD_BACKED_PROVIDER_KINDS as readonly ProviderKind[]).includes(kind);
@@ -270,7 +271,16 @@ export function registerProviderRoutes(
       });
       reply.send(await client.listModels());
     } catch (err) {
-      reply.code(502).send({ error: 'provider_unavailable', message: (err as Error).message });
+      const code = err instanceof ProviderError ? err.code : 'provider_unavailable';
+      const message = code === 'provider_auth_failed'
+        ? `${config.kind} rejected its credential. Check the provider in Settings.`
+        : code === 'provider_rate_limited'
+          ? `${config.kind} is rate limiting model discovery. Try again in a moment.`
+          : code === 'provider_bad_request'
+            ? `${config.kind} refused model discovery. Check its base URL and credentials.`
+            : `Could not reach ${config.kind} to list models. Try again or use a custom model ID.`;
+      request.log.warn({ providerId: id, providerKind: config.kind, errorCode: code }, 'provider model discovery failed');
+      reply.code(502).send({ error: code, message });
     }
   });
 }

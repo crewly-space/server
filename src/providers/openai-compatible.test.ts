@@ -72,4 +72,16 @@ describe('OpenAICompatibleClient', () => {
     const models = await client.listModels();
     expect(models.map((m) => m.id)).toEqual(['gpt-5', 'gpt-5-mini']);
   });
+
+  it('normalizes array and named model responses with context metadata', async () => {
+    const fakeFetch = vi.fn(async () => new Response(JSON.stringify([
+      { id: 'qwen/qwen3-32b', name: 'Qwen 3 32B', context_length: 131072 },
+      { id: 'custom-model', max_context_length: 8192 },
+    ]), { status: 200 }));
+    const client = new OpenAICompatibleClient('openrouter', 'https://openrouter.ai/api/v1', 'sk-test', fakeFetch as unknown as typeof fetch);
+    await expect(client.listModels()).resolves.toEqual([
+      { id: 'qwen/qwen3-32b', providerId: 'openrouter', displayName: 'Qwen 3 32B', contextWindow: 131072 },
+      { id: 'custom-model', providerId: 'openrouter', displayName: 'custom-model', contextWindow: 8192 },
+    ]);
+  });
 });
