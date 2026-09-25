@@ -224,6 +224,15 @@ function connected(db: Database): ConnectionRow & { credential: string } {
   return { ...current, credential: decryptDatabaseSecret(db, current.credential_ciphertext) };
 }
 
+/**
+ * Crewly no longer knows this server by its credential: rejected (401/403),
+ * or the instance was deleted there (404). Either way the link is stale and
+ * only reconnecting mends it, so both read as revoked rather than an error.
+ */
+function crewlyForgot(status: number): boolean {
+  return status === 401 || status === 403 || status === 404;
+}
+
 /** Crewly no longer honours the credential: keep the record, drop the secret. */
 function markRevoked(db: Database, actor: CrewlyActor): void {
   db.transaction(() => {
@@ -244,7 +253,7 @@ export async function refreshCrewlyConnection(db: Database, fetchImpl: typeof fe
     method: 'GET',
     credential: current.credential,
   });
-  if (status === 401) {
+  if (crewlyForgot(status)) {
     markRevoked(db, actor);
     return getCrewlyConnection(db);
   }
@@ -273,7 +282,7 @@ export async function rotateCrewlyCredential(db: Database, fetchImpl: typeof fet
     method: 'POST',
     credential: current.credential,
   });
-  if (status === 401) {
+  if (crewlyForgot(status)) {
     markRevoked(db, actor);
     throw new CrewlyConnectionError('Crewly has revoked this server; connect it again', 409);
   }
