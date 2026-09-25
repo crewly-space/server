@@ -1,6 +1,7 @@
 import { createPublicKey, timingSafeEqual, verify as verifySignature, type KeyObject } from 'node:crypto';
 import type { Database } from '../db/driver.js';
 import { createUser, getUserByEmail, getUserById, type Role, type UserRow } from '../users/repository.js';
+import { ensureDefaultChannel } from '../channels/repository.js';
 
 /** What Crewly Cloud says about the person arriving. */
 export interface HandoffClaims {
@@ -135,7 +136,10 @@ export function applyHandoff(db: Database, claims: HandoffClaims, onFirstUser?: 
       db.prepare(
         'INSERT INTO external_identities (provider, subject, user_id, created_at) VALUES (?, ?, ?, ?)',
       ).run(CLOUD_IDENTITY_PROVIDER, claims.cloudUserId, created.id, new Date().toISOString());
-      if (firstUser) onFirstUser?.();
+      if (firstUser) {
+        ensureDefaultChannel(db, { id: created.id, role: created.role });
+        onFirstUser?.();
+      }
       return created;
     }
 
