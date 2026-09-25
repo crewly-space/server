@@ -16,6 +16,11 @@ export const AttachmentSchema = z.object({
   sizeBytes: z.number().int().positive(),
   createdAt: z.string().datetime(),
   url: z.string().min(1),
+  artifact: z.object({
+    id: z.string().min(1),
+    runId: z.string().min(1),
+    agentId: z.string().min(1),
+  }).nullable().default(null),
 });
 export type Attachment = z.infer<typeof AttachmentSchema>;
 

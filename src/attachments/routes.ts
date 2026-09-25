@@ -43,8 +43,8 @@ function sendAttachmentError(reply: FastifyReply, error: unknown): void {
   throw error;
 }
 
-export function registerAttachmentRoutes(app: FastifyInstance, options: { directory: string; maxBytes: number }): void {
-  const store = new AttachmentStore(options.directory, options.maxBytes);
+export function registerAttachmentRoutes(app: FastifyInstance, options: { directory: string; maxBytes: number; store?: AttachmentStore }): void {
+  const store = options.store ?? new AttachmentStore(options.directory, options.maxBytes);
   pruneAttachments(dbFor(app), store);
 
   app.post('/api/v1/attachments', { preHandler: requireAuth }, async (request, reply) => {

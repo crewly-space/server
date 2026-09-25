@@ -48,7 +48,8 @@ import { registerConnectorRoutes } from './connectors/routes.js';
 import type { ConnectorOAuthConfig } from './connectors/providers.js';
 import { registerWebhookRoutes } from './webhooks/routes.js';
 import { registerAttachmentRoutes } from './attachments/routes.js';
-import { DEFAULT_ATTACHMENT_MAX_BYTES } from './attachments/service.js';
+import { AttachmentStore, DEFAULT_ATTACHMENT_MAX_BYTES } from './attachments/service.js';
+import { artifactToolset } from './artifacts/service.js';
 
 export interface BuildAppOptions {
   db: Database;
@@ -237,6 +238,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     allowStdio: opts.allowMcpStdio ?? false,
     clientVersion: opts.version,
   };
+  const attachmentStore = new AttachmentStore(
+    opts.attachmentDir ?? path.join(process.cwd(), '.crewly-attachments'),
+    opts.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES,
+  );
   registerMcpRoutes(app, mcpOptions);
   registerSkillSecretHooks();
   registerSkillRoutes(app);
@@ -245,6 +250,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     instructions: [skillInstructions(opts.db)],
     toolsets: [
       mcpToolset(opts.db, mcpOptions),
+      artifactToolset({ db: opts.db, store: attachmentStore }),
       delegationToolset({
         db: opts.db,
         hub,
@@ -261,6 +267,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerProviderRoutes(app, { fetchImpl: opts.fetchImpl });
   registerConnectorRoutes(app, { fetchImpl: opts.fetchImpl, githubOAuth: opts.githubOAuth });
   registerAttachmentRoutes(app, {
+    store: attachmentStore,
     directory: opts.attachmentDir ?? path.join(process.cwd(), '.crewly-attachments'),
     maxBytes: opts.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES,
   });

@@ -26,6 +26,7 @@ export interface AttachmentView {
   sizeBytes: number;
   createdAt: string;
   url: string;
+  artifact: { id: string; runId: string; agentId: string } | null;
 }
 
 interface AttachmentRow {
@@ -38,6 +39,9 @@ interface AttachmentRow {
   size_bytes: number;
   storage_key: string;
   created_at: string;
+  artifact_id?: string | null;
+  artifact_run_id?: string | null;
+  artifact_agent_id?: string | null;
 }
 
 export class AttachmentValidationError extends Error {}
@@ -104,6 +108,9 @@ function view(row: AttachmentRow): AttachmentView {
     sizeBytes: row.size_bytes,
     createdAt: row.created_at,
     url: `/api/v1/attachments/${encodeURIComponent(row.id)}`,
+    artifact: row.artifact_id && row.artifact_run_id && row.artifact_agent_id
+      ? { id: row.artifact_id, runId: row.artifact_run_id, agentId: row.artifact_agent_id }
+      : null,
   };
 }
 
@@ -114,7 +121,19 @@ export function getAttachment(db: Database, id: string): AttachmentRow | undefin
 }
 
 export function listAttachmentsForMessage(db: Database, messageId: string): AttachmentView[] {
-  return (db.prepare('SELECT * FROM attachments WHERE message_id = ? ORDER BY created_at ASC').all(messageId) as AttachmentRow[]).map(view);
+  return (db.prepare(
+    `SELECT a.*, ar.attachment_id AS artifact_id, ar.run_id AS artifact_run_id, ar.agent_id AS artifact_agent_id
+     FROM attachments a LEFT JOIN artifacts ar ON ar.attachment_id = a.id
+     WHERE a.message_id = ? ORDER BY a.created_at ASC`,
+  ).all(messageId) as AttachmentRow[]).map(view);
+}
+
+export function attachmentViewWithArtifact(db: Database, id: string): AttachmentView | undefined {
+  const row = db.prepare(
+    `SELECT a.*, ar.attachment_id AS artifact_id, ar.run_id AS artifact_run_id, ar.agent_id AS artifact_agent_id
+     FROM attachments a LEFT JOIN artifacts ar ON ar.attachment_id = a.id WHERE a.id = ?`,
+  ).get(id) as AttachmentRow | undefined;
+  return row ? view(row) : undefined;
 }
 
 export function createAttachment(

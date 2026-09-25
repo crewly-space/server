@@ -22,6 +22,7 @@ import {
 export interface AgentTurnResult {
   body: string;
   handoffToAgentId?: string;
+  artifactIds?: string[];
 }
 
 export interface RespondInput {
@@ -30,6 +31,8 @@ export interface RespondInput {
   recentMessages: Message[];
   /** The run this turn belongs to, so what it spends and does can be traced to it. */
   run?: { runId: string; rootRunId: string; hopCount: number };
+  /** Artifact publication is disabled for delegated turns that return to another agent. */
+  allowArtifacts?: boolean;
   /** Hears provider calls, retries, fallbacks and tool calls as they happen. */
   onEvent?: (event: TurnEvent) => void;
   /** True once the run has been cancelled; a responder stops at its next step. */
@@ -238,6 +241,7 @@ async function executeTurn(
       conversationId: input.conversationId,
       recentMessages,
       run: { runId, rootRunId, hopCount },
+      allowArtifacts: delivery.kind === 'post',
       onEvent: ({ type, ...data }) => trace(type, data),
       isCancelled: () => isRunCancelled(deps.db, runId),
     });
@@ -284,7 +288,8 @@ async function executeTurn(
     body: result.body,
     mentions: [],
     replyToMessageId: null,
-    attachmentIds: [],
+    attachmentIds: result.artifactIds ?? [],
+    attachmentOwnerId: deps.db.prepare('SELECT owner_user_id FROM agents WHERE id = ?').pluck().get(input.agentId) as string | undefined,
   });
   completeAgentRun(deps.db, runId, message.id);
   trace('run.completed', { resultMessageId: message.id });

@@ -12,6 +12,8 @@ import { createMessage } from '../messages/repository.js';
 import { ConnectionHub } from '../ws/hub.js';
 import { runAgentTurn, type AgentTurnResult, type RespondFn } from './engine.js';
 import { getAgentRun, listAgentRunsForRoot } from './runs.js';
+import { AttachmentStore } from '../attachments/service.js';
+import { createArtifact } from '../artifacts/service.js';
 
 describe('runAgentTurn (single turn, no handoff)', () => {
   let dataDir: string;
@@ -74,6 +76,33 @@ describe('runAgentTurn (single turn, no handoff)', () => {
     expect(outcome.handoff).toEqual({ attempted: false, dispatched: false });
 
     expect(getAgentRun(db, outcome.run.runId)?.runId).toBe(outcome.run.runId);
+    db.close();
+  });
+
+  it('links an explicitly created agent artifact to the resulting message and run', async () => {
+    const { db, agent, conversation, hub } = freshSetup();
+    const store = new AttachmentStore(path.join(dataDir, 'attachments'));
+    const respond = vi.fn(async (input: Parameters<RespondFn>[0]): Promise<AgentTurnResult> => {
+      const artifact = createArtifact(db, store, {
+        conversationId: conversation.id,
+        uploadedBy: agent.ownerUserId,
+        agentId: agent.id,
+        runId: input.run!.runId,
+        filename: 'report.txt',
+        mimeType: 'text/plain',
+        data: Buffer.from('generated report'),
+      });
+      return { body: 'I generated the report.', artifactIds: [artifact.id] };
+    });
+
+    const outcome = await runAgentTurn({ db, hub, respond }, { agentId: agent.id, conversationId: conversation.id });
+
+    expect(outcome.message.attachments).toHaveLength(1);
+    expect(outcome.message.attachments[0]).toMatchObject({
+      filename: 'report.txt',
+      artifact: { runId: outcome.run.runId, agentId: agent.id },
+    });
+    expect(db.prepare('SELECT message_id FROM attachments WHERE id = ?').get(outcome.message.attachments[0].id)).toMatchObject({ message_id: outcome.message.id });
     db.close();
   });
 

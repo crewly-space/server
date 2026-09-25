@@ -50,6 +50,7 @@ export function createMessage(
     mentions: MentionRef[];
     replyToMessageId: string | null;
     attachmentIds?: string[];
+    attachmentOwnerId?: string;
   }
 ): Message {
   if (!input.body.trim() && !input.attachmentIds?.length) {
@@ -89,7 +90,7 @@ export function createMessage(
       attachToMessage(db, {
         messageId: row.id,
         conversationId: input.conversationId,
-        uploadedBy: input.authorId,
+        uploadedBy: input.attachmentOwnerId ?? input.authorId,
         attachmentIds: input.attachmentIds,
       });
     }

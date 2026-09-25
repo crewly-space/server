@@ -20,6 +20,7 @@ function toChatMessages(agentId: string, recentMessages: Message[]): ChatMessage
 export interface ToolOutcome {
   content: string;
   isError?: boolean;
+  artifactId?: string;
 }
 
 /** The tools one agent may use on one turn, and how to run them. */
@@ -126,6 +127,7 @@ export function createProviderRespond(
     const messages: ChatMessage[] = context
       ? [{ role: 'system', content: context }, ...toChatMessages(agentId, recentMessages)]
       : toChatMessages(agentId, recentMessages);
+    const artifactIds: string[] = [];
 
     const policy = agent.modelPolicy;
     const fallback = policy.fallbackProviderId && policy.fallbackModel
@@ -161,7 +163,7 @@ export function createProviderRespond(
       });
 
       if (!tools || !offerTools || !response.toolCalls?.length) {
-        return { body: response.content };
+        return { body: response.content, ...(artifactIds.length ? { artifactIds } : {}) };
       }
 
       messages.push({ role: 'assistant', content: response.content, toolCalls: response.toolCalls });
@@ -185,6 +187,7 @@ export function createProviderRespond(
           inputBytes: JSON.stringify(call.input).length,
           outputBytes: outcome.content.length,
         });
+        if (outcome.artifactId) artifactIds.push(outcome.artifactId);
         messages.push({ role: 'tool', toolCallId: call.id, content: outcome.content, isError: outcome.isError });
       }
     }
