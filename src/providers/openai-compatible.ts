@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatRequest, ModelInfo, ProviderKind, ToolCall } from '../protocol/index.js';
+import { markToolFailure } from './capabilities.js';
 import { readRateLimitHeaders, type ProviderChatResult, type ProviderClient } from './client.js';
 import {
   errorForStatus,
@@ -67,7 +68,10 @@ export function parseOpenAiModels(body: unknown, providerId: string): ModelInfo[
 export function toOpenAiMessages(messages: ChatMessage[]): Record<string, unknown>[] {
   return messages.map((message) => {
     if (message.role === 'tool') {
-      return { role: 'tool', tool_call_id: message.toolCallId, content: message.content };
+      // OpenAI-style APIs have no error flag on a tool result; without one in
+      // the text, a failure reads to the model like data it can report.
+      const content = message.isError ? markToolFailure(message.content) : message.content;
+      return { role: 'tool', tool_call_id: message.toolCallId, content };
     }
     if (message.role === 'assistant' && message.toolCalls?.length) {
       return {

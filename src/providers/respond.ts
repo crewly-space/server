@@ -1,4 +1,4 @@
-import type { ChatMessage, Message, ToolCall, ToolDefinition } from '../protocol/index.js';
+import { AGENTD_BACKED_PROVIDER_KINDS, type ChatMessage, type Message, type ProviderKind, type ToolCall, type ToolDefinition } from '../protocol/index.js';
 import type { Agent } from '../protocol/index.js';
 import type { Database } from '../db/driver.js';
 import { getAgent } from '../agents/repository.js';
@@ -8,6 +8,19 @@ import { RunCancelledError, type RespondFn, type RespondInput, type TurnEvent } 
 import { AiGateway } from '../gateway/gateway.js';
 import { ProviderError } from './errors.js';
 import type { DeviceConnectionHub } from '../devices/hub.js';
+import { getProviderConfig } from './repository.js';
+import { capabilityInstructions } from './capabilities.js';
+
+/**
+ * Whether the provider this agent answers with can be handed tool
+ * definitions. Device-backed providers cannot: the gateway strips tools for
+ * them, so offering tools -- or describing them -- would promise the model
+ * something that never reaches it.
+ */
+function acceptsTools(db: Database, providerId: string): boolean {
+  const config = getProviderConfig(db, providerId);
+  return !config || !(AGENTD_BACKED_PROVIDER_KINDS as readonly ProviderKind[]).includes(config.kind);
+}
 
 function toChatMessages(agentId: string, recentMessages: Message[]): ChatMessage[] {
   return recentMessages.map((m) => ({
@@ -89,8 +102,10 @@ export function createProviderRespond(
       throw new ProviderError(`agent ${agentId} not found`);
     }
 
-    const toolsets = (await Promise.all(toolsetProviders.map((provide) => provide(agent, input))))
-      .filter((toolset): toolset is AgentToolset => Boolean(toolset?.definitions.length));
+    const toolsets = acceptsTools(db, agent.modelPolicy.defaultProviderId)
+      ? (await Promise.all(toolsetProviders.map((provide) => provide(agent, input))))
+        .filter((toolset): toolset is AgentToolset => Boolean(toolset?.definitions.length))
+      : [];
     const tools = mergeToolsets(toolsets);
 
     const facts = listMemoryFactsForAgent(db, agentId).slice(-20);
@@ -98,6 +113,9 @@ export function createProviderRespond(
     const context = [agent.personality && `Agent instructions: ${agent.personality}`,
       ...instructionProviders.map((provide) => provide(agent, input)),
       tools?.instructions,
+      // Always last among the instructions: whatever the agent's own
+      // personality says it can do, this is what it can do on this run.
+      capabilityInstructions(tools?.definitions ?? []),
       facts.length && `Memory facts:\n${facts.map((f) => `- ${f.content}`).join('\n')}`,
       summary && `Conversation summary: ${summary.summary}`].filter(Boolean).join('\n\n');
     const messages: ChatMessage[] = context
