@@ -160,10 +160,54 @@ describe('createProviderRespond', () => {
 
     expect(result.body).toBe('hi!');
     expect(executed).toEqual([{ key: 'k' }]);
+    expect((bodies[0] as { tools?: Array<{ name: string }> }).tools?.map((tool) => tool.name)).toEqual(['lookup']);
+    expect(JSON.stringify(bodies[0])).toMatch(/Capability grounding/);
     expect(bodies[1]!.messages).toContainEqual({
       role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'value' }],
     });
     expect(events).toEqual(['provider.call', 'tool.call', 'provider.call']);
+    db.close();
+  });
+
+  it('grounds a no-tool run instead of describing ambient web access', async () => {
+    const { db, agent } = freshSetup();
+    createProviderConfig(db, { id: 'primary', kind: 'anthropic', apiKey: 'sk-test' });
+    let body: Record<string, unknown> | undefined;
+    const respond = createProviderRespond(db, (async (_url: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      return jsonResponse(successBody);
+    }) as unknown as typeof fetch);
+
+    await respond({ agentId: agent.id, conversationId: 'conversation_1', recentMessages: [] });
+
+    expect(body?.tools).toBeUndefined();
+    expect(String(body?.system)).toMatch(/no callable tools/i);
+    expect(String(body?.system)).toMatch(/cannot browse the web/i);
+    db.close();
+  });
+
+  it('keeps a failed tool result marked as a failure for the next model turn', async () => {
+    const { db, agent } = freshSetup();
+    createProviderConfig(db, { id: 'primary', kind: 'anthropic', apiKey: 'sk-test' });
+    const replies = [
+      { content: [{ type: 'tool_use', id: 't1', name: 'lookup', input: {} }], stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } },
+      successBody,
+    ];
+    const bodies: Array<{ messages: unknown[] }> = [];
+    const respond = createProviderRespond(db, (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)) as { messages: unknown[] });
+      return jsonResponse(replies.shift());
+    }) as unknown as typeof fetch, undefined, {
+      toolsets: [() => ({
+        definitions: [{ name: 'lookup', description: 'Look a key up', inputSchema: { type: 'object' } }],
+        execute: async () => ({ content: 'network unavailable', isError: true }),
+      })],
+    });
+
+    await respond({ agentId: agent.id, conversationId: 'conversation_1', recentMessages: [] });
+
+    expect(JSON.stringify(bodies[1])).toMatch(/network unavailable/);
+    expect(JSON.stringify(bodies[1])).toMatch(/is_error/);
     db.close();
   });
 
@@ -207,4 +251,3 @@ describe('createProviderRespond', () => {
     db.close();
   });
 });
-

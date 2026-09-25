@@ -115,6 +115,12 @@ function isDeviceBacked(kind: ProviderKind): boolean {
  */
 export function withoutTools(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((message) => {
+    if (message.role === 'system') {
+      return {
+        role: 'system',
+        content: `${message.content}\n\nTool execution is unavailable for this provider in this turn. Do not claim to have called a tool or completed an external action.`,
+      };
+    }
     if (message.role === 'tool') {
       return { role: 'user', content: `Tool result${message.isError ? ' (error)' : ''}: ${message.content}` };
     }

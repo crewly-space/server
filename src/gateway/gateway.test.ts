@@ -239,10 +239,12 @@ describe('AiGateway', () => {
   it('turns tool history into text for a provider that cannot take tools', () => {
     expect(
       withoutTools([
+        { role: 'system', content: 'Only use assigned capabilities.' },
         { role: 'assistant', content: 'Checking', toolCalls: [{ id: 'a', name: 'search', input: { q: 1 } }] },
         { role: 'tool', toolCallId: 'a', content: 'boom', isError: true },
       ]),
     ).toEqual([
+      { role: 'system', content: 'Only use assigned capabilities.\n\nTool execution is unavailable for this provider in this turn. Do not claim to have called a tool or completed an external action.' },
       { role: 'assistant', content: 'Checking\n[called search({"q":1})]' },
       { role: 'user', content: 'Tool result (error): boom' },
     ]);

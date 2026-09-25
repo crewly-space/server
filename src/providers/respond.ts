@@ -72,6 +72,28 @@ function mergeToolsets(toolsets: AgentToolset[]): AgentToolset | undefined {
   };
 }
 
+/**
+ * The tool list is a security and truth boundary, not merely API metadata.
+ * Keep this instruction in the same context as the model call so a provider
+ * cannot infer capabilities from an old/global prompt or from a user claim.
+ */
+function capabilityGrounding(tools: AgentToolset | undefined): string {
+  if (!tools) {
+    return [
+      'Capability grounding (authoritative): this run has no callable tools.',
+      'You cannot browse the web, inspect external sites, query network services, or perform external actions.',
+      'If asked what tools you have, say that no tools are available.',
+      'Never claim to have observed a tool result or completed an external action unless a successful tool result appears in this run.',
+    ].join(' ');
+  }
+  return [
+    'Capability grounding (authoritative): this run may call only the tools listed below.',
+    ...tools.definitions.map((tool) => `- ${tool.name}: ${tool.description || 'No additional description.'}`),
+    'Do not invent tool names or capabilities. Only describe an external result as observed after the corresponding tool returns it.',
+    'A tool result marked as an error means the action failed; do not turn it into a successful result.',
+  ].join('\n');
+}
+
 export function createProviderRespond(
   db: Database,
   fetchImpl: typeof fetch = fetch,
@@ -97,6 +119,7 @@ export function createProviderRespond(
     const summary = getConversationSummary(db, conversationId);
     const context = [agent.personality && `Agent instructions: ${agent.personality}`,
       ...instructionProviders.map((provide) => provide(agent, input)),
+      capabilityGrounding(tools),
       tools?.instructions,
       facts.length && `Memory facts:\n${facts.map((f) => `- ${f.content}`).join('\n')}`,
       summary && `Conversation summary: ${summary.summary}`].filter(Boolean).join('\n\n');
