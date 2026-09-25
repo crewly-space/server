@@ -4,14 +4,15 @@ import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
 import { CONNECTOR_CAPABILITIES, CONNECTOR_PROVIDERS, consumeConnectorState, exchangeGitHubCode, githubRequest, startGitHubAuthorization, ConnectorOAuthError, type ConnectorCapability, type ConnectorOAuthConfig } from './providers.js';
 import { connectConnector, createPendingConnector, getConnector, listConnectorAudit, listConnectorGrants, listConnectors, refreshConnector, revokeConnector, setConnectorGrants } from './service.js';
+import { hasPermission } from '../permissions/roles.js';
 
 const CapabilitySchema = z.enum(CONNECTOR_CAPABILITIES as unknown as [string, ...string[]]);
 const StartSchema = z.object({ callbackUrl: z.string().url(), scopes: z.array(z.string().min(1).max(80)).max(20).optional() });
 const CompleteSchema = z.object({ state: z.string().min(1).max(256), code: z.string().min(1).max(2048) });
 const GrantsSchema = z.object({ grants: z.array(z.object({ granteeType: z.enum(['agent', 'automation', 'integration']), granteeId: z.string().min(1).max(200), capability: CapabilitySchema })).max(500) });
 
-function admin(request: FastifyRequest, reply: FastifyReply): boolean {
-  if (request.user!.role === 'owner' || request.user!.role === 'admin') return true;
+function admin(app: FastifyInstance, request: FastifyRequest, reply: FastifyReply): boolean {
+  if (hasPermission(app.db, request.user!.id, 'integrations.manage')) return true;
   reply.code(403).send({ error: 'forbidden' }); return false;
 }
 function oauthConfig(options: { githubOAuth?: ConnectorOAuthConfig }): ConnectorOAuthConfig | undefined {
@@ -32,17 +33,17 @@ export function registerConnectorRoutes(app: FastifyInstance, options: { fetchIm
     reply.send({ providers: CONNECTOR_PROVIDERS.map((provider) => ({ provider, ...({ github: { label: 'GitHub', description: 'Repositories, issues and pull requests through a GitHub OAuth app.', capabilities: [...CONNECTOR_CAPABILITIES], scopes: ['read:user', 'repo'] } } as const)[provider] })) });
   });
   app.get('/api/v1/connectors', { preHandler: requireAuth }, async (request, reply) => {
-    if (!admin(request, reply)) return; reply.send({ connectors: listConnectors(app.db) });
+    if (!admin(app, request, reply)) return; reply.send({ connectors: listConnectors(app.db) });
   });
   app.post('/api/v1/connectors/oauth/github/start', { preHandler: requireAuth }, async (request, reply) => {
-    if (!admin(request, reply)) return;
+    if (!admin(app, request, reply)) return;
     const config = oauthConfig(options); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured' }); return; }
     const body = StartSchema.parse(request.body); const connectorId = randomUUID();
     createPendingConnector(app.db, { id: connectorId, provider: 'github', ownerUserId: request.user!.id }, { type: 'user', id: request.user!.id });
     reply.send(startGitHubAuthorization(app.db, { connectorId, userId: request.user!.id, callbackUrl: body.callbackUrl, scopes: body.scopes }, config));
   });
   app.post('/api/v1/connectors/oauth/github/complete', { preHandler: requireAuth }, async (request, reply) => {
-    if (!admin(request, reply)) return;
+    if (!admin(app, request, reply)) return;
     const config = oauthConfig(options); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured' }); return; }
     const body = CompleteSchema.parse(request.body);
     try {
@@ -54,22 +55,22 @@ export function registerConnectorRoutes(app: FastifyInstance, options: { fetchIm
     } catch (error) { sendConnectorError(reply, error); }
   });
   app.post('/api/v1/connectors/:id/refresh', { preHandler: requireAuth }, async (request, reply) => {
-    if (!admin(request, reply)) return; const { id } = request.params as { id: string };
+    if (!admin(app, request, reply)) return; const { id } = request.params as { id: string };
     try { reply.send(await refreshConnector(app.db, id, { type: 'user', id: request.user!.id }, fetchImpl)); } catch (error) { sendConnectorError(reply, error); }
   });
   app.post('/api/v1/connectors/:id/revoke', { preHandler: requireAuth }, async (request, reply) => {
-    if (!admin(request, reply)) return; const { id } = request.params as { id: string };
+    if (!admin(app, request, reply)) return; const { id } = request.params as { id: string };
     const connector = revokeConnector(app.db, id, { type: 'user', id: request.user!.id }); if (!connector) { reply.code(404).send({ error: 'connector_not_found' }); return; } reply.send(connector);
   });
   app.get('/api/v1/connectors/:id/grants', { preHandler: requireAuth }, async (request, reply) => {
-    if (!admin(request, reply)) return; const { id } = request.params as { id: string }; if (!getConnector(app.db, id)) { reply.code(404).send({ error: 'connector_not_found' }); return; } reply.send({ grants: listConnectorGrants(app.db, id) });
+    if (!admin(app, request, reply)) return; const { id } = request.params as { id: string }; if (!getConnector(app.db, id)) { reply.code(404).send({ error: 'connector_not_found' }); return; } reply.send({ grants: listConnectorGrants(app.db, id) });
   });
   app.put('/api/v1/connectors/:id/grants', { preHandler: requireAuth }, async (request, reply) => {
-    if (!admin(request, reply)) return; const { id } = request.params as { id: string };
+    if (!admin(app, request, reply)) return; const { id } = request.params as { id: string };
     try { reply.send({ grants: setConnectorGrants(app.db, id, GrantsSchema.parse(request.body).grants as Array<{ granteeType: 'agent' | 'automation' | 'integration'; granteeId: string; capability: ConnectorCapability }>, { type: 'user', id: request.user!.id }) }); } catch (error) { sendConnectorError(reply, error); }
   });
   app.get('/api/v1/connectors/:id/audit', { preHandler: requireAuth }, async (request, reply) => {
-    if (!admin(request, reply)) return; const { id } = request.params as { id: string }; if (!getConnector(app.db, id)) { reply.code(404).send({ error: 'connector_not_found' }); return; }
+    if (!admin(app, request, reply)) return; const { id } = request.params as { id: string }; if (!getConnector(app.db, id)) { reply.code(404).send({ error: 'connector_not_found' }); return; }
     const limit = z.coerce.number().int().positive().max(500).default(100).parse((request.query as { limit?: string }).limit); reply.send({ entries: listConnectorAudit(app.db, id, limit) });
   });
 }

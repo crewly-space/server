@@ -33,6 +33,14 @@ export { HealthResource, type HealthStatus } from './resources/health.js';
 export { MessagesResource, type SendMessageInput } from './resources/messages.js';
 export { AttachmentsResource, type UploadAttachmentInput } from './resources/attachments.js';
 export {
+  RolesResource,
+  type PermissionDefinition,
+  type PermissionId,
+  type RoleInput,
+  type RolesCatalog,
+  type ServerRole,
+} from './resources/roles.js';
+export {
   MemoryResource,
   type CreateMemoryFactInput,
   type UpdateMemoryFactInput,

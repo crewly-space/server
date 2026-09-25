@@ -2,7 +2,7 @@ import { AGENTD_BACKED_PROVIDER_KINDS, ProviderKindSchema, type ProviderKind } f
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
-import { can, type Role } from '../permissions/model.js';
+import { hasPermission } from '../permissions/roles.js';
 import {
   createProviderConfig,
   deleteProviderConfig,
@@ -101,7 +101,7 @@ export function registerProviderRoutes(
   });
 
   app.post('/api/v1/providers/oauth/start', { preHandler: requireAuth }, async (request, reply) => {
-    if (!can(request.user!.role as Role, 'provider:manage')) {
+    if (!hasPermission(app.db, request.user!.id, 'providers.manage')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -121,7 +121,7 @@ export function registerProviderRoutes(
   });
 
   app.post('/api/v1/providers/oauth/complete', { preHandler: requireAuth }, async (request, reply) => {
-    if (!can(request.user!.role as Role, 'provider:manage')) {
+    if (!hasPermission(app.db, request.user!.id, 'providers.manage')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -153,7 +153,7 @@ export function registerProviderRoutes(
   });
 
   app.post('/api/v1/providers', { preHandler: requireAuth }, async (request, reply) => {
-    if (!can(request.user!.role as Role, 'provider:manage')) {
+    if (!hasPermission(app.db, request.user!.id, 'providers.manage')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -180,7 +180,7 @@ export function registerProviderRoutes(
    * tries once more without deleting and recreating the provider.
    */
   app.post('/api/v1/providers/:id/enable-on-devices', { preHandler: requireAuth }, async (request, reply) => {
-    if (!can(request.user!.role as Role, 'provider:manage')) {
+    if (!hasPermission(app.db, request.user!.id, 'providers.manage')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -200,7 +200,7 @@ export function registerProviderRoutes(
   });
 
   app.get('/api/v1/providers', { preHandler: requireAuth }, async (request, reply) => {
-    if (!can(request.user!.role as Role, 'provider:manage')) {
+    if (!hasPermission(app.db, request.user!.id, 'providers.manage')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -221,7 +221,7 @@ export function registerProviderRoutes(
    * rate limit it last reported, over the last hour of real traffic.
    */
   app.get('/api/v1/providers/health', { preHandler: requireAuth }, async (request, reply) => {
-    if (!can(request.user!.role as Role, 'provider:manage')) {
+    if (!hasPermission(app.db, request.user!.id, 'providers.manage')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -229,7 +229,7 @@ export function registerProviderRoutes(
   });
 
   app.patch('/api/v1/providers/:id', { preHandler: requireAuth }, async (request, reply) => {
-    if (!can(request.user!.role as Role, 'provider:manage')) {
+    if (!hasPermission(app.db, request.user!.id, 'providers.manage')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -245,7 +245,7 @@ export function registerProviderRoutes(
   });
 
   app.delete('/api/v1/providers/:id', { preHandler: requireAuth }, async (request, reply) => {
-    if (!can(request.user!.role as Role, 'provider:manage')) {
+    if (!hasPermission(app.db, request.user!.id, 'providers.manage')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }

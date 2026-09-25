@@ -22,9 +22,9 @@ import {
   setUserRole,
   setUserSuspended,
   updateOwnProfile,
-  type Role,
   type UserRow,
 } from './repository.js';
+import { hasPermission } from '../permissions/roles.js';
 
 const CreateUserBodySchema = z.object({
   email: z.string().email(),
@@ -70,13 +70,9 @@ function directoryEntry(user: UserRow) {
   return { id: user.id, displayName: user.display_name, avatarMode: user.avatar_mode ?? 'bloop' };
 }
 
-function canManageUsers(role: string): role is Extract<Role, 'owner' | 'admin'> {
-  return role === 'owner' || role === 'admin';
-}
-
 export function registerUserRoutes(app: FastifyInstance): void {
   app.get('/api/v1/users', { preHandler: requireAuth }, async (request, reply) => {
-    if (!canManageUsers(request.user!.role)) {
+    if (!hasPermission(app.db, request.user!.id, 'members.view')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -101,7 +97,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
   });
 
   app.post('/api/v1/users', { preHandler: requireAuth }, async (request, reply) => {
-    if (!canManageUsers(request.user!.role)) {
+    if (!hasPermission(app.db, request.user!.id, 'members.manage')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -132,7 +128,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
    * invite is a link they redeem with a password only they ever know.
    */
   app.post('/api/v1/invites', { preHandler: requireAuth }, async (request, reply) => {
-    if (!canManageUsers(request.user!.role)) {
+    if (!hasPermission(app.db, request.user!.id, 'members.invite')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -175,7 +171,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
   });
 
   app.get('/api/v1/invites', { preHandler: requireAuth }, async (request, reply) => {
-    if (!canManageUsers(request.user!.role)) {
+    if (!hasPermission(app.db, request.user!.id, 'members.view')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -183,7 +179,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
   });
 
   app.delete('/api/v1/invites/:id', { preHandler: requireAuth }, async (request, reply) => {
-    if (!canManageUsers(request.user!.role)) {
+    if (!hasPermission(app.db, request.user!.id, 'members.invite')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -237,7 +233,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
    * can administer it cannot be repaired from the inside.
    */
   app.patch('/api/v1/users/:id', { preHandler: requireAuth }, async (request, reply) => {
-    if (!canManageUsers(request.user!.role)) {
+    if (!hasPermission(app.db, request.user!.id, 'members.manage')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -261,7 +257,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
   });
 
   app.put('/api/v1/users/:id/suspension', { preHandler: requireAuth }, async (request, reply) => {
-    if (!canManageUsers(request.user!.role)) {
+    if (!hasPermission(app.db, request.user!.id, 'members.manage')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -284,7 +280,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
   });
 
   app.delete('/api/v1/users/:id', { preHandler: requireAuth }, async (request, reply) => {
-    if (!canManageUsers(request.user!.role)) {
+    if (!hasPermission(app.db, request.user!.id, 'members.manage')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }

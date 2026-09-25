@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
 import type { Database } from '../db/driver.js';
+import { hasPermission } from '../permissions/roles.js';
 
 const LogQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(50),
@@ -31,10 +32,6 @@ export interface LogEntry {
 const count = (db: Database, sql: string, ...params: unknown[]): number =>
   (db.prepare(sql).get(...params) as { count: number }).count;
 
-function canAdminister(role: string): boolean {
-  return role === 'owner' || role === 'admin';
-}
-
 function brandingView(db: Database) {
   const row = db.prepare('SELECT display_name, tagline, icon_data_url, updated_at FROM server_branding WHERE id = 1').get() as
     | { display_name: string; tagline: string; icon_data_url: string | null; updated_at: string }
@@ -63,7 +60,7 @@ export function registerServerAdminRoutes(app: FastifyInstance, options: { versi
   });
 
   app.patch('/api/v1/server/branding', { preHandler: requireAuth }, async (request, reply) => {
-    if (!canAdminister(request.user!.role)) {
+    if (!hasPermission(app.db, request.user!.id, 'server.settings')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -83,7 +80,7 @@ export function registerServerAdminRoutes(app: FastifyInstance, options: { versi
   });
 
   app.get('/api/v1/server/status', { preHandler: requireAuth }, async (request, reply) => {
-    if (!canAdminister(request.user!.role)) {
+    if (!hasPermission(app.db, request.user!.id, 'operations.view')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }
@@ -117,7 +114,7 @@ export function registerServerAdminRoutes(app: FastifyInstance, options: { versi
    * failing, an agent run that did not finish -- without reading a terminal.
    */
   app.get('/api/v1/server/logs', { preHandler: requireAuth }, async (request, reply) => {
-    if (!canAdminister(request.user!.role)) {
+    if (!hasPermission(app.db, request.user!.id, 'operations.view')) {
       reply.code(403).send({ error: 'forbidden' });
       return;
     }

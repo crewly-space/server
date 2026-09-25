@@ -50,6 +50,7 @@ import { registerWebhookRoutes } from './webhooks/routes.js';
 import { registerAttachmentRoutes } from './attachments/routes.js';
 import { AttachmentStore, DEFAULT_ATTACHMENT_MAX_BYTES } from './attachments/service.js';
 import { artifactToolset } from './artifacts/service.js';
+import { registerPermissionRoutes } from './permissions/routes.js';
 
 export interface BuildAppOptions {
   db: Database;
@@ -196,6 +197,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     cloudHandoff: opts.cloudHandoff,
   });
   registerUserRoutes(app);
+  registerPermissionRoutes(app);
   registerServerAdminRoutes(app, { version: serverVersion });
   registerCrewlyRoutes(app, {
     cloudUrl: opts.crewlyCloudUrl ?? DEFAULT_CREWLY_CLOUD_URL,
