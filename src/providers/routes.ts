@@ -22,6 +22,7 @@ import {
 import { resolveProviderClient } from './registry.js';
 import { providerHealth } from '../gateway/health.js';
 import { enableOnDevices } from './device-enable.js';
+import { describeModelListFailure } from './errors.js';
 
 function isAgentdBackedKind(kind: ProviderKind): boolean {
   return (AGENTD_BACKED_PROVIDER_KINDS as readonly ProviderKind[]).includes(kind);
@@ -257,6 +258,10 @@ export function registerProviderRoutes(
     reply.code(204).send();
   });
 
+  // Resolved per call rather than captured, so a fetch swapped in after the
+  // app is built (tests do this) is the one used.
+  const modelFetch: typeof fetch = (input, init) => (options.fetchImpl ?? globalThis.fetch)(input, init);
+
   app.get('/api/v1/providers/:id/models', { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const config = getProviderConfig(app.db, id);
@@ -264,13 +269,25 @@ export function registerProviderRoutes(
       reply.code(404).send({ error: 'provider_not_found' });
       return;
     }
+    const started = Date.now();
     try {
-      const client = resolveProviderClient(config, globalThis.fetch.bind(globalThis), {
+      const client = resolveProviderClient(config, modelFetch, {
         db: app.db, hub: app.deviceHub, ownerUserId: request.user!.id,
       });
-      reply.send(await client.listModels());
+      const models = await client.listModels(config.id);
+      reply.send([...models].sort((a, b) => a.displayName.localeCompare(b.displayName)));
     } catch (err) {
-      reply.code(502).send({ error: 'provider_unavailable', message: (err as Error).message });
+      const failure = describeModelListFailure(err);
+      // Enough to tell a wrong key from an outage from a parsing bug. The key
+      // itself never reaches these messages.
+      request.log.warn({
+        providerId: config.id,
+        providerKind: config.kind,
+        code: failure.code,
+        durationMs: Date.now() - started,
+        detail: (err as Error)?.message,
+      }, 'provider model discovery failed');
+      reply.code(502).send({ error: failure.code, message: failure.message, retryable: failure.retryable });
     }
   });
 }

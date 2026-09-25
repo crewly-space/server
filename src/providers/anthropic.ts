@@ -1,6 +1,6 @@
 import type { ChatMessage, ChatRequest, ModelInfo, ToolCall } from '../protocol/index.js';
 import { readRateLimitHeaders, type ProviderChatResult, type ProviderClient } from './client.js';
-import { errorForStatus, ProviderUnavailableError } from './errors.js';
+import { errorForStatus, ProviderInvalidResponseError, ProviderUnavailableError } from './errors.js';
 
 type AnthropicBlock =
   | { type: 'text'; text: string }
@@ -124,11 +124,35 @@ export class AnthropicClient implements ProviderClient {
     };
   }
 
-  async listModels(): Promise<ModelInfo[]> {
-    return [
-      { id: 'claude-sonnet-5', providerId: 'anthropic', displayName: 'Claude Sonnet 5', contextWindow: 200000 },
-      { id: 'claude-opus-5', providerId: 'anthropic', displayName: 'Claude Opus 5', contextWindow: 200000 },
-      { id: 'claude-haiku-4-5', providerId: 'anthropic', displayName: 'Claude Haiku 4.5', contextWindow: 200000 },
-    ];
+  /**
+   * Anthropic publishes its catalogue at /v1/models. A hard-coded list went
+   * stale with every release and hid a wrong key until the first message.
+   */
+  async listModels(providerId = 'anthropic'): Promise<ModelInfo[]> {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(`${this.baseUrl.replace(/\/+$/, '')}/v1/models?limit=1000`, {
+        headers: { 'x-api-key': this.apiKey, 'anthropic-version': '2023-06-01' },
+      });
+    } catch (err) {
+      throw new ProviderUnavailableError(`anthropic models request failed: ${(err as Error).message}`);
+    }
+    if (!response.ok) throw errorForStatus('anthropic', response);
+    let body: { data?: { id?: unknown; display_name?: unknown }[] };
+    try {
+      body = (await response.json()) as typeof body;
+    } catch (err) {
+      throw new ProviderInvalidResponseError(`anthropic model list is not JSON: ${(err as Error).message}`);
+    }
+    if (!Array.isArray(body.data)) throw new ProviderInvalidResponseError('anthropic model list has no data array');
+    return body.data
+      .filter((model): model is { id: string; display_name?: unknown } => typeof model?.id === 'string' && model.id.length > 0)
+      .map((model) => ({
+        id: model.id,
+        providerId,
+        displayName: typeof model.display_name === 'string' && model.display_name ? model.display_name : model.id,
+        // Every current Claude model has at least this window; the API does not say.
+        contextWindow: 200000,
+      }));
   }
 }

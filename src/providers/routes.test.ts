@@ -172,7 +172,7 @@ describe('provider routes', () => {
     await app.close();
   });
 
-  it('proxies GET /api/v1/providers/:id/models for an anthropic provider (static list, no network)', async () => {
+  it('proxies GET /api/v1/providers/:id/models for an anthropic provider', async () => {
     const app = await buildApp({ db });
     const token = await setupOwner(app);
     await app.inject({
@@ -181,6 +181,9 @@ describe('provider routes', () => {
       headers: { authorization: `Bearer ${token}` },
       payload: { id: 'anthropic-default', kind: 'anthropic', apiKey: 'sk-secret' },
     });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      data: [{ id: 'claude-opus-5', display_name: 'Claude Opus 5' }],
+    }), { status: 200 })));
 
     const models = await app.inject({
       method: 'GET',
@@ -188,8 +191,59 @@ describe('provider routes', () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(models.statusCode).toBe(200);
-    expect(models.json().length).toBeGreaterThan(0);
+    expect(models.json()).toEqual([
+      { id: 'claude-opus-5', providerId: 'anthropic-default', displayName: 'Claude Opus 5', contextWindow: 200000 },
+    ]);
 
+    await app.close();
+  });
+
+  it('lists a connected OpenRouter provider as a sorted, named catalogue', async () => {
+    const app = await buildApp({ db });
+    const token = await setupOwner(app);
+    await app.inject({
+      method: 'POST', url: '/api/v1/providers', headers: { authorization: `Bearer ${token}` },
+      payload: { id: 'openrouter', kind: 'openrouter', apiKey: 'sk-or-secret' },
+    });
+    const upstream = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ data: [
+      { id: 'openai/gpt-5-mini', name: 'OpenAI: GPT-5 Mini', context_length: 400000 },
+      { id: 'anthropic/claude-sonnet-5', name: 'Anthropic: Claude Sonnet 5', context_length: 1000000 },
+    ] }), { status: 200 }));
+    vi.stubGlobal('fetch', upstream);
+
+    const models = await app.inject({
+      method: 'GET', url: '/api/v1/providers/openrouter/models', headers: { authorization: `Bearer ${token}` },
+    });
+    expect(models.statusCode).toBe(200);
+    expect(upstream.mock.calls[0]![0]).toBe('https://openrouter.ai/api/v1/models');
+    expect(models.json().map((m: { displayName: string }) => m.displayName)).toEqual([
+      'Anthropic: Claude Sonnet 5', 'OpenAI: GPT-5 Mini',
+    ]);
+    await app.close();
+  });
+
+  it('names why a model list failed instead of one generic 502', async () => {
+    const app = await buildApp({ db });
+    const token = await setupOwner(app);
+    await app.inject({
+      method: 'POST', url: '/api/v1/providers', headers: { authorization: `Bearer ${token}` },
+      payload: { id: 'openai-default', kind: 'openai', apiKey: 'sk-secret-never-logged' },
+    });
+    const cases: [number, string, boolean][] = [
+      [401, 'provider_auth_failed', false],
+      [429, 'provider_rate_limited', true],
+      [404, 'provider_models_unsupported', false],
+      [503, 'provider_unavailable', true],
+    ];
+    for (const [status, code, retryable] of cases) {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status })));
+      const models = await app.inject({
+        method: 'GET', url: '/api/v1/providers/openai-default/models', headers: { authorization: `Bearer ${token}` },
+      });
+      expect(models.statusCode).toBe(502);
+      expect(models.json()).toMatchObject({ error: code, retryable });
+      expect(models.json().message).not.toContain('sk-secret');
+    }
     await app.close();
   });
 

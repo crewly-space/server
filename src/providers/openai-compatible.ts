@@ -1,6 +1,11 @@
 import type { ChatMessage, ChatRequest, ModelInfo, ProviderKind, ToolCall } from '../protocol/index.js';
 import { readRateLimitHeaders, type ProviderChatResult, type ProviderClient } from './client.js';
-import { errorForStatus, ProviderUnavailableError } from './errors.js';
+import {
+  errorForStatus,
+  ProviderInvalidResponseError,
+  ProviderModelsUnsupportedError,
+  ProviderUnavailableError,
+} from './errors.js';
 
 interface OpenAiToolCall {
   id: string;
@@ -13,8 +18,50 @@ interface OpenAiChatResponseBody {
   usage?: { prompt_tokens: number; completion_tokens: number };
 }
 
-interface OpenAiModelsResponseBody {
-  data: { id: string }[];
+/**
+ * OpenAI returns `{ data: [{ id }] }`; OpenRouter adds `name` and
+ * `context_length`; some compatible servers return a bare array. All of them
+ * are one list here.
+ */
+interface OpenAiModelEntry {
+  id?: unknown;
+  name?: unknown;
+  context_length?: unknown;
+  context_window?: unknown;
+  max_context_length?: unknown;
+}
+
+const DEFAULT_CONTEXT_WINDOW = 4096;
+
+function positiveInt(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.floor(value);
+  }
+  return undefined;
+}
+
+export function parseOpenAiModels(body: unknown, providerId: string): ModelInfo[] {
+  const entries = Array.isArray(body)
+    ? body
+    : body && typeof body === 'object' && Array.isArray((body as { data?: unknown }).data)
+      ? (body as { data: unknown[] }).data
+      : undefined;
+  if (!entries) throw new ProviderInvalidResponseError('model list response has no data array');
+  const seen = new Set<string>();
+  const models: ModelInfo[] = [];
+  for (const raw of entries as OpenAiModelEntry[]) {
+    if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !raw.id.trim()) continue;
+    if (seen.has(raw.id)) continue;
+    seen.add(raw.id);
+    const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : raw.id;
+    models.push({
+      id: raw.id,
+      providerId,
+      displayName: name,
+      contextWindow: positiveInt(raw.context_length, raw.context_window, raw.max_context_length) ?? DEFAULT_CONTEXT_WINDOW,
+    });
+  }
+  return models;
 }
 
 export function toOpenAiMessages(messages: ChatMessage[]): Record<string, unknown>[] {
@@ -53,7 +100,11 @@ export class OpenAICompatibleClient implements ProviderClient {
     private baseUrl: string,
     private apiKey: string,
     private fetchImpl: typeof fetch = fetch
-  ) {}
+  ) {
+    // A base URL saved with a trailing slash turned every path into `//models`,
+    // which some providers answer with a 404.
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
+  }
 
   async chat(request: ChatRequest): Promise<ProviderChatResult> {
     let response: Response;
@@ -111,17 +162,25 @@ export class OpenAICompatibleClient implements ProviderClient {
     };
   }
 
-  async listModels(): Promise<ModelInfo[]> {
+  async listModels(providerId: string = this.kind): Promise<ModelInfo[]> {
     let response: Response;
     try {
       response = await this.fetchImpl(`${this.baseUrl}/models`, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
+        headers: { Authorization: `Bearer ${this.apiKey}`, accept: 'application/json' },
       });
     } catch (err) {
       throw new ProviderUnavailableError(`${this.kind} models request failed: ${(err as Error).message}`);
     }
+    if (response.status === 404 || response.status === 405) {
+      throw new ProviderModelsUnsupportedError(`${this.kind} has no model list (status ${response.status})`);
+    }
     if (!response.ok) throw errorForStatus(this.kind, response);
-    const data = (await response.json()) as OpenAiModelsResponseBody;
-    return data.data.map((m) => ({ id: m.id, providerId: this.kind, displayName: m.id, contextWindow: 4096 }));
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch (err) {
+      throw new ProviderInvalidResponseError(`${this.kind} model list is not JSON: ${(err as Error).message}`);
+    }
+    return parseOpenAiModels(body, providerId);
   }
 }
