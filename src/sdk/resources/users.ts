@@ -23,17 +23,31 @@ export interface UserAccount {
   avatarMode?: AvatarMode;
 }
 
-/** An invitation to join this server. The code is returned only when it is made. */
+export type InviteStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
+
+/** An invitation to join this server. The code is returned only when it is made or resent. */
 export interface Invite {
   id: string;
   role: Exclude<UserRole, 'owner'>;
+  /** Who it is for; only this address can accept it. Absent on servers older than invite states. */
+  email?: string | null;
+  /** Absent on servers older than invite states: read `usedAt` instead. */
+  status?: InviteStatus;
   createdBy: string;
   createdAt: string;
   expiresAt: string;
   usedAt: string | null;
   usedBy: string | null;
+  revokedAt?: string | null;
   label: string | null;
   code?: string;
+}
+
+/** What an invite link offers, readable before accepting it. */
+export interface InvitePreview {
+  role: Exclude<UserRole, 'owner'>;
+  email: string | null;
+  expiresAt: string;
 }
 
 export interface CreateUserInput {
@@ -83,18 +97,34 @@ export class UsersResource {
 
   /** The reply carries the code. It is stored hashed, so this is the only time it is readable. */
   /** With `email`, the server also sends the invite through its mail provider and returns the delivery. */
-  createInvite(input: { role?: Exclude<UserRole, 'owner'>; label?: string; email?: string } = {}): Promise<{ invite: Invite; delivery?: MailDelivery }> {
+  /** `send` defaults to true when `email` is given; false only records who the invite is for. */
+  createInvite(input: { role?: Exclude<UserRole, 'owner'>; label?: string; email?: string; send?: boolean } = {}): Promise<{ invite: Invite; delivery?: MailDelivery }> {
     return this.http.request('POST', '/api/v1/invites', input);
   }
 
+  /** A new code and a fresh expiry for an unused invite, emailed again when it names someone. */
+  resendInvite(id: string): Promise<{ invite: Invite; delivery?: MailDelivery }> {
+    return this.http.request('POST', `/api/v1/invites/${encodeURIComponent(id)}/resend`);
+  }
+
+  /** Withdraws an unused invite. It stays listed, as revoked. */
   revokeInvite(id: string): Promise<void> {
     return this.http.request('DELETE', `/api/v1/invites/${encodeURIComponent(id)}`);
   }
 
-  acceptInvite(code: string, input: { email: string; displayName: string; password: string }): Promise<{
+  /** What a code is an invite to. Needs no session. */
+  previewInvite(code: string): Promise<InvitePreview> {
+    return this.http.request('GET', `/api/v1/invites/${encodeURIComponent(code)}`);
+  }
+
+  /**
+   * Accepts an invite. Signed in, it joins as that account and needs no
+   * input; signed out, it creates the account from `input`.
+   */
+  acceptInvite(code: string, input?: { email: string; displayName: string; password: string }): Promise<{
     token: string;
     user: UserAccount;
   }> {
-    return this.http.request('POST', `/api/v1/invites/${encodeURIComponent(code)}/accept`, input);
+    return this.http.request('POST', `/api/v1/invites/${encodeURIComponent(code)}/accept`, input ?? {});
   }
 }
