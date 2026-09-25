@@ -22,6 +22,6 @@ CREATE TABLE user_server_roles (
 CREATE INDEX user_server_roles_role_idx ON user_server_roles(role_id, created_at);
 
 INSERT INTO server_roles (id, name, description, permissions, built_in, created_at, updated_at) VALUES
-  ('builtin-owner', 'Owner', 'Full server authority and recovery control.', '["members.view","members.manage","members.invite","agents.create","agents.manage","providers.manage","integrations.manage","server.settings","operations.view","roles.manage"]', 1, '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z'),
-  ('builtin-admin', 'Admin', 'Day-to-day server administration without ownership transfer.', '["members.view","members.manage","members.invite","agents.create","agents.manage","providers.manage","integrations.manage","server.settings","operations.view","roles.manage"]', 1, '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z'),
+  ('builtin-owner', 'Owner', 'Full server authority and recovery control.', '["members.view","members.manage","members.invite","agents.create","agents.manage","providers.manage","integrations.manage","automations.manage","server.settings","operations.view","roles.manage"]', 1, '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z'),
+  ('builtin-admin', 'Admin', 'Day-to-day server administration without ownership transfer.', '["members.view","members.manage","members.invite","agents.create","agents.manage","providers.manage","integrations.manage","automations.manage","server.settings","operations.view","roles.manage"]', 1, '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z'),
   ('builtin-member', 'Member', 'Normal workspace participation.', '["agents.create"]', 1, '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z');

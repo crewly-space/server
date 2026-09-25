@@ -62,6 +62,8 @@ export interface RunAgentTurnDeps {
   queue?: AgentRunQueue;
   /** Told whenever something that moves an agent's status happened. */
   onAgentChange?: (agentId: string) => void;
+  /** Dispatches run/message events without coupling the runtime to the automation store. */
+  automationDispatch?: (event: { type: 'message' | 'run'; eventId: string; dedupeKey: string; payload: Record<string, unknown>; conversationId?: string; hopCount?: number }) => Promise<void> | void;
 }
 
 export interface RunAgentTurnInput {
@@ -265,6 +267,11 @@ async function executeTurn(
         conversationId: input.conversationId,
       });
     }
+    void deps.automationDispatch?.({
+      type: 'run', eventId: runId, dedupeKey: runId,
+      payload: { runId, status: error instanceof RunCancelledError ? 'cancelled' : 'failed', agentId: input.agentId, conversationId: input.conversationId, error: failure.message },
+      conversationId: input.conversationId, hopCount,
+    });
     if (typeof error === 'object' && error !== null) failedRuns.set(error, runId);
     throw error;
   }
@@ -294,6 +301,16 @@ async function executeTurn(
   completeAgentRun(deps.db, runId, message.id);
   trace('run.completed', { resultMessageId: message.id });
   deps.hub.publish(topic, 'message.created', { ...message });
+  void deps.automationDispatch?.({
+    type: 'message', eventId: message.id, dedupeKey: message.id,
+    payload: { messageId: message.id, conversationId: input.conversationId, body: message.body, authorId: message.authorId, authorType: message.authorType },
+    conversationId: input.conversationId, hopCount: hopCount + 1,
+  });
+  void deps.automationDispatch?.({
+    type: 'run', eventId: runId, dedupeKey: runId,
+    payload: { runId, status: 'completed', agentId: input.agentId, conversationId: input.conversationId, resultMessageId: message.id },
+    conversationId: input.conversationId, hopCount,
+  });
   finish('completed', { resultMessageId: message.id });
   void emitNotification(deps.db, {
     type: 'agent.completed',

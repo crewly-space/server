@@ -51,6 +51,8 @@ import { registerAttachmentRoutes } from './attachments/routes.js';
 import { AttachmentStore, DEFAULT_ATTACHMENT_MAX_BYTES } from './attachments/service.js';
 import { artifactToolset } from './artifacts/service.js';
 import { registerPermissionRoutes } from './permissions/routes.js';
+import { registerAutomationRoutes } from './automations/routes.js';
+import { runDueSchedules } from './automations/service.js';
 
 export interface BuildAppOptions {
   db: Database;
@@ -263,6 +265,18 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       }),
     ],
   });
+  registerAutomationRoutes(app, {
+    publicUrl: opts.publicUrl,
+    hub,
+    respond,
+    queue: runQueue,
+    fetchImpl: opts.fetchImpl,
+  });
+  const automationTimer = setInterval(() => {
+    void runDueSchedules({ db: opts.db, hub, respond, queue: runQueue, fetchImpl: opts.fetchImpl }).catch((error) => app.log.warn({ err: error }, 'automation schedule tick failed'));
+  }, 60_000);
+  automationTimer.unref?.();
+  app.addHook('onClose', async () => clearInterval(automationTimer));
   registerMessageRoutes(app, hub, respond);
   registerMemoryFactRoutes(app);
   registerConversationSummaryRoutes(app);

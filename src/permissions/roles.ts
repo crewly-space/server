@@ -10,6 +10,7 @@ export type PermissionId =
   | 'agents.manage'
   | 'providers.manage'
   | 'integrations.manage'
+  | 'automations.manage'
   | 'server.settings'
   | 'operations.view'
   | 'roles.manage';
@@ -29,6 +30,7 @@ export const PERMISSION_DEFINITIONS: PermissionDefinition[] = [
   { id: 'agents.manage', label: 'Manage agents', description: 'Change agents and their workspace settings.', group: 'Workspace' },
   { id: 'providers.manage', label: 'Manage providers', description: 'Configure model providers and credentials.', group: 'Services' },
   { id: 'integrations.manage', label: 'Manage integrations', description: 'Connect external services and tools.', group: 'Services' },
+  { id: 'automations.manage', label: 'Manage automations', description: 'Create rules that react to events and run actions.', group: 'Workspace' },
   { id: 'server.settings', label: 'Manage server settings', description: 'Change server identity and configuration.', group: 'Server' },
   { id: 'operations.view', label: 'View operations', description: 'Read health, usage, runs and operational logs.', group: 'Server' },
   { id: 'roles.manage', label: 'Manage roles', description: 'Create roles and assign permissions.', group: 'People' },

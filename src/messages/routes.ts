@@ -15,6 +15,7 @@ import { blockedAgentIds, canReadChannel, getChannel } from '../channels/reposit
 import { createMessage, listMessagesForConversation, ReplyNotInConversationError } from './repository.js';
 import { AttachmentNotOwnedError, AttachmentValidationError, ATTACHMENT_MAX_COUNT_PER_MESSAGE } from '../attachments/service.js';
 import { decideAgentRouting } from './routing.js';
+import { dispatchAutomationEvent } from '../automations/service.js';
 
 const CreateMessageBodySchema = z.object({
   body: z.string().max(100_000).default(''),
@@ -36,6 +37,8 @@ function explicitlyMentioned(mentions: MentionRef[], agentId: string): boolean {
 }
 
 export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, respond: RespondFn): void {
+  const automationDispatch = (event: { type: 'message' | 'run'; eventId: string; dedupeKey: string; payload: Record<string, unknown>; conversationId?: string; hopCount?: number }) =>
+    dispatchAutomationEvent({ db: app.db, hub, respond, queue: app.runQueue, automationDispatch }, event);
   app.post('/api/v1/conversations/:id/messages', { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const conversation = getConversation(app.db, id);
@@ -98,6 +101,19 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
     }
 
     hub.publish(`conversation:${id}`, 'message.created', { ...message });
+    void dispatchAutomationEvent({
+      db: app.db,
+      hub,
+      respond,
+      queue: app.runQueue,
+      automationDispatch,
+    }, {
+      type: 'message',
+      eventId: message.id,
+      dedupeKey: message.id,
+      conversationId: id,
+      payload: { messageId: message.id, conversationId: id, body: message.body, authorId: message.authorId, authorType: message.authorType },
+    });
     enqueueJob(app.db, {
       type: SUMMARIZE_CONVERSATION_JOB_TYPE,
       payload: { conversationId: id },
@@ -173,7 +189,7 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
         continue;
       }
       void runAgentTurn(
-        { db: app.db, hub, respond, queue: app.runQueue, onAgentChange: (changed) => app.agentStatus.refresh(changed) },
+        { db: app.db, hub, respond, queue: app.runQueue, automationDispatch, onAgentChange: (changed) => app.agentStatus.refresh(changed) },
         {
           agentId,
           conversationId: id,

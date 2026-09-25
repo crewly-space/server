@@ -41,6 +41,14 @@ export {
   type ServerRole,
 } from './resources/roles.js';
 export {
+  AutomationsResource,
+  type Automation,
+  type AutomationAction,
+  type AutomationInput,
+  type AutomationRun,
+  type AutomationTriggerType,
+} from './resources/automations.js';
+export {
   MemoryResource,
   type CreateMemoryFactInput,
   type UpdateMemoryFactInput,
