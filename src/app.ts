@@ -44,6 +44,8 @@ import { registerMailRoutes } from './mail/routes.js';
 import { emailChannel, inAppChannel, NotificationService, registerNotificationService } from './notifications/service.js';
 import { registerNotificationRoutes } from './notifications/routes.js';
 import { negotiateProtocol, PROTOCOL_CAPABILITIES, PROTOCOL_VERSION } from './protocol/index.js';
+import { registerConnectorRoutes } from './connectors/routes.js';
+import type { ConnectorOAuthConfig } from './connectors/providers.js';
 
 export interface BuildAppOptions {
   db: Database;
@@ -78,6 +80,8 @@ export interface BuildAppOptions {
   mail?: MailService;
   /** Where people reach this server, for links in notifications (CREWLY_PUBLIC_URL). */
   publicUrl?: string;
+  /** Optional GitHub OAuth app credentials for the first first-class connector. */
+  githubOAuth?: ConnectorOAuthConfig;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -247,6 +251,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerMemoryFactRoutes(app);
   registerConversationSummaryRoutes(app);
   registerProviderRoutes(app, { fetchImpl: opts.fetchImpl });
+  registerConnectorRoutes(app, { fetchImpl: opts.fetchImpl, githubOAuth: opts.githubOAuth });
   registerRuntimeRoutes(app, hub, respond);
   registerRunInspectorRoutes(app, hub);
   registerApprovalRoutes(app);

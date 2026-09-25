@@ -140,6 +140,15 @@ export {
   type NotificationType,
 } from './resources/notifications.js';
 export {
+  ConnectorsResource,
+  type Connector,
+  type ConnectorCapability,
+  type ConnectorGrant,
+  type ConnectorOAuthStart,
+  type ConnectorProvider,
+  type ConnectorStatus,
+} from './resources/connectors.js';
+export {
   WsClient,
   type WebSocketConnection,
   type WebSocketConstructor,
