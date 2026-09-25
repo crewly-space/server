@@ -6,6 +6,7 @@ export const REMOTE_PROVIDER_KINDS = [
   'openrouter',
   'deepseek',
   'openai-compatible',
+  'crewly-gateway',
 ] as const;
 
 export const AGENTD_BACKED_PROVIDER_KINDS = ['claude-subscription', 'ollama'] as const;

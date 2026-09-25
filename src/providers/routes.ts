@@ -38,7 +38,7 @@ const CreateProviderBodySchema = z
   .superRefine((body, ctx) => {
     // agentd-backed kinds (claude-subscription, ollama) don't consume apiKey/baseUrl
     // the same way remote providers do, so they stay optional for those kinds.
-    if (isAgentdBackedKind(body.kind)) return;
+    if (isAgentdBackedKind(body.kind) || body.kind === 'crewly-gateway') return;
 
     if (!body.apiKey) {
       ctx.addIssue({

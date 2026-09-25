@@ -3,6 +3,7 @@ import type { ProviderClient } from './client.js';
 import { AgentdBackedProviderClient } from './agentd.js';
 import { AnthropicClient } from './anthropic.js';
 import { OpenAICompatibleClient } from './openai-compatible.js';
+import { CrewlyGatewayClient } from './crewly-gateway.js';
 import { ProviderNotConfiguredError } from './errors.js';
 import type { Database } from '../db/driver.js';
 import type { DeviceConnectionHub } from '../devices/hub.js';
@@ -37,6 +38,9 @@ export function resolveProviderClient(
       if (!config.apiKey) throw new ProviderNotConfiguredError(`provider "${config.id}" is missing an apiKey`);
       if (!config.baseUrl) throw new ProviderNotConfiguredError(`provider "${config.id}" (openai-compatible) requires a baseUrl`);
       return new OpenAICompatibleClient('openai-compatible', config.baseUrl, config.apiKey, fetchImpl);
+    case 'crewly-gateway':
+      if (!agentd) throw new ProviderNotConfiguredError(`provider "${config.id}" requires a Crewly connection`);
+      return new CrewlyGatewayClient(agentd.db, fetchImpl);
     case 'claude-subscription':
     case 'ollama':
       if (!agentd) throw new ProviderNotConfiguredError(`provider "${config.id}" requires a paired device context`);
