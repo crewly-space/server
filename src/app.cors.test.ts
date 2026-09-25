@@ -41,12 +41,13 @@ describe('cross-origin access for the hosted app', () => {
       headers: {
         origin: APP_ORIGIN,
         'access-control-request-method': 'POST',
-        'access-control-request-headers': 'authorization,content-type',
+        'access-control-request-headers': 'authorization,content-type,x-crewly-protocol-version,x-crewly-client-version',
       },
     });
     expect(response.statusCode).toBe(204);
     expect(response.headers['access-control-allow-origin']).toBe(APP_ORIGIN);
     expect(response.headers['access-control-allow-headers']).toContain('authorization');
+    expect(response.headers['access-control-allow-headers']).toContain('x-crewly-protocol-version');
     expect(response.headers['access-control-allow-methods']).toContain('POST');
     await app.close();
   });

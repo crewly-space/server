@@ -1,8 +1,13 @@
 import type { WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
-import type { AgentdOperationName, AgentdResponse } from '../protocol/index.js';
+import { supportsCapability, type AgentdOperationName, type AgentdResponse } from '../protocol/index.js';
 
 export class DeviceUnavailableError extends Error {}
+export class DeviceCapabilityError extends Error {
+  constructor(public readonly capability: string) {
+    super(`connected device does not advertise ${capability}; update Crewly CLI`);
+  }
+}
 export class DeviceRequestError extends Error {
   constructor(public readonly code: string, message: string) { super(message); }
 }
@@ -14,30 +19,40 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
+interface DeviceConnection {
+  socket: WebSocket;
+  capabilities: Set<string>;
+}
+
 export class DeviceConnectionHub {
-  private readonly sockets = new Map<string, WebSocket>();
+  private readonly sockets = new Map<string, DeviceConnection>();
   private readonly pending = new Map<string, PendingRequest>();
 
-  connect(deviceId: string, socket: WebSocket): void {
-    const previous = this.sockets.get(deviceId);
+  connect(deviceId: string, socket: WebSocket, capabilities: readonly string[] = []): void {
+    const previous = this.sockets.get(deviceId)?.socket;
     if (previous && previous !== socket && previous.readyState === previous.OPEN) {
       this.rejectDevice(deviceId, new DeviceUnavailableError('device connection was replaced'));
       previous.close(4009, 'replaced by a newer connection');
     }
-    this.sockets.set(deviceId, socket);
+    this.sockets.set(deviceId, { socket, capabilities: new Set(capabilities) });
   }
 
   /** True when this socket was the device's live one, so the device is now offline. */
   disconnect(deviceId: string, socket: WebSocket): boolean {
-    if (this.sockets.get(deviceId) !== socket) return false;
+    if (this.sockets.get(deviceId)?.socket !== socket) return false;
     this.sockets.delete(deviceId);
     this.rejectDevice(deviceId, new DeviceUnavailableError('device disconnected'));
     return true;
   }
 
   isConnected(deviceId: string): boolean {
-    const socket = this.sockets.get(deviceId);
+    const socket = this.sockets.get(deviceId)?.socket;
     return Boolean(socket && socket.readyState === socket.OPEN);
+  }
+
+  supports(deviceId: string, capability: string): boolean {
+    const capabilities = this.sockets.get(deviceId)?.capabilities;
+    return supportsCapability(capabilities ? [...capabilities] : undefined, capability);
   }
 
   request(
@@ -45,10 +60,15 @@ export class DeviceConnectionHub {
     operation: AgentdOperationName,
     payload: Record<string, unknown>,
     timeoutMs = 120_000,
+    options: { requiredCapability?: string } = {},
   ): Promise<Record<string, unknown>> {
-    const socket = this.sockets.get(deviceId);
+    const connection = this.sockets.get(deviceId);
+    const socket = connection?.socket;
     if (!socket || socket.readyState !== socket.OPEN) {
       throw new DeviceUnavailableError('no connected device can handle this request');
+    }
+    if (options.requiredCapability && !supportsCapability([...connection.capabilities], options.requiredCapability)) {
+      throw new DeviceCapabilityError(options.requiredCapability);
     }
     const requestId = randomUUID();
     return new Promise((resolve, reject) => {

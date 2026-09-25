@@ -29,7 +29,7 @@ function setup(capabilities: Record<string, unknown> = {}) {
   for (const id of [DEVICE, OTHER]) {
     const socket = { OPEN: 1, readyState: 1, sent: [] as string[], send(value: string) { this.sent.push(value); }, close() {} };
     sockets.set(id, socket);
-    hub.connect(id, socket as unknown as WebSocket);
+    hub.connect(id, socket as unknown as WebSocket, ['agentd.capabilities.v1']);
   }
   return { db, hub, sockets };
 }

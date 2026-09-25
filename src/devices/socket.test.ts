@@ -65,10 +65,12 @@ describe('signed device socket', () => {
     connected.send(JSON.stringify({
       type: 'authenticate', deviceId, timestamp, nonce: challenge.nonce, signature,
       protocolVersion: PROTOCOL_VERSION, clientVersion: '0.1.0-dev',
+      capabilities: { 'agentd.heartbeat.v1': true, 'agentd.capabilities.v1': true },
     }));
     expect(await nextMessage(connected)).toMatchObject({
       type: 'authenticated', deviceId, protocolVersion: PROTOCOL_VERSION,
       capabilities: ['agentd.heartbeat.v1', 'agentd.capabilities.v1'],
+      negotiatedCapabilities: ['agentd.heartbeat.v1', 'agentd.capabilities.v1'],
     });
     return connected;
   }

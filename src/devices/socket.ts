@@ -5,6 +5,7 @@ import {
   AgentdAuthenticateSchema,
   AgentdHeartbeatSchema,
   AgentdResponseSchema,
+  negotiateCapabilities,
   negotiateProtocol,
   PROTOCOL_CAPABILITIES,
   PROTOCOL_VERSION,
@@ -30,6 +31,7 @@ export function registerDeviceSocket(
     const nonce = randomBytes(24).toString('base64url');
     let authenticatedDeviceId: string | undefined;
     let ownerUserId: string | undefined;
+    let negotiatedCapabilities: string[] = [];
     const authTimer = setTimeout(() => socket.close(4001, 'authentication timed out'), 15_000);
     authTimer.unref?.();
     socket.send(JSON.stringify({ type: 'challenge', nonce }));
@@ -72,11 +74,17 @@ export function registerDeviceSocket(
           socket.close(4003, 'protocol incompatible');
           return;
         }
+        negotiatedCapabilities = negotiateCapabilities(parsed.data.capabilities);
         authenticatedDeviceId = device.id;
         ownerUserId = device.owner_user_id;
         clearTimeout(authTimer);
-        hub.connect(device.id, socket as WebSocket);
-        touchDevice(app.db, device.id);
+        hub.connect(device.id, socket as WebSocket, negotiatedCapabilities);
+        touchDevice(app.db, device.id, {
+          ...(parsed.data.capabilities ?? {}),
+          ...(parsed.data.protocolVersion ? { protocolVersion: parsed.data.protocolVersion } : {}),
+          ...(parsed.data.clientVersion ? { clientVersion: parsed.data.clientVersion } : {}),
+          protocolCapabilities: negotiatedCapabilities,
+        });
         events?.publish(`user:${device.owner_user_id}`, 'device.connected', {
           deviceId: device.id,
           name: device.name,
@@ -88,6 +96,7 @@ export function registerDeviceSocket(
           serverVersion: options.version ?? '0.0.0-dev',
           protocolVersion: PROTOCOL_VERSION,
           capabilities: PROTOCOL_CAPABILITIES,
+          negotiatedCapabilities,
           compatibility: negotiation.reason,
         }));
         app.agentStatus.refresh();
@@ -100,6 +109,7 @@ export function registerDeviceSocket(
           ...(heartbeat.data.capabilities ?? {}),
           ...(heartbeat.data.protocolVersion ? { protocolVersion: heartbeat.data.protocolVersion } : {}),
           ...(heartbeat.data.clientVersion ? { clientVersion: heartbeat.data.clientVersion } : {}),
+          protocolCapabilities: negotiatedCapabilities,
         };
         touchDevice(app.db, authenticatedDeviceId, capabilities);
         // A heartbeat can say a runtime was installed or signed out.

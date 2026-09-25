@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WebSocket } from 'ws';
-import { DeviceConnectionHub, DeviceRequestError, DeviceUnavailableError } from './hub.js';
+import { DeviceCapabilityError, DeviceConnectionHub, DeviceRequestError, DeviceUnavailableError } from './hub.js';
 
 function socket() {
   return { OPEN: 1, readyState: 1, sent: [] as string[], send(value: string) { this.sent.push(value); }, close() {} };
@@ -29,5 +29,27 @@ describe('DeviceConnectionHub requests', () => {
     const disconnected = hub.request('dev_1', 'provider.models', {});
     hub.disconnect('dev_1', ws as unknown as WebSocket);
     await expect(disconnected).rejects.toThrow('disconnected');
+  });
+
+  it('does not send optional requests to a client that did not negotiate them', () => {
+    const hub = new DeviceConnectionHub();
+    const ws = socket();
+    hub.connect('dev_1', ws as unknown as WebSocket);
+    expect(() => hub.request('dev_1', 'provider.enable', { kind: 'ollama' }, 1_000, {
+      requiredCapability: 'agentd.capabilities.v1',
+    })).toThrow(DeviceCapabilityError);
+    expect(ws.sent).toHaveLength(0);
+  });
+
+  it('sends optional requests after the client negotiates the capability', async () => {
+    const hub = new DeviceConnectionHub();
+    const ws = socket();
+    hub.connect('dev_1', ws as unknown as WebSocket, ['agentd.capabilities.v1']);
+    const pending = hub.request('dev_1', 'provider.enable', { kind: 'ollama' }, 1_000, {
+      requiredCapability: 'agentd.capabilities.v1',
+    });
+    expect(JSON.parse(ws.sent[0]!)).toMatchObject({ operation: 'provider.enable' });
+    hub.disconnect('dev_1', ws as unknown as WebSocket);
+    await expect(pending).rejects.toThrow('disconnected');
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { negotiateProtocol, PROTOCOL_VERSION } from './version.js';
+import { negotiateCapabilities, negotiateProtocol, PROTOCOL_VERSION } from './version.js';
 
 describe('PROTOCOL_VERSION', () => {
   it('is a semver string', () => {
@@ -12,5 +12,13 @@ describe('PROTOCOL_VERSION', () => {
     expect(negotiateProtocol()).toMatchObject({ compatible: true, reason: 'legacy-client' });
     expect(negotiateProtocol('1.0.0')).toMatchObject({ compatible: false, reason: 'major-version-mismatch' });
     expect(negotiateProtocol('not-a-version')).toMatchObject({ compatible: false, reason: 'invalid-client-version' });
+  });
+
+  it('negotiates only capabilities explicitly advertised by the client', () => {
+    expect(negotiateCapabilities({
+      'agentd.capabilities.v1': true,
+      'unknown.future.v1': true,
+    })).toEqual(['agentd.capabilities.v1']);
+    expect(negotiateCapabilities()).toEqual([]);
   });
 });

@@ -42,7 +42,9 @@ export async function enableOnDevices(
     .filter((device) => hub.isConnected(device.id) && !advertises(device.capabilities, kind));
   return Promise.all(candidates.map(async (device): Promise<DeviceEnableOutcome> => {
     try {
-      const result = await hub.request(device.id, 'provider.enable', { kind }, 15_000);
+      const result = await hub.request(device.id, 'provider.enable', { kind }, 15_000, {
+        requiredCapability: 'agentd.capabilities.v1',
+      });
       if (result.capabilities && typeof result.capabilities === 'object') {
         touchDevice(db, device.id, result.capabilities as Record<string, unknown>);
       }

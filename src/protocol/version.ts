@@ -5,6 +5,7 @@ export const PROTOCOL_CAPABILITIES = [
   'agentd.heartbeat.v1',
   'agentd.capabilities.v1',
 ] as const;
+export type ProtocolCapability = typeof PROTOCOL_CAPABILITIES[number];
 
 export type ProtocolNegotiation = {
   compatible: boolean;
@@ -22,4 +23,13 @@ export function negotiateProtocol(clientVersion?: string): ProtocolNegotiation {
     reason: compatible ? 'current' : 'major-version-mismatch',
     protocolVersion: PROTOCOL_VERSION,
   };
+}
+
+/** Capabilities are opt-in so legacy clients are never sent newer operations. */
+export function negotiateCapabilities(clientCapabilities?: Record<string, unknown>): ProtocolCapability[] {
+  return PROTOCOL_CAPABILITIES.filter((capability) => clientCapabilities?.[capability] === true);
+}
+
+export function supportsCapability(capabilities: readonly string[] | undefined, capability: string): boolean {
+  return capabilities?.includes(capability) ?? false;
 }

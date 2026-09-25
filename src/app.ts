@@ -43,7 +43,7 @@ import { MailService } from './mail/service.js';
 import { registerMailRoutes } from './mail/routes.js';
 import { emailChannel, inAppChannel, NotificationService, registerNotificationService } from './notifications/service.js';
 import { registerNotificationRoutes } from './notifications/routes.js';
-import { PROTOCOL_CAPABILITIES, PROTOCOL_VERSION } from './protocol/index.js';
+import { negotiateProtocol, PROTOCOL_CAPABILITIES, PROTOCOL_VERSION } from './protocol/index.js';
 
 export interface BuildAppOptions {
   db: Database;
@@ -81,6 +81,7 @@ export interface BuildAppOptions {
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
+  const serverVersion = opts.version ?? '0.0.0-dev';
   const app = Fastify({
     logger: opts.logger ?? false,
     trustProxy: opts.trustProxy ?? false,
@@ -126,14 +127,31 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       if (request.method !== 'OPTIONS') return;
       reply
         .header('access-control-allow-methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS')
-        .header('access-control-allow-headers', 'authorization, content-type')
+        .header('access-control-allow-headers', 'authorization, content-type, x-crewly-protocol-version, x-crewly-client-version')
         .header('access-control-max-age', '600')
         .code(204)
         .send();
     });
   }
 
+  app.addHook('onRequest', async (request, reply) => {
+    if (!request.url.startsWith('/api/') || request.method === 'OPTIONS') return;
+    const clientProtocol = request.headers['x-crewly-protocol-version'];
+    if (typeof clientProtocol !== 'string') return;
+    const negotiation = negotiateProtocol(clientProtocol);
+    if (negotiation.compatible) return;
+    reply.code(426).send({
+      error: 'protocol_incompatible',
+      message: `This server speaks protocol ${PROTOCOL_VERSION}; update the connected Crewly app or CLI.`,
+      serverVersion,
+      protocolVersion: PROTOCOL_VERSION,
+      clientProtocol,
+    });
+  });
+
   app.addHook('onSend', async (_request, reply, payload) => {
+    reply.header('x-crewly-protocol-version', PROTOCOL_VERSION);
+    reply.header('x-crewly-server-version', serverVersion);
     reply.header('x-content-type-options', 'nosniff');
     reply.header('x-frame-options', 'DENY');
     reply.header('referrer-policy', 'strict-origin-when-cross-origin');
@@ -166,11 +184,11 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     cloudHandoff: opts.cloudHandoff,
   });
   registerUserRoutes(app);
-  registerServerAdminRoutes(app, { version: opts.version ?? '0.0.0-dev' });
+  registerServerAdminRoutes(app, { version: serverVersion });
   registerCrewlyRoutes(app, {
     cloudUrl: opts.crewlyCloudUrl ?? DEFAULT_CREWLY_CLOUD_URL,
     fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
-    version: opts.version ?? '0.0.0-dev',
+    version: serverVersion,
   });
   const mail = opts.mail ?? new MailService(opts.db, { fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis) });
   app.decorate('mail', mail);
@@ -233,7 +251,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerRunInspectorRoutes(app, hub);
   registerApprovalRoutes(app);
   registerWsRoutes(app, hub, opts.trustedAppOrigins ?? []);
-  registerDeviceSocket(app, deviceHub, hub, { version: opts.version ?? '0.0.0-dev' });
+  registerDeviceSocket(app, deviceHub, hub, { version: serverVersion });
 
   if (opts.webDir && fs.existsSync(path.join(opts.webDir, 'index.html'))) {
     await app.register(fastifyStatic, { root: opts.webDir, prefix: '/', index: false });
