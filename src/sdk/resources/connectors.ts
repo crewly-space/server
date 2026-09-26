@@ -1,9 +1,11 @@
 import type { HttpClient } from '../http-client.js';
 import { encodePathSegment } from '../path.js';
 
-export type ConnectorProvider = 'github' | 'linear';
+export type ConnectorProvider = 'github' | 'linear' | 'slack';
 export type ConnectorStatus = 'pending' | 'connected' | 'action_required' | 'permission_revoked' | 'rate_limited' | 'provider_unavailable' | 'revoked';
-export type ConnectorCapability = 'read_profile' | 'read_repository' | 'read_issues' | 'create_issue' | 'comment_on_pull_request' | 'read_projects' | 'comment_on_issue';
+export type ConnectorCapability = 'read_profile' | 'read_repository' | 'read_issues' | 'create_issue' | 'comment_on_pull_request' | 'read_projects' | 'comment_on_issue' | 'read_channels' | 'read_messages' | 'post_messages';
+export interface SlackImportChannel { id: string; name: string; topic: string; isPrivate: boolean; }
+export interface SlackImportSummary { importId: string; status: string; createdChannels: number; matchedChannels: number; importedMessages: number; invitedMembers: number; skipped: number; failed: string[]; }
 export interface Connector {
   id: string; provider: ConnectorProvider; accountId: string | null; accountName: string | null; accountUrl: string | null;
   scopes: string[]; status: ConnectorStatus; ownerUserId: string; createdAt: string; updatedAt: string;
@@ -20,6 +22,10 @@ export class ConnectorsResource {
   completeGitHubOAuth(input: { state: string; code: string }): Promise<Connector> { return this.http.request('POST', '/api/v1/connectors/oauth/github/complete', input); }
   startLinearOAuth(input: { callbackUrl: string; scopes?: string[] }): Promise<ConnectorOAuthStart> { return this.http.request('POST', '/api/v1/connectors/oauth/linear/start', input); }
   completeLinearOAuth(input: { state: string; code: string }): Promise<Connector> { return this.http.request('POST', '/api/v1/connectors/oauth/linear/complete', input); }
+  startSlackOAuth(input: { callbackUrl: string; scopes?: string[] }): Promise<ConnectorOAuthStart> { return this.http.request('POST', '/api/v1/connectors/oauth/slack/start', input); }
+  completeSlackOAuth(input: { state: string; code: string }): Promise<Connector> { return this.http.request('POST', '/api/v1/connectors/oauth/slack/complete', input); }
+  slackChannels(id: string): Promise<{ channels: SlackImportChannel[] }> { return this.http.request('GET', `/api/v1/connectors/${encodePathSegment(id)}/slack/channels`); }
+  importSlack(id: string, input: { channelIds: string[]; historyLimit?: number; importMembers?: boolean }): Promise<SlackImportSummary> { return this.http.request('POST', `/api/v1/connectors/${encodePathSegment(id)}/slack/import`, input); }
   refresh(id: string): Promise<Connector> { return this.http.request('POST', `/api/v1/connectors/${encodePathSegment(id)}/refresh`); }
   revoke(id: string): Promise<Connector> { return this.http.request('POST', `/api/v1/connectors/${encodePathSegment(id)}/revoke`); }
   grants(id: string): Promise<{ grants: ConnectorGrant[] }> { return this.http.request('GET', `/api/v1/connectors/${encodePathSegment(id)}/grants`); }

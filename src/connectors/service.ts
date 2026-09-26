@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../db/driver.js';
 import { decryptDatabaseSecret, encryptDatabaseSecret } from '../db/secrets.js';
-import { githubRequest, linearRequest, PROVIDERS, type ConnectorCapability, type ConnectorProvider, type ConnectorStatus } from './providers.js';
+import { githubRequest, linearRequest, slackRequest, PROVIDERS, type ConnectorCapability, type ConnectorProvider, type ConnectorStatus } from './providers.js';
 
 export type ConnectorActor = { type: 'user' | 'agent' | 'automation' | 'integration' | 'system'; id: string | null };
 export type ConnectorGranteeType = 'agent' | 'automation' | 'integration';
@@ -82,14 +82,16 @@ export function refreshConnector(db: Database, id: string, actor: ConnectorActor
   return (async () => {
     const result = current.provider === 'github'
       ? await githubRequest(token, '/user', fetchImpl)
-      : await linearRequest(token, 'query Viewer { viewer { id name email url } }', {}, fetchImpl);
+      : current.provider === 'linear'
+        ? await linearRequest(token, 'query Viewer { viewer { id name email url } }', {}, fetchImpl)
+        : await slackRequest(token, 'auth.test', {}, fetchImpl);
     if (result.status === 401) return setConnectorStatus(db, id, 'permission_revoked', actor, 'GitHub rejected the connector credential');
     if (result.status === 403 && result.headers.get('x-ratelimit-remaining') === '0') return setConnectorStatus(db, id, 'rate_limited', actor, 'GitHub rate limit reached');
     if (result.status >= 500) return setConnectorStatus(db, id, 'provider_unavailable', actor, 'GitHub is unavailable');
-    const profile = current.provider === 'github'
-      ? result.body
-      : (result.body.data as { viewer?: Record<string, unknown> } | undefined)?.viewer;
-    if (result.status !== 200 || !profile?.id) return setConnectorStatus(db, id, 'action_required', actor, `${current.provider} returned an unexpected account response`);
+    const profile = current.provider === 'github' ? result.body
+      : current.provider === 'linear' ? (result.body.data as { viewer?: Record<string, unknown> } | undefined)?.viewer
+        : { id: result.body.team_id, name: result.body.team, url: result.body.url };
+    if (result.status !== 200 || (current.provider === 'slack' && result.body.ok !== true) || !profile?.id) return setConnectorStatus(db, id, 'action_required', actor, `${current.provider} returned an unexpected account response`);
     const now = new Date().toISOString();
     db.prepare(`UPDATE connectors SET account_id = ?, account_name = ?, account_url = ?, status = 'connected', last_checked_at = ?, last_error = NULL, updated_at = ? WHERE id = ?`)
       .run(String(profile.id), String(profile.login ?? profile.name ?? ''), typeof (profile.html_url ?? profile.url) === 'string' ? (profile.html_url ?? profile.url) : current.account_url, now, now, id);
@@ -133,6 +135,13 @@ export function connectorCredential(db: Database, input: { connectorId: string; 
   return { provider: current.provider, token: decryptDatabaseSecret(db, current.credential_ciphertext) };
 }
 
+/** Used only by an authenticated admin import route; never serialized. */
+export function connectorTokenForImport(db: Database, connectorId: string): { provider: ConnectorProvider; token: string } {
+  const current = getConnectorRow(db, connectorId);
+  if (!current || current.status !== 'connected' || !current.credential_ciphertext) throw new Error('connector_not_connected');
+  return { provider: current.provider, token: decryptDatabaseSecret(db, current.credential_ciphertext) };
+}
+
 export function listConnectorAudit(db: Database, connectorId: string, limit: number): Array<Record<string, unknown>> {
   return db.prepare('SELECT id, connector_id AS connectorId, provider, action, actor_type AS actorType, actor_id AS actorId, detail, created_at AS at FROM connector_audit WHERE connector_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?').all(connectorId, limit) as Array<Record<string, unknown>>;
 }
@@ -156,7 +165,7 @@ export async function connectorCall(
     const init: RequestInit = input.operation === 'write' ? { method: 'POST', body: JSON.stringify({ title: input.payload.title, body: input.payload.body }) } : {};
     const response = await githubRequest(credential.token, path, fetchImpl, init);
     result = { status: response.status, body: response.body };
-  } else {
+  } else if (credential.provider === 'linear') {
     const query = input.capability === 'read_issues'
       ? 'query Issues($first:Int){ issues(first:$first){ nodes { id identifier title url state { name } } } }'
       : input.capability === 'read_projects'
@@ -170,6 +179,12 @@ export async function connectorCall(
         ? { input: { issueId: String(input.payload.issueId ?? ''), body: String(input.payload.body ?? '') } }
         : { first: Math.min(50, Math.max(1, Number(input.payload.first ?? 20))) };
     const response = await linearRequest(credential.token, query, variables, fetchImpl);
+    result = { status: response.status, body: response.body };
+  } else {
+    const method = input.capability === 'read_channels' ? 'conversations.list'
+      : input.capability === 'read_messages' ? 'conversations.history'
+      : input.capability === 'post_messages' ? 'chat.postMessage' : 'auth.test';
+    const response = await slackRequest(credential.token, method, input.payload as Record<string, string | number | boolean | undefined>, fetchImpl);
     result = { status: response.status, body: response.body };
   }
   if (result.status >= 400) {

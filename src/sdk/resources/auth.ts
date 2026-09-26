@@ -1,4 +1,5 @@
 import type { HttpClient } from '../http-client.js';
+import type { CrewlyConnection } from './crewly.js';
 
 export interface AuthUser {
   id: string;
@@ -26,6 +27,13 @@ export interface AuthLoginInput {
   password: string;
 }
 
+export type AuthMode = 'local' | 'crewly' | 'both';
+export interface AuthSettings {
+  mode: AuthMode;
+  crewlyEnabled: boolean;
+  crewlyConnection: CrewlyConnection;
+}
+
 export class AuthResource {
   constructor(private readonly http: HttpClient) {}
 
@@ -43,15 +51,21 @@ export class AuthResource {
    * Only servers linked to a Cloud answer this; a self-hosted one replies 404,
    * which is why `status()` says whether to offer it.
    */
-  cloudHandoff(input: { token: string }): Promise<AuthResult> {
+  cloudHandoff(input: { token: string; inviteToken?: string }): Promise<AuthResult> {
     return this.http.request('POST', '/api/v1/auth/cloud-handoff', input);
   }
 
   me(): Promise<AuthUser> {
     return this.http.request('GET', '/api/v1/auth/me');
   }
-  status(): Promise<{ initialized: boolean; claimRequired?: boolean; cloudHandoff?: boolean }> {
+  status(): Promise<{ initialized: boolean; claimRequired?: boolean; cloudHandoff?: boolean; authMode?: 'local' | 'crewly' | 'both'; crewlySignInUrl?: string | null }> {
     return this.http.request('GET', '/api/v1/auth/status');
+  }
+  settings(): Promise<AuthSettings> {
+    return this.http.request('GET', '/api/v1/auth/settings');
+  }
+  updateSettings(mode: AuthMode): Promise<AuthSettings> {
+    return this.http.request('PUT', '/api/v1/auth/settings', { mode });
   }
   logout(): Promise<void> {
     return this.http.request('POST', '/api/v1/auth/logout');

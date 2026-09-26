@@ -3,11 +3,12 @@ import type { Agent } from '../protocol/index.js';
 import type { Database } from '../db/driver.js';
 import { connectorCall, hasConnectorGrant, listConnectors } from './service.js';
 import { PROVIDERS } from './providers.js';
+import { authorizeCapabilityAction } from '../permissions/capabilities.js';
 
 const inputSchema = { type: 'object', properties: { repo: { type: 'string' }, first: { type: 'number' }, teamId: { type: 'string' }, issueId: { type: 'string' }, issueNumber: { type: 'number' }, title: { type: 'string' }, body: { type: 'string' } }, additionalProperties: false };
 
 export function connectorToolset(db: Database, fetchImpl: typeof fetch = fetch): ToolsetProvider {
-  return (agent: Agent): AgentToolset | undefined => {
+  return (agent: Agent, input): AgentToolset | undefined => {
     const definitions = listConnectors(db).flatMap((connector) => PROVIDERS[connector.provider].capabilities.map((capability) => ({
       name: `connector_${connector.id.replace(/[^a-zA-Z0-9_]/g, '_')}_${capability}`.slice(0, 64),
       description: `${capability.replaceAll('_', ' ')} using the connected ${PROVIDERS[connector.provider].label}. Input is scoped to this connector and audited.`,
@@ -24,6 +25,15 @@ export function connectorToolset(db: Database, fetchImpl: typeof fetch = fetch):
         if (!definition) return { content: `There is no connector tool called ${call.name}.`, isError: true };
         try {
           const write = definition.capability === 'create_issue' || definition.capability === 'comment_on_issue' || definition.capability === 'comment_on_pull_request';
+          if (input.run) {
+            for (const capability of write ? ['network.access', 'external.side_effect'] as const : ['network.access'] as const) {
+              const authorization = authorizeCapabilityAction(db, { agentId: agent.id, runId: input.run.runId, capability,
+                action: `connector.${definition.connectorId}.${definition.capability}`, scope: { connector: definition.connectorId }, target: call.input });
+              if (!authorization.allowed) return { content: authorization.reason === 'denied'
+                ? `${capability} is denied by this agent's policy.`
+                : `Approval required for ${definition.capability}. The exact action has been queued for an owner.`, isError: true };
+            }
+          }
           const result = await connectorCall(db, { connectorId: definition.connectorId, agentId: agent.id, capability: definition.capability, operation: write ? 'write' : 'read', payload: call.input as Record<string, unknown> }, fetchImpl);
           return { content: JSON.stringify(result).slice(0, 50_000) };
         } catch (error) { return { content: `Connector action failed: ${error instanceof Error ? error.message : String(error)}`, isError: true }; }

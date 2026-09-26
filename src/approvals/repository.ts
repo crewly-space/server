@@ -30,7 +30,15 @@ export class ApprovalAlreadyResolvedError extends Error {}
 
 export function createApproval(
   db: Database,
-  input: { runId: string; agentId: string; action: string; details: Record<string, unknown> }
+  input: {
+    runId: string;
+    agentId: string;
+    action: string;
+    details: Record<string, unknown>;
+    capability?: string;
+    actionHash?: string;
+    expiresAt?: string;
+  }
 ): ApprovalRequest {
   const row: ApprovalRow = {
     id: randomUUID(),
@@ -43,13 +51,15 @@ export function createApproval(
     resolved_at: null,
   };
   db.prepare(
-    `INSERT INTO approvals (id, run_id, agent_id, action, details, status, created_at, resolved_at)
-     VALUES (@id, @run_id, @agent_id, @action, @details, @status, @created_at, @resolved_at)`
-  ).run(row);
+    `INSERT INTO approvals (id, run_id, agent_id, action, details, status, created_at, resolved_at, capability, action_hash, expires_at)
+     VALUES (@id, @run_id, @agent_id, @action, @details, @status, @created_at, @resolved_at, @capability, @action_hash, @expires_at)`
+  ).run({ ...row, capability: input.capability ?? null, action_hash: input.actionHash ?? null,
+    expires_at: input.expiresAt ?? new Date(Date.now() + 15 * 60 * 1000).toISOString() });
   return rowToApproval(row);
 }
 
 export function getApproval(db: Database, id: string): ApprovalRequest | undefined {
+  expireApprovals(db);
   const row = db.prepare('SELECT * FROM approvals WHERE id = ?').get(id) as ApprovalRow | undefined;
   return row ? rowToApproval(row) : undefined;
 }
@@ -68,6 +78,7 @@ export function getApprovalForOwner(
 }
 
 export function listPendingApprovals(db: Database): ApprovalRequest[] {
+  expireApprovals(db);
   const rows = db
     .prepare("SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at ASC")
     .all() as ApprovalRow[];
@@ -75,6 +86,7 @@ export function listPendingApprovals(db: Database): ApprovalRequest[] {
 }
 
 export function listPendingApprovalsForOwner(db: Database, ownerUserId: string): ApprovalRequest[] {
+  expireApprovals(db);
   const rows = db.prepare(
     `SELECT approvals.* FROM approvals
      JOIN agents ON agents.id = approvals.agent_id
@@ -82,6 +94,11 @@ export function listPendingApprovalsForOwner(db: Database, ownerUserId: string):
      ORDER BY approvals.created_at ASC`
   ).all(ownerUserId) as ApprovalRow[];
   return rows.map(rowToApproval);
+}
+
+export function expireApprovals(db: Database, now = new Date()): number {
+  return Number(db.prepare(`UPDATE approvals SET status = 'expired', resolved_at = ?
+    WHERE status = 'pending' AND expires_at IS NOT NULL AND expires_at <= ?`).run(now.toISOString(), now.toISOString()).changes);
 }
 
 export function resolveApproval(

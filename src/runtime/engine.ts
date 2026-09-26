@@ -3,7 +3,7 @@ import type { Database } from '../db/driver.js';
 import { randomUUID } from 'node:crypto';
 import { enqueueJob } from '../jobs/repository.js';
 import { SUMMARIZE_CONVERSATION_JOB_TYPE } from '../memory/summary.js';
-import { createMessage, listRecentMessagesForConversation } from '../messages/repository.js';
+import { createMessage, listRecentMessagesForConversation, listThreadMessages } from '../messages/repository.js';
 import type { ConnectionHub } from '../ws/hub.js';
 import type { GatewayEvent } from '../gateway/gateway.js';
 import { ProviderError } from '../providers/errors.js';
@@ -75,6 +75,8 @@ export interface RunAgentTurnInput {
   /** What started the run, for the trace: `message`, `delegation`, `api`. */
   trigger?: string;
   triggerMessageId?: string | null;
+  /** Limit context and delivery to one message thread instead of the channel. */
+  threadRootId?: string;
   /** Why this message woke the agent, retained in the run trace for debugging. */
   routingDecision?: { mode: string; reason: string };
 }
@@ -237,7 +239,9 @@ async function executeTurn(
           attachments: [],
           createdAt: new Date().toISOString(),
         }]
-      : listRecentMessagesForConversation(deps.db, input.conversationId, 20);
+      : input.threadRootId
+        ? listThreadMessages(deps.db, input.threadRootId, 20)
+        : listRecentMessagesForConversation(deps.db, input.conversationId, 20);
     result = await deps.respond({
       agentId: input.agentId,
       conversationId: input.conversationId,
@@ -295,6 +299,7 @@ async function executeTurn(
     body: result.body,
     mentions: [],
     replyToMessageId: null,
+    threadRootId: input.threadRootId ?? null,
     attachmentIds: result.artifactIds ?? [],
     attachmentOwnerId: deps.db.prepare('SELECT owner_user_id FROM agents WHERE id = ?').pluck().get(input.agentId) as string | undefined,
   });

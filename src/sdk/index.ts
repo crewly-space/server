@@ -5,7 +5,9 @@ export { CrewlyApiError } from './errors.js';
 export {
   AuthResource,
   type AuthLoginInput,
+  type AuthMode,
   type AuthResult,
+  type AuthSettings,
   type AuthSetupInput,
   type AuthUser,
 } from './resources/auth.js';
@@ -167,7 +169,25 @@ export {
   type ConnectorOAuthStart,
   type ConnectorProvider,
   type ConnectorStatus,
+  type SlackImportChannel,
+  type SlackImportSummary,
 } from './resources/connectors.js';
+export {
+  PlatformResource,
+  type BrowserAction,
+  type BrowserSession,
+  type CapabilityDecision,
+  type CapabilityPolicy,
+  type CapabilityPolicyInput,
+  type ExecutionCapability,
+  type FederationConnection,
+  type FederationEvent,
+  type FederationSettings,
+  type RegistryInstallation,
+  type RegistryItem,
+  type RegistrySettings,
+  type RegistryVersion,
+} from './resources/platform.js';
 export {
   WsClient,
   type WebSocketConnection,

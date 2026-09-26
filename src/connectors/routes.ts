@@ -2,8 +2,9 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
-import { CONNECTOR_CAPABILITIES, CONNECTOR_PROVIDERS, consumeConnectorState, exchangeGitHubCode, exchangeLinearCode, githubRequest, linearRequest, PROVIDERS, startGitHubAuthorization, startLinearAuthorization, ConnectorOAuthError, type ConnectorCapability, type ConnectorOAuthConfig } from './providers.js';
+import { CONNECTOR_CAPABILITIES, CONNECTOR_PROVIDERS, consumeConnectorState, exchangeGitHubCode, exchangeLinearCode, exchangeSlackCode, githubRequest, linearRequest, PROVIDERS, startGitHubAuthorization, startLinearAuthorization, startSlackAuthorization, ConnectorOAuthError, type ConnectorCapability, type ConnectorOAuthConfig } from './providers.js';
 import { connectConnector, createPendingConnector, getConnector, listConnectorAudit, listConnectorGrants, listConnectors, refreshConnector, revokeConnector, setConnectorGrants } from './service.js';
+import { importSlackQuickStart, previewSlackChannels } from './slack-import.js';
 import { hasPermission } from '../permissions/roles.js';
 
 const CapabilitySchema = z.enum(CONNECTOR_CAPABILITIES as unknown as [string, ...string[]]);
@@ -15,10 +16,10 @@ function admin(app: FastifyInstance, request: FastifyRequest, reply: FastifyRepl
   if (hasPermission(app.db, request.user!.id, 'integrations.manage')) return true;
   reply.code(403).send({ error: 'forbidden' }); return false;
 }
-function oauthConfig(options: { githubOAuth?: ConnectorOAuthConfig; linearOAuth?: ConnectorOAuthConfig }, provider: 'github' | 'linear'): ConnectorOAuthConfig | undefined {
-  const configured = provider === 'github' ? options.githubOAuth : options.linearOAuth;
+function oauthConfig(options: { githubOAuth?: ConnectorOAuthConfig; linearOAuth?: ConnectorOAuthConfig; slackOAuth?: ConnectorOAuthConfig }, provider: 'github' | 'linear' | 'slack'): ConnectorOAuthConfig | undefined {
+  const configured = provider === 'github' ? options.githubOAuth : provider === 'linear' ? options.linearOAuth : options.slackOAuth;
   if (configured) return configured;
-  const prefix = provider === 'github' ? 'GITHUB' : 'LINEAR';
+  const prefix = provider === 'github' ? 'GITHUB' : provider === 'linear' ? 'LINEAR' : 'SLACK';
   const clientId = process.env[`CREWLY_${prefix}_CLIENT_ID`];
   const clientSecret = process.env[`CREWLY_${prefix}_CLIENT_SECRET`];
   return clientId && clientSecret ? { clientId, clientSecret } : undefined;
@@ -29,7 +30,7 @@ function sendConnectorError(reply: FastifyReply, error: unknown): void {
   throw error;
 }
 
-export function registerConnectorRoutes(app: FastifyInstance, options: { fetchImpl?: typeof fetch; githubOAuth?: ConnectorOAuthConfig; linearOAuth?: ConnectorOAuthConfig } = {}): void {
+export function registerConnectorRoutes(app: FastifyInstance, options: { fetchImpl?: typeof fetch; githubOAuth?: ConnectorOAuthConfig; linearOAuth?: ConnectorOAuthConfig; slackOAuth?: ConnectorOAuthConfig } = {}): void {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   app.get('/api/v1/connectors/providers', { preHandler: requireAuth }, async (_request, reply) => {
     reply.send({ providers: CONNECTOR_PROVIDERS.map((provider) => ({ provider, label: PROVIDERS[provider].label, description: PROVIDERS[provider].description, capabilities: PROVIDERS[provider].capabilities, scopes: PROVIDERS[provider].scopes })) });
@@ -76,6 +77,37 @@ export function registerConnectorRoutes(app: FastifyInstance, options: { fetchIm
       if (profile.status !== 200 || !viewer?.id) throw new ConnectorOAuthError('Linear did not return a workspace account', 502);
       reply.code(201).send(connectConnector(app.db, pending.connector_id, { token, accountId: String(viewer.id), accountName: String(viewer.name ?? 'Linear'), accountUrl: typeof viewer.url === 'string' ? viewer.url : undefined, scopes: PROVIDERS.linear.scopes }, { type: 'user', id: request.user!.id }));
     } catch (error) { sendConnectorError(reply, error); }
+  });
+  app.post('/api/v1/connectors/oauth/slack/start', { preHandler: requireAuth }, async (request, reply) => {
+    if (!admin(app, request, reply)) return;
+    const config = oauthConfig(options, 'slack'); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured' }); return; }
+    const body = StartSchema.parse(request.body); const connectorId = randomUUID();
+    createPendingConnector(app.db, { id: connectorId, provider: 'slack', ownerUserId: request.user!.id }, { type: 'user', id: request.user!.id });
+    reply.send(startSlackAuthorization(app.db, { connectorId, userId: request.user!.id, callbackUrl: body.callbackUrl, scopes: body.scopes }, config));
+  });
+  app.post('/api/v1/connectors/oauth/slack/complete', { preHandler: requireAuth }, async (request, reply) => {
+    if (!admin(app, request, reply)) return;
+    const config = oauthConfig(options, 'slack'); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured' }); return; }
+    const body = CompleteSchema.parse(request.body);
+    try {
+      const pending = consumeConnectorState(app.db, { state: body.state, userId: request.user!.id });
+      if (pending.provider !== 'slack') throw new ConnectorOAuthError('this connection attempt is for another provider', 400);
+      const slack = await exchangeSlackCode({ code: body.code, redirectUri: pending.callback_url }, config, fetchImpl);
+      reply.code(201).send(connectConnector(app.db, pending.connector_id, { token: slack.token, accountId: slack.teamId, accountName: slack.teamName,
+        accountUrl: `https://app.slack.com/client/${slack.teamId}`, scopes: slack.scopes }, { type: 'user', id: request.user!.id }));
+    } catch (error) { sendConnectorError(reply, error); }
+  });
+  app.get('/api/v1/connectors/:id/slack/channels', { preHandler: requireAuth }, async (request, reply) => {
+    if (!admin(app, request, reply)) return;
+    try { reply.send({ channels: await previewSlackChannels(app.db, (request.params as { id: string }).id, fetchImpl) }); }
+    catch (error) { sendConnectorError(reply, error); }
+  });
+  app.post('/api/v1/connectors/:id/slack/import', { preHandler: requireAuth }, async (request, reply) => {
+    if (!admin(app, request, reply)) return;
+    const body = z.object({ channelIds: z.array(z.string().min(1)).min(1).max(100), historyLimit: z.number().int().min(0).max(100).default(0), importMembers: z.boolean().default(false) }).parse(request.body);
+    try { reply.code(201).send(await importSlackQuickStart(app.db, { connectorId: (request.params as { id: string }).id, ...body,
+      requestedBy: request.user!.id, role: request.user!.role === 'owner' ? 'owner' : 'admin' }, fetchImpl)); }
+    catch (error) { sendConnectorError(reply, error); }
   });
   app.post('/api/v1/connectors/:id/refresh', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request, reply)) return; const { id } = request.params as { id: string };

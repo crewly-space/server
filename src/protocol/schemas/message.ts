@@ -32,6 +32,13 @@ export const MessageSchema = z.object({
   body: z.string(),
   mentions: z.array(MentionRefSchema).default([]),
   replyToMessageId: z.string().min(1).nullable(),
+  threadRootId: z.string().min(1).nullable().optional(),
+  thread: z.object({
+    status: z.enum(['open', 'resolved', 'archived']),
+    replyCount: z.number().int().nonnegative(),
+    latestActivityAt: z.string().datetime(),
+    unread: z.boolean(),
+  }).nullable().optional(),
   createdAt: z.string().datetime(),
   attachments: z.array(AttachmentSchema).default([]),
 }).superRefine((message, context) => {

@@ -12,7 +12,7 @@ import type { ConnectionHub } from '../ws/hub.js';
 import { emitNotification } from '../notifications/service.js';
 import { getUserById, type Role } from '../users/repository.js';
 import { blockedAgentIds, canReadChannel, getChannel } from '../channels/repository.js';
-import { createMessage, listMessagesForConversation, ReplyNotInConversationError } from './repository.js';
+import { createMessage, getMessageThread, listMessagesForConversation, listThreadMessages, markThreadRead, openMessageThread, ReplyNotInConversationError, searchMessages, setThreadStatus } from './repository.js';
 import { AttachmentNotOwnedError, AttachmentValidationError, ATTACHMENT_MAX_COUNT_PER_MESSAGE } from '../attachments/service.js';
 import { decideAgentRouting } from './routing.js';
 import { dispatchAutomationEvent } from '../automations/service.js';
@@ -212,6 +212,68 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
       return;
     }
     const query = ListMessagesQuerySchema.parse(request.query);
-    reply.send(listMessagesForConversation(app.db, id, query.limit));
+    reply.send(listMessagesForConversation(app.db, id, query.limit, request.user!.id));
+  });
+
+  app.post('/api/v1/messages/:id/thread', { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const root = app.db.prepare('SELECT conversation_id FROM messages WHERE id = ? AND thread_root_id IS NULL').get(id) as { conversation_id: string } | undefined;
+      if (!root) { reply.code(404).send({ error: 'message_not_found' }); return; }
+      if (!isParticipant(app.db, root.conversation_id, request.user!.id, 'user') && !canReadChannel(app.db, root.conversation_id, request.user!.id)) {
+        reply.code(403).send({ error: 'not_a_participant' }); return;
+      }
+      const thread = openMessageThread(app.db, id, request.user!.id);
+      reply.code(201).send(thread);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'thread_root_not_found') { reply.code(404).send({ error: 'message_not_found' }); return; }
+      throw error;
+    }
+  });
+
+  app.get('/api/v1/threads/:rootId/messages', { preHandler: requireAuth }, async (request, reply) => {
+    const { rootId } = request.params as { rootId: string };
+    const thread = getMessageThread(app.db, rootId);
+    if (!thread) { reply.code(404).send({ error: 'thread_not_found' }); return; }
+    if (!isParticipant(app.db, thread.conversationId, request.user!.id, 'user') && !canReadChannel(app.db, thread.conversationId, request.user!.id)) {
+      reply.code(403).send({ error: 'not_a_participant' }); return;
+    }
+    markThreadRead(app.db, rootId, request.user!.id);
+    reply.send({ thread, messages: listThreadMessages(app.db, rootId, 200, request.user!.id) });
+  });
+
+  app.post('/api/v1/threads/:rootId/messages', { preHandler: requireAuth }, async (request, reply) => {
+    const { rootId } = request.params as { rootId: string };
+    const thread = getMessageThread(app.db, rootId);
+    if (!thread) { reply.code(404).send({ error: 'thread_not_found' }); return; }
+    if (thread.status !== 'open') { reply.code(409).send({ error: 'thread_closed' }); return; }
+    if (!isParticipant(app.db, thread.conversationId, request.user!.id, 'user')) { reply.code(403).send({ error: 'not_a_participant' }); return; }
+    const body = CreateMessageBodySchema.parse(request.body);
+    const message = createMessage(app.db, { conversationId: thread.conversationId, authorId: request.user!.id, authorType: 'user',
+      body: body.body, mentions: body.mentions, replyToMessageId: rootId, threadRootId: rootId, attachmentIds: body.attachmentIds });
+    markThreadRead(app.db, rootId, request.user!.id);
+    hub.publish(`conversation:${thread.conversationId}`, 'thread.message.created', { rootMessageId: rootId, message });
+    for (const mention of body.mentions.filter((entry) => entry.targetType === 'agent')) {
+      const agent = getAgent(app.db, mention.targetId);
+      if (!agent || !getProviderConfig(app.db, agent.modelPolicy.defaultProviderId)) continue;
+      void runAgentTurn({ db: app.db, hub, respond, queue: app.runQueue, onAgentChange: (changed) => app.agentStatus.refresh(changed) }, {
+        agentId: agent.id, conversationId: thread.conversationId, trigger: 'thread_message', triggerMessageId: message.id, threadRootId: rootId,
+      }).catch(() => undefined);
+    }
+    reply.code(201).send(message);
+  });
+
+  app.patch('/api/v1/threads/:rootId', { preHandler: requireAuth }, async (request, reply) => {
+    const { rootId } = request.params as { rootId: string };
+    const thread = getMessageThread(app.db, rootId);
+    if (!thread) { reply.code(404).send({ error: 'thread_not_found' }); return; }
+    if (!isParticipant(app.db, thread.conversationId, request.user!.id, 'user')) { reply.code(403).send({ error: 'not_a_participant' }); return; }
+    const body = z.object({ status: z.enum(['open', 'resolved', 'archived']) }).parse(request.body);
+    reply.send(setThreadStatus(app.db, rootId, body.status));
+  });
+
+  app.get('/api/v1/messages/search', { preHandler: requireAuth }, async (request, reply) => {
+    const query = z.object({ q: z.string().trim().min(1).max(200), limit: z.coerce.number().int().positive().max(100).default(50) }).parse(request.query);
+    reply.send({ messages: searchMessages(app.db, query.q, request.user!.id, query.limit) });
   });
 }

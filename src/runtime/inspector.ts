@@ -36,6 +36,14 @@ export interface RunTrace {
   providerCalls: ProviderCallRecord[];
   approvals: Array<{ id: string; action: string; status: string; createdAt: string; resolvedAt: string | null }>;
   runtimeSessions: Array<{ id: string; runtimeKind: string; workspacePath: string; status: string; updatedAt: string }>;
+  browserSessions: Array<{
+    id: string;
+    status: string;
+    pageCount: number;
+    createdAt: string;
+    closedAt: string | null;
+    actions: Array<{ id: string; action: string; url: string | null; status: string; artifactId: string | null; durationMs: number; createdAt: string }>;
+  }>;
   /** Every run in the same chain -- the root, and whatever it delegated -- oldest first. */
   tree: RunTreeNode[];
   /** Spend across the whole chain, so delegated work is visible where it was asked for. */
@@ -72,6 +80,27 @@ export function buildRunTrace(db: Database, run: AgentRun): RunTrace {
     .all(run.agentId, run.conversationId) as Array<{ id: string; runtime_kind: string; workspace_path: string; status: string; updated_at: string }>)
     .map((row) => ({ id: row.id, runtimeKind: row.runtime_kind, workspacePath: row.workspace_path, status: row.status, updatedAt: row.updated_at }));
 
+  const browserSessions = (db.prepare(
+    `SELECT id, status, page_count, created_at, closed_at FROM browser_sessions WHERE run_id = ? ORDER BY created_at`,
+  ).all(run.runId) as Array<{ id: string; status: string; page_count: number; created_at: string; closed_at: string | null }>).map((session) => ({
+    id: session.id,
+    status: session.status,
+    pageCount: session.page_count,
+    createdAt: session.created_at,
+    closedAt: session.closed_at,
+    actions: (db.prepare(
+      `SELECT id, action, url, status, artifact_id, duration_ms, created_at FROM browser_actions WHERE session_id = ? ORDER BY created_at`,
+    ).all(session.id) as Array<{ id: string; action: string; url: string | null; status: string; artifact_id: string | null; duration_ms: number; created_at: string }>).map((action) => ({
+      id: action.id,
+      action: action.action,
+      url: action.url,
+      status: action.status,
+      artifactId: action.artifact_id,
+      durationMs: action.duration_ms,
+      createdAt: action.created_at,
+    })),
+  }));
+
   const tree = listAgentRunsForRoot(db, run.rootRunId).map((node): RunTreeNode => ({
     runId: node.runId,
     causationId: node.causationId,
@@ -106,6 +135,7 @@ export function buildRunTrace(db: Database, run: AgentRun): RunTrace {
     providerCalls,
     approvals,
     runtimeSessions,
+    browserSessions,
     tree,
     treeCostMicros: cost,
   };

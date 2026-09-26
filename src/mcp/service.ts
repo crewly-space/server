@@ -10,6 +10,7 @@ import {
 } from '../secrets/vault.js';
 import { callMcpTool, discoverMcpTools, McpError, type McpClientOptions, type McpToolInfo, type McpTransportConfig } from './client.js';
 import { getMcpServer, listAgentTools, listMcpServers, recordDiscovery, type McpServerRecord } from './repository.js';
+import { authorizeCapabilityAction, type ExecutionCapability } from '../permissions/capabilities.js';
 
 /** What stands in for a literal credential when a server's config is shown. */
 export const REDACTED = '••••••';
@@ -99,7 +100,7 @@ export function exposedToolName(server: Pick<McpServerRecord, 'name'>, tool: str
  * someone acknowledges it again.
  */
 export function mcpToolset(db: Database, options: McpClientOptions): ToolsetProvider {
-  return (agent): AgentToolset | undefined => {
+  return (agent, input): AgentToolset | undefined => {
     const assignments = listAgentTools(db, agent.id);
     if (assignments.length === 0) return undefined;
     const servers = new Map<string, McpServerRecord | undefined>();
@@ -124,6 +125,21 @@ export function mcpToolset(db: Database, options: McpClientOptions): ToolsetProv
       async execute(call) {
         const entry = byName.get(call.name);
         if (!entry) return { content: `There is no tool called "${call.name}".`, isError: true };
+        if (input.run) {
+          const capabilityMap: Record<string, ExecutionCapability[]> = {
+            shell: ['process.execute'],
+            filesystem: ['filesystem.read', 'filesystem.write'],
+            network: ['network.access'],
+          };
+          const required = [...new Set(entry.server.capabilities.flatMap((capability) => capabilityMap[capability] ?? []))];
+          for (const capability of required) {
+            const authorization = authorizeCapabilityAction(db, { agentId: agent.id, runId: input.run.runId, capability,
+              action: `mcp.${entry.server.id}.${entry.tool.name}`, scope: { server: entry.server.id, tool: entry.tool.name }, target: call.input });
+            if (!authorization.allowed) return { content: authorization.reason === 'denied'
+              ? `${capability} is denied by this agent's policy.`
+              : `Approval required for ${entry.tool.name}. The exact call has been queued for an owner.`, isError: true };
+          }
+        }
         try {
           const result = await callMcpTool(resolveTransport(db, entry.server), entry.tool.name, call.input, options);
           return { content: result.text || '(no output)', isError: result.isError };

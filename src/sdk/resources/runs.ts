@@ -44,6 +44,14 @@ export interface RunTrace {
   providerCalls: ProviderCall[];
   approvals: Array<{ id: string; action: string; status: string; createdAt: string; resolvedAt: string | null }>;
   runtimeSessions: Array<{ id: string; runtimeKind: string; workspacePath: string; status: string; updatedAt: string }>;
+  browserSessions: Array<{
+    id: string;
+    status: string;
+    pageCount: number;
+    createdAt: string;
+    closedAt: string | null;
+    actions: Array<{ id: string; action: string; url: string | null; status: string; artifactId: string | null; durationMs: number; createdAt: string }>;
+  }>;
   tree: RunTreeNode[];
   treeCostMicros: number;
 }

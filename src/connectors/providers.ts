@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Database } from '../db/driver.js';
 
-export const CONNECTOR_PROVIDERS = ['github', 'linear'] as const;
+export const CONNECTOR_PROVIDERS = ['github', 'linear', 'slack'] as const;
 export type ConnectorProvider = typeof CONNECTOR_PROVIDERS[number];
 export const CONNECTOR_CAPABILITIES = [
   'read_profile',
@@ -11,6 +11,9 @@ export const CONNECTOR_CAPABILITIES = [
   'comment_on_pull_request',
   'read_projects',
   'comment_on_issue',
+  'read_channels',
+  'read_messages',
+  'post_messages',
 ] as const;
 export type ConnectorCapability = typeof CONNECTOR_CAPABILITIES[number];
 export const CONNECTOR_STATUSES = [
@@ -41,6 +44,13 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     description: 'Issues, projects and workflow updates through a Linear workspace connection.',
     capabilities: ['read_issues', 'read_projects', 'create_issue', 'comment_on_issue'],
     scopes: ['read', 'write'],
+  },
+  slack: {
+    provider: 'slack',
+    label: 'Slack',
+    description: 'Selected channels, messages, and optional QuickStart import from a Slack workspace.',
+    capabilities: ['read_profile', 'read_channels', 'read_messages', 'post_messages'],
+    scopes: ['team:read', 'channels:read', 'groups:read', 'channels:history', 'groups:history', 'chat:write', 'users:read', 'users:read.email'],
   },
 };
 
@@ -113,6 +123,28 @@ export function startLinearAuthorization(
   return { connectorId: input.connectorId, state, authorizeUrl: url.toString() };
 }
 
+export function startSlackAuthorization(
+  db: Database,
+  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  config: ConnectorOAuthConfig,
+): PendingConnectorAuthorization {
+  const state = base64Url(randomBytes(32));
+  const codeVerifier = base64Url(randomBytes(32));
+  const now = Date.now();
+  db.prepare('DELETE FROM connector_oauth_states WHERE expires_at <= ?').run(new Date(now).toISOString());
+  db.prepare(`INSERT INTO connector_oauth_states
+    (state, connector_id, provider, code_verifier, user_id, callback_url, created_at, expires_at)
+    VALUES (?, ?, 'slack', ?, ?, ?, ?, ?)`)
+    .run(state, input.connectorId, codeVerifier, input.userId, input.callbackUrl,
+      new Date(now).toISOString(), new Date(now + STATE_TTL_MS).toISOString());
+  const url = new URL('https://slack.com/oauth/v2/authorize');
+  url.searchParams.set('client_id', config.clientId);
+  url.searchParams.set('redirect_uri', input.callbackUrl);
+  url.searchParams.set('scope', (input.scopes ?? PROVIDERS.slack.scopes).join(','));
+  url.searchParams.set('state', state);
+  return { connectorId: input.connectorId, state, authorizeUrl: url.toString() };
+}
+
 interface OAuthStateRow {
   state: string; connector_id: string; provider: string; code_verifier: string;
   user_id: string; callback_url: string; expires_at: string;
@@ -168,6 +200,40 @@ export async function exchangeLinearCode(
   const body = await response.json().catch(() => ({})) as { access_token?: string; error_description?: string };
   if (!response.ok || !body.access_token) throw new ConnectorOAuthError(body.error_description ?? 'Linear rejected the authorization', 502);
   return body.access_token;
+}
+
+export async function exchangeSlackCode(
+  input: { code: string; redirectUri: string },
+  config: ConnectorOAuthConfig,
+  fetchImpl: typeof fetch,
+): Promise<{ token: string; teamId: string; teamName: string; scopes: string[] }> {
+  let response: Response;
+  try {
+    response = await fetchImpl('https://slack.com/api/oauth.v2.access', {
+      method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: input.redirectUri, code: input.code }),
+      redirect: 'error', signal: AbortSignal.timeout(10_000),
+    });
+  } catch { throw new ConnectorOAuthError('Slack could not be reached', 502); }
+  const body = await response.json().catch(() => ({})) as { ok?: boolean; access_token?: string; scope?: string; team?: { id?: string; name?: string }; error?: string };
+  if (!response.ok || !body.ok || !body.access_token || !body.team?.id) throw new ConnectorOAuthError(body.error ?? 'Slack rejected the authorization', 502);
+  return { token: body.access_token, teamId: body.team.id, teamName: body.team.name ?? 'Slack workspace', scopes: (body.scope ?? '').split(',').filter(Boolean) };
+}
+
+export async function slackRequest(
+  token: string,
+  method: string,
+  params: Record<string, string | number | boolean | undefined>,
+  fetchImpl: typeof fetch,
+): Promise<{ status: number; body: Record<string, unknown>; headers: Headers }> {
+  const url = new URL(`/api/${method}`, 'https://slack.com');
+  for (const [key, value] of Object.entries(params)) if (value !== undefined) url.searchParams.set(key, String(value));
+  let response: Response;
+  try {
+    response = await fetchImpl(url, { headers: { accept: 'application/json', authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.timeout(10_000) });
+  } catch { throw new ConnectorOAuthError('Slack could not be reached', 502); }
+  const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+  return { status: response.status, body, headers: response.headers };
 }
 
 export async function githubRequest(

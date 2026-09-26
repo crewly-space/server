@@ -52,8 +52,13 @@ import { registerAttachmentRoutes } from './attachments/routes.js';
 import { AttachmentStore, DEFAULT_ATTACHMENT_MAX_BYTES } from './attachments/service.js';
 import { artifactToolset } from './artifacts/service.js';
 import { registerPermissionRoutes } from './permissions/routes.js';
+import { registerCapabilityPolicyRoutes } from './permissions/capability-routes.js';
 import { registerAutomationRoutes } from './automations/routes.js';
 import { runDueSchedules } from './automations/service.js';
+import { registerFederationRoutes } from './federation/routes.js';
+import { browserToolset, FetchBrowserAdapter, type BrowserAdapter } from './browser/runtime.js';
+import { registerBrowserRoutes } from './browser/routes.js';
+import { registerRegistryRoutes } from './registry/routes.js';
 
 export interface BuildAppOptions {
   db: Database;
@@ -92,10 +97,14 @@ export interface BuildAppOptions {
   githubOAuth?: ConnectorOAuthConfig;
   /** Optional Linear OAuth app credentials for the first first-class connector. */
   linearOAuth?: ConnectorOAuthConfig;
+  /** Optional Slack OAuth app credentials for connector and QuickStart import. */
+  slackOAuth?: ConnectorOAuthConfig;
   /** Private filesystem path for uploaded attachment bytes. */
   attachmentDir?: string;
   /** Maximum decoded size of one uploaded attachment. */
   attachmentMaxBytes?: number;
+  /** Managed headless browser target. Defaults to an isolated fetch/DOM target. */
+  browserAdapter?: BrowserAdapter;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -200,9 +209,12 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     setupClaimToken: opts.setupClaimToken,
     onSetupComplete: opts.onSetupComplete,
     cloudHandoff: opts.cloudHandoff,
+    crewlyCloudUrl: opts.crewlyCloudUrl ?? DEFAULT_CREWLY_CLOUD_URL,
+    fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
   });
   registerUserRoutes(app);
   registerPermissionRoutes(app);
+  registerCapabilityPolicyRoutes(app);
   registerServerAdminRoutes(app, { version: serverVersion });
   registerCrewlyRoutes(app, {
     cloudUrl: opts.crewlyCloudUrl ?? DEFAULT_CREWLY_CLOUD_URL,
@@ -224,6 +236,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerConversationRoutes(app);
   registerChannelRoutes(app);
   registerWebhookRoutes(app, { publicUrl: opts.publicUrl });
+  registerFederationRoutes(app, { publicUrl: opts.publicUrl, fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis) });
   const gateway = opts.gateway ?? new AiGateway({
     db: opts.db,
     fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
@@ -249,9 +262,11 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     opts.attachmentDir ?? path.join(process.cwd(), '.crewly-attachments'),
     opts.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES,
   );
+  registerBrowserRoutes(app);
   registerMcpRoutes(app, mcpOptions);
   registerSkillSecretHooks();
   registerSkillRoutes(app);
+  registerRegistryRoutes(app, opts.fetchImpl ?? globalThis.fetch.bind(globalThis));
   const respond: RespondFn = opts.respond ?? createProviderRespond(opts.db, globalThis.fetch.bind(globalThis), deviceHub, {
     gateway,
     instructions: [skillInstructions(opts.db)],
@@ -259,6 +274,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       mcpToolset(opts.db, mcpOptions),
       connectorToolset(opts.db, opts.fetchImpl ?? globalThis.fetch.bind(globalThis)),
       artifactToolset({ db: opts.db, store: attachmentStore }),
+      browserToolset({ db: opts.db, adapter: opts.browserAdapter ?? new FetchBrowserAdapter(opts.fetchImpl ?? globalThis.fetch.bind(globalThis)), store: attachmentStore }),
       delegationToolset({
         db: opts.db,
         hub,
@@ -285,7 +301,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerMemoryFactRoutes(app);
   registerConversationSummaryRoutes(app);
   registerProviderRoutes(app, { fetchImpl: opts.fetchImpl });
-  registerConnectorRoutes(app, { fetchImpl: opts.fetchImpl, githubOAuth: opts.githubOAuth, linearOAuth: opts.linearOAuth });
+  registerConnectorRoutes(app, { fetchImpl: opts.fetchImpl, githubOAuth: opts.githubOAuth, linearOAuth: opts.linearOAuth, slackOAuth: opts.slackOAuth });
   registerAttachmentRoutes(app, {
     store: attachmentStore,
     directory: opts.attachmentDir ?? path.join(process.cwd(), '.crewly-attachments'),
