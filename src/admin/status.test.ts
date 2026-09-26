@@ -101,7 +101,8 @@ describe('what the dashboard can say about a running server', () => {
     expect(response.json()).toMatchObject({
       version: expect.any(String),
       uptimeSeconds: expect.any(Number),
-      usage: { users: 1, agents: 1, conversations: 1, messages: 1 },
+      // The DM above, and the #general every new server opens with.
+      usage: { users: 1, agents: 1, conversations: 2, messages: 1 },
       jobs: { pending: 0, failed: 0 },
     });
   });

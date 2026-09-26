@@ -1,6 +1,12 @@
 import type { ChatMessage, ChatRequest, ModelInfo, ProviderKind, ToolCall } from '../protocol/index.js';
+import { markToolFailure } from './capabilities.js';
 import { readRateLimitHeaders, type ProviderChatResult, type ProviderClient } from './client.js';
-import { errorForStatus, ProviderUnavailableError } from './errors.js';
+import {
+  errorForStatus,
+  ProviderInvalidResponseError,
+  ProviderModelsUnsupportedError,
+  ProviderUnavailableError,
+} from './errors.js';
 
 interface OpenAiToolCall {
   id: string;
@@ -28,7 +34,10 @@ interface OpenAiModelsResponseBody {
 export function toOpenAiMessages(messages: ChatMessage[]): Record<string, unknown>[] {
   return messages.map((message) => {
     if (message.role === 'tool') {
-      return { role: 'tool', tool_call_id: message.toolCallId, content: message.content };
+      // OpenAI-style APIs have no error flag on a tool result; without one in
+      // the text, a failure reads to the model like data it can report.
+      const content = message.isError ? markToolFailure(message.content) : message.content;
+      return { role: 'tool', tool_call_id: message.toolCallId, content };
     }
     if (message.role === 'assistant' && message.toolCalls?.length) {
       return {
@@ -61,7 +70,11 @@ export class OpenAICompatibleClient implements ProviderClient {
     private baseUrl: string,
     private apiKey: string,
     private fetchImpl: typeof fetch = fetch
-  ) {}
+  ) {
+    // A base URL saved with a trailing slash turned every path into `//models`,
+    // which some providers answer with a 404.
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
+  }
 
   async chat(request: ChatRequest): Promise<ProviderChatResult> {
     let response: Response;
@@ -119,14 +132,17 @@ export class OpenAICompatibleClient implements ProviderClient {
     };
   }
 
-  async listModels(): Promise<ModelInfo[]> {
+  async listModels(providerId: string = this.kind): Promise<ModelInfo[]> {
     let response: Response;
     try {
       response = await this.fetchImpl(`${this.baseUrl}/models`, {
-        headers: { Authorization: `Bearer ${this.apiKey}` },
+        headers: { Authorization: `Bearer ${this.apiKey}`, accept: 'application/json' },
       });
     } catch (err) {
       throw new ProviderUnavailableError(`${this.kind} models request failed: ${(err as Error).message}`);
+    }
+    if (response.status === 404 || response.status === 405) {
+      throw new ProviderModelsUnsupportedError(`${this.kind} has no model list (status ${response.status})`);
     }
     if (!response.ok) throw errorForStatus(this.kind, response);
     const body = (await response.json()) as OpenAiModelsResponseBody | OpenAiModelEntry[];

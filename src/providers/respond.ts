@@ -1,4 +1,4 @@
-import type { ChatMessage, Message, ToolCall, ToolDefinition } from '../protocol/index.js';
+import { AGENTD_BACKED_PROVIDER_KINDS, type ChatMessage, type Message, type ProviderKind, type ToolCall, type ToolDefinition } from '../protocol/index.js';
 import type { Agent } from '../protocol/index.js';
 import type { Database } from '../db/driver.js';
 import { getAgent } from '../agents/repository.js';
@@ -8,6 +8,19 @@ import { RunCancelledError, type RespondFn, type RespondInput, type TurnEvent } 
 import { AiGateway } from '../gateway/gateway.js';
 import { ProviderError } from './errors.js';
 import type { DeviceConnectionHub } from '../devices/hub.js';
+import { getProviderConfig } from './repository.js';
+import { capabilityInstructions } from './capabilities.js';
+
+/**
+ * Whether the provider this agent answers with can be handed tool
+ * definitions. Device-backed providers cannot: the gateway strips tools for
+ * them, so offering tools -- or describing them -- would promise the model
+ * something that never reaches it.
+ */
+function acceptsTools(db: Database, providerId: string): boolean {
+  const config = getProviderConfig(db, providerId);
+  return !config || !(AGENTD_BACKED_PROVIDER_KINDS as readonly ProviderKind[]).includes(config.kind);
+}
 
 function toChatMessages(agentId: string, recentMessages: Message[]): ChatMessage[] {
   return recentMessages.map((m) => ({
@@ -73,28 +86,6 @@ function mergeToolsets(toolsets: AgentToolset[]): AgentToolset | undefined {
   };
 }
 
-/**
- * The tool list is a security and truth boundary, not merely API metadata.
- * Keep this instruction in the same context as the model call so a provider
- * cannot infer capabilities from an old/global prompt or from a user claim.
- */
-function capabilityGrounding(tools: AgentToolset | undefined): string {
-  if (!tools) {
-    return [
-      'Capability grounding (authoritative): this run has no callable tools.',
-      'You cannot browse the web, inspect external sites, query network services, or perform external actions.',
-      'If asked what tools you have, say that no tools are available.',
-      'Never claim to have observed a tool result or completed an external action unless a successful tool result appears in this run.',
-    ].join(' ');
-  }
-  return [
-    'Capability grounding (authoritative): this run may call only the tools listed below.',
-    ...tools.definitions.map((tool) => `- ${tool.name}: ${tool.description || 'No additional description.'}`),
-    'Do not invent tool names or capabilities. Only describe an external result as observed after the corresponding tool returns it.',
-    'A tool result marked as an error means the action failed; do not turn it into a successful result.',
-  ].join('\n');
-}
-
 export function createProviderRespond(
   db: Database,
   fetchImpl: typeof fetch = fetch,
@@ -112,16 +103,20 @@ export function createProviderRespond(
       throw new ProviderError(`agent ${agentId} not found`);
     }
 
-    const toolsets = (await Promise.all(toolsetProviders.map((provide) => provide(agent, input))))
-      .filter((toolset): toolset is AgentToolset => Boolean(toolset?.definitions.length));
+    const toolsets = acceptsTools(db, agent.modelPolicy.defaultProviderId)
+      ? (await Promise.all(toolsetProviders.map((provide) => provide(agent, input))))
+        .filter((toolset): toolset is AgentToolset => Boolean(toolset?.definitions.length))
+      : [];
     const tools = mergeToolsets(toolsets);
 
     const facts = listMemoryFactsForAgent(db, agentId).slice(-20);
     const summary = getConversationSummary(db, conversationId);
     const context = [agent.personality && `Agent instructions: ${agent.personality}`,
       ...instructionProviders.map((provide) => provide(agent, input)),
-      capabilityGrounding(tools),
       tools?.instructions,
+      // Always last among the instructions: whatever the agent's own
+      // personality says it can do, this is what it can do on this run.
+      capabilityInstructions(tools?.definitions ?? []),
       facts.length && `Memory facts:\n${facts.map((f) => `- ${f.content}`).join('\n')}`,
       summary && `Conversation summary: ${summary.summary}`].filter(Boolean).join('\n\n');
     const messages: ChatMessage[] = context

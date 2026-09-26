@@ -75,6 +75,8 @@ export {
   type CreateUserInput,
   type DirectoryUser,
   type Invite,
+  type InvitePreview,
+  type InviteStatus,
   type UserAccount,
   type UserRole,
 } from './resources/users.js';

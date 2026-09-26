@@ -268,3 +268,22 @@ export function orderCategories(db: Database, ids: string[]): void {
   const update = db.prepare('UPDATE channel_categories SET position = ? WHERE id = ?');
   db.transaction(() => ids.forEach((id, index) => update.run(index, id)))();
 }
+
+/**
+ * A new server opens on a room to talk in. Without one, a fresh server's
+ * sidebar had no channel at all and the feature looked absent. Only ever the
+ * first channel: a server whose owner deleted #general does not get it back.
+ */
+export function ensureDefaultChannel(db: Database, owner: Reader): Channel | undefined {
+  const any = db.prepare("SELECT 1 FROM conversations WHERE kind = 'channel' LIMIT 1").get();
+  if (any) return undefined;
+  return createChannel(db, {
+    name: 'general',
+    topic: 'Company-wide conversation. Everyone on the server can read and post here.',
+    visibility: 'public',
+    postRole: 'member',
+    categoryId: null,
+    createdBy: owner.id,
+    members: [{ participantId: owner.id, participantType: 'user' }],
+  }, owner);
+}

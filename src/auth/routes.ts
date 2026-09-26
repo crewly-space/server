@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { countUsers, createUser, getUserByEmail, getUserById } from '../users/repository.js';
 import { requireAuth } from './middleware.js';
+import { ensureDefaultChannel } from '../channels/repository.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { createSession, revokeSession } from './session.js';
 import {
@@ -128,6 +129,7 @@ export function registerAuthRoutes(
       passwordHash: hashPassword(body.password),
       role: 'owner',
     });
+    ensureDefaultChannel(app.db, { id: user.id, role: 'owner' });
     const token = createSession(app.db, user.id);
     options.onSetupComplete?.();
     reply.code(201).send({ token, user: { id: user.id, email: user.email, role: user.role } });

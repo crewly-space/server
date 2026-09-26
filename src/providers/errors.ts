@@ -41,6 +41,14 @@ export class ProviderRateLimitError extends ProviderError {
 export class ProviderRequestError extends ProviderError {
   override readonly code: string = 'provider_bad_request';
 }
+/** The provider answered, but not in a shape Crewly can read. A bug on one side, not a transient outage. */
+export class ProviderInvalidResponseError extends ProviderError {
+  override readonly code: string = 'provider_invalid_response';
+}
+/** The provider has no model catalogue to ask: the endpoint does not exist there. */
+export class ProviderModelsUnsupportedError extends ProviderError {
+  override readonly code: string = 'provider_models_unsupported';
+}
 /** Nothing to call: the agent points at a provider that does not exist here. */
 export class ProviderNotConfiguredError extends ProviderError {
   override readonly code: string = 'provider_not_configured';
@@ -112,4 +120,44 @@ export function describeAgentFailure(error: unknown, agentName: string): Provide
     return { code: error.code, message: `${agentName} could not reply: ${error.message}.` };
   }
   return { code: 'agent_run_failed', message: `${agentName} could not reply because of an unexpected error.` };
+}
+
+/**
+ * Why a model list could not be had, in words that name the next step. The
+ * picker shows this instead of dropping straight to a raw model-id field.
+ */
+export function describeModelListFailure(error: unknown): ProviderFailure & { retryable: boolean } {
+  if (error instanceof ProviderSignInExpiredError) {
+    return { code: error.code, retryable: true,
+      message: 'The sign-in on the paired device has expired. Sign in again there, then retry.' };
+  }
+  if (error instanceof ProviderDeviceMissingError) {
+    return { code: error.code, retryable: true,
+      message: 'No connected device offers this provider. Start or pair one, then retry.' };
+  }
+  if (error instanceof ProviderRuntimeMissingError) {
+    return { code: error.code, retryable: true,
+      message: 'The paired device is missing what this provider runs on. Install it there, then retry.' };
+  }
+  if (error instanceof ProviderAuthError) {
+    return { code: error.code, retryable: false,
+      message: 'The provider rejected its API key. Update the key in Settings → Providers, then retry.' };
+  }
+  if (error instanceof ProviderRateLimitError) {
+    return { code: error.code, retryable: true, message: 'The provider is rate limiting requests. Try again in a moment.' };
+  }
+  if (error instanceof ProviderModelsUnsupportedError) {
+    return { code: error.code, retryable: false, message: 'This provider does not publish a model list. Enter the model ID it documents.' };
+  }
+  if (error instanceof ProviderInvalidResponseError) {
+    return { code: error.code, retryable: true, message: 'The provider answered with a model list Crewly could not read.' };
+  }
+  if (error instanceof ProviderNotConfiguredError) {
+    return { code: error.code, retryable: false, message: 'This provider is not fully configured. Check its settings.' };
+  }
+  if (error instanceof ProviderUnavailableError) {
+    return { code: error.code, retryable: true, message: 'The provider could not be reached. Check its settings and your connection, then retry.' };
+  }
+  if (error instanceof ProviderError) return { code: error.code, retryable: error.retryable, message: error.message };
+  return { code: 'provider_models_failed', retryable: true, message: 'The model list could not be loaded because of an unexpected error.' };
 }

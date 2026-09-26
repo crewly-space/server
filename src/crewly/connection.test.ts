@@ -40,6 +40,7 @@ class FakeCrewly {
       this.credential = 'crewly_inst_one';
       return json(201, { instance: instance(), credential: this.credential });
     }
+    if (this.deleted && url.pathname.startsWith('/api/v1/instance')) return json(404, { error: 'Instance not found' });
     if (!this.credential || auth !== `Bearer ${this.credential}`) return json(401, { error: 'Instance credential is not valid' });
     if (url.pathname === '/api/v1/instance' && method === 'GET') return json(200, { instance: instance() });
     if (url.pathname === '/api/v1/instance' && method === 'DELETE') {
@@ -57,6 +58,9 @@ class FakeCrewly {
   revoke(): void {
     this.credential = null;
   }
+
+  /** The instance was deleted in Crewly: every instance call now answers 404. */
+  deleted = false;
 }
 
 describe('Connect Crewly', () => {
@@ -144,6 +148,19 @@ describe('Connect Crewly', () => {
     expect(refreshed.json()).toMatchObject({ status: 'revoked', scopes: [] });
     expect(crewlyServiceCredential(db, 'mail:send')).toBeUndefined();
     expect(db.prepare('SELECT credential_ciphertext FROM crewly_connection').pluck().get()).toBeNull();
+  });
+
+  it('treats an instance deleted in Crewly as a stale link to reconnect, not an error', async () => {
+    await connect();
+    crewly.deleted = true;
+    const refreshed = await app.inject({ method: 'POST', url: '/api/v1/server/crewly/refresh', headers: owner });
+    expect(refreshed.statusCode).toBe(200);
+    expect(refreshed.json()).toMatchObject({ status: 'revoked', scopes: [] });
+    expect(crewlyServiceCredential(db, 'mail:send')).toBeUndefined();
+    // The stale local record can then be removed outright.
+    const removed = await app.inject({ method: 'DELETE', url: '/api/v1/server/crewly', headers: owner });
+    expect(removed.statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/v1/server/crewly', headers: owner })).json().status).toBe('disconnected');
   });
 
   it('disconnects locally even when Crewly cannot be reached, and touches nothing else', async () => {

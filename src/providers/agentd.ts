@@ -31,12 +31,12 @@ export class AgentdBackedProviderClient implements ProviderClient {
     }
   }
 
-  async listModels(): Promise<ModelInfo[]> {
+  async listModels(providerId: string = this.providerId): Promise<ModelInfo[]> {
     try {
       const result = await this.hub.request(this.deviceId(), 'provider.models', {
         kind: this.kind, providerId: this.providerId,
       });
-      return ModelInfoSchema.array().parse(result.models);
+      return ModelInfoSchema.array().parse(result.models).map((model) => ({ ...model, providerId }));
     } catch (error) {
       throw providerUnavailable(this.kind, error);
     }

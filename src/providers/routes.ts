@@ -22,7 +22,7 @@ import {
 import { resolveProviderClient } from './registry.js';
 import { providerHealth } from '../gateway/health.js';
 import { enableOnDevices } from './device-enable.js';
-import { ProviderError } from './errors.js';
+import { describeModelListFailure } from './errors.js';
 
 function isAgentdBackedKind(kind: ProviderKind): boolean {
   return (AGENTD_BACKED_PROVIDER_KINDS as readonly ProviderKind[]).includes(kind);
@@ -258,6 +258,10 @@ export function registerProviderRoutes(
     reply.code(204).send();
   });
 
+  // Resolved per call rather than captured, so a fetch swapped in after the
+  // app is built (tests do this) is the one used.
+  const modelFetch: typeof fetch = (input, init) => (options.fetchImpl ?? globalThis.fetch)(input, init);
+
   app.get('/api/v1/providers/:id/models', { preHandler: requireAuth }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const config = getProviderConfig(app.db, id);
@@ -265,22 +269,23 @@ export function registerProviderRoutes(
       reply.code(404).send({ error: 'provider_not_found' });
       return;
     }
+    const started = Date.now();
     try {
-      const client = resolveProviderClient(config, globalThis.fetch.bind(globalThis), {
+      const client = resolveProviderClient(config, modelFetch, {
         db: app.db, hub: app.deviceHub, ownerUserId: request.user!.id,
       });
-      reply.send(await client.listModels());
+      const models = await client.listModels(config.id);
+      reply.send([...models].sort((a, b) => a.displayName.localeCompare(b.displayName)));
     } catch (err) {
-      const code = err instanceof ProviderError ? err.code : 'provider_unavailable';
-      const message = code === 'provider_auth_failed'
-        ? `${config.kind} rejected its credential. Check the provider in Settings.`
-        : code === 'provider_rate_limited'
-          ? `${config.kind} is rate limiting model discovery. Try again in a moment.`
-          : code === 'provider_bad_request'
-            ? `${config.kind} refused model discovery. Check its base URL and credentials.`
-            : `Could not reach ${config.kind} to list models. Try again or use a custom model ID.`;
-      request.log.warn({ providerId: id, providerKind: config.kind, errorCode: code }, 'provider model discovery failed');
-      reply.code(502).send({ error: code, message });
+      const failure = describeModelListFailure(err);
+      request.log.warn({
+        providerId: config.id,
+        providerKind: config.kind,
+        code: failure.code,
+        durationMs: Date.now() - started,
+        detail: (err as Error)?.message,
+      }, 'provider model discovery failed');
+      reply.code(502).send({ error: failure.code, message: failure.message, retryable: failure.retryable });
     }
   });
 }

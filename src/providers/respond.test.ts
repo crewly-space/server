@@ -235,6 +235,96 @@ describe('createProviderRespond', () => {
     db.close();
   });
 
+  describe('grounding the agent in the tools it really has (CRE-107)', () => {
+    const captureSystem = (bodies: Array<{ system?: string; tools?: unknown[] }>, replies: unknown[]) =>
+      (async (_url: string, init: RequestInit) => {
+        bodies.push(JSON.parse(String(init.body)));
+        return jsonResponse(replies.shift() ?? successBody);
+      }) as unknown as typeof fetch;
+
+    it('tells an agent with no tools that it cannot browse, and offers it none', async () => {
+      const { db, agent } = freshSetup();
+      createProviderConfig(db, { id: 'primary', kind: 'anthropic', apiKey: 'sk-test' });
+      const bodies: Array<{ system?: string; tools?: unknown[] }> = [];
+      await createProviderRespond(db, captureSystem(bodies, []))({ agentId: agent.id, conversationId: 'c', recentMessages: [] });
+      expect(bodies[0]!.tools).toBeUndefined();
+      expect(bodies[0]!.system).toContain('you have no tools');
+      expect(bodies[0]!.system).toContain('cannot browse the web');
+      expect(bodies[0]!.system).toMatch(/current date and time is \d{4}-\d{2}-\d{2}T/);
+      db.close();
+    });
+
+    it('lists exactly the tools this run offers, and no global ones', async () => {
+      const { db, agent } = freshSetup();
+      createProviderConfig(db, { id: 'primary', kind: 'anthropic', apiKey: 'sk-test' });
+      const bodies: Array<{ system?: string; tools?: Array<{ name: string }> }> = [];
+      const respond = createProviderRespond(db, captureSystem(bodies, []), undefined, {
+        toolsets: [
+          () => ({
+            definitions: [{ name: 'github__search_issues', description: 'Search issues in a repository.\nMore detail.', inputSchema: { type: 'object' } }],
+            execute: async () => ({ content: '[]' }),
+          }),
+          // A provider with nothing for this agent contributes nothing, not an empty mention.
+          () => undefined,
+        ],
+      });
+      await respond({ agentId: agent.id, conversationId: 'c', recentMessages: [] });
+      expect(bodies[0]!.tools!.map((tool) => tool.name)).toEqual(['github__search_issues']);
+      expect(bodies[0]!.system).toContain('exactly this tool, and no others');
+      expect(bodies[0]!.system).toContain('- github__search_issues: Search issues in a repository.');
+      expect(bodies[0]!.system).not.toContain('More detail.');
+      expect(bodies[0]!.system).not.toContain('you have no tools');
+      db.close();
+    });
+
+    it('hands a failed tool call back as a failure the model cannot mistake for a result', async () => {
+      const { db, agent } = freshSetup();
+      createProviderConfig(db, { id: 'primary', kind: 'openai', apiKey: 'sk-test' });
+      const bodies: Array<{ messages: Array<{ role: string; content: string | null }> }> = [];
+      const replies = [
+        { choices: [{ message: { content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'fetch_page', arguments: '{"url":"https://time.is"}' } }] }, finish_reason: 'tool_calls' }] },
+        { choices: [{ message: { content: 'I could not load that page.' }, finish_reason: 'stop' }] },
+      ];
+      const fetchImpl = (async (_url: string, init: RequestInit) => {
+        bodies.push(JSON.parse(String(init.body)));
+        return jsonResponse(replies.shift());
+      }) as unknown as typeof fetch;
+      const traced: Array<{ type: string; status?: string }> = [];
+      const respond = createProviderRespond(db, fetchImpl, undefined, {
+        toolsets: [() => ({
+          definitions: [{ name: 'fetch_page', description: 'Fetch a web page.', inputSchema: { type: 'object' } }],
+          execute: async () => { throw new Error('network egress denied by policy'); },
+        })],
+      });
+      const result = await respond({
+        agentId: agent.id, conversationId: 'c', recentMessages: [],
+        onEvent: (event) => traced.push(event as { type: string; status?: string }),
+      });
+      expect(result.body).toBe('I could not load that page.');
+      const toolMessage = bodies[1]!.messages.find((message) => message.role === 'tool')!;
+      expect(toolMessage.content).toMatch(/^\[tool call failed\] The tool failed: network egress denied by policy/);
+      // The trace records the call that actually happened, and that it failed.
+      expect(traced.filter((event) => event.type === 'tool.call')).toEqual([expect.objectContaining({ status: 'error' })]);
+      db.close();
+    });
+
+    it('offers no tools, and describes none, to a provider that cannot take them', async () => {
+      const { db, agent } = freshSetup();
+      createProviderConfig(db, { id: 'primary', kind: 'ollama' });
+      let asked = false;
+      const respond = createProviderRespond(db, (async () => jsonResponse(successBody)) as unknown as typeof fetch, undefined, {
+        toolsets: [() => {
+          asked = true;
+          return { definitions: [{ name: 'lookup', description: 'Look up', inputSchema: { type: 'object' } }], execute: async () => ({ content: '' }) };
+        }],
+      });
+      // No paired device here, so the call itself fails; what matters is what it would have been told.
+      await expect(respond({ agentId: agent.id, conversationId: 'c', recentMessages: [] })).rejects.toThrow();
+      expect(asked).toBe(false);
+      db.close();
+    });
+  });
+
   it('stops before the next model call once its run has been cancelled', async () => {
     const { db, agent } = freshSetup();
     createProviderConfig(db, { id: 'primary', kind: 'anthropic', apiKey: 'sk-test' });

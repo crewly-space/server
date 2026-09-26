@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { OpenAICompatibleClient } from './openai-compatible.js';
-import { ProviderAuthError, ProviderRateLimitError, ProviderUnavailableError } from './errors.js';
+import {
+  ProviderAuthError,
+  ProviderInvalidResponseError,
+  ProviderModelsUnsupportedError,
+  ProviderRateLimitError,
+  ProviderUnavailableError,
+} from './errors.js';
 
 describe('OpenAICompatibleClient', () => {
   it('sends the request and maps a successful chat response', async () => {

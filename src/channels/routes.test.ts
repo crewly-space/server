@@ -29,6 +29,9 @@ describe('channel routes', () => {
     });
     owner = setup.json().token;
     ownerId = setup.json().user.id;
+    // Setup opens #general; these tests build their own channels from nothing.
+    db.prepare("DELETE FROM conversation_participants WHERE conversation_id IN (SELECT id FROM conversations WHERE kind = 'channel')").run();
+    db.prepare("DELETE FROM conversations WHERE kind = 'channel'").run();
     const bob = createUser(db, { email: 'bob@example.com', displayName: 'Bob', passwordHash: 'x', role: 'member' });
     memberId = bob.id;
     member = createSession(db, bob.id);

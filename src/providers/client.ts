@@ -16,7 +16,8 @@ export type ProviderChatResult = ChatResponse & { rateLimit?: RateLimitSnapshot 
 export interface ProviderClient {
   readonly kind: ProviderKind;
   chat(request: ChatRequest): Promise<ProviderChatResult>;
-  listModels(): Promise<ModelInfo[]>;
+  /** `providerId` is the configured connection's id, stamped on every model returned. */
+  listModels(providerId?: string): Promise<ModelInfo[]>;
 }
 
 function numberHeader(headers: Headers, ...names: string[]): number | undefined {
