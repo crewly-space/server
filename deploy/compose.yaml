@@ -1,6 +1,6 @@
 services:
   crewly:
-    image: ghcr.io/crewly-space/server:${CREWLY_VERSION:-latest}
+    image: ${CREWLY_SERVER_IMAGE:-ghcr.io/crewly-space/server:v0.1.2}
     container_name: crewly
     restart: unless-stopped
     ports:

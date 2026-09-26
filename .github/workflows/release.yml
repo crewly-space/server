@@ -125,10 +125,16 @@ jobs:
         env:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
+          set -u
+          archive="deploy/dist/crewly-server-container_${TAG}.tar.gz"
+          docker save "$IMAGE:$TAG" | gzip -9 > "$archive"
+          (cd deploy/dist && sha256sum "$(basename "$archive")" >> checksums.txt)
+          (cd deploy/dist && sha256sum --check --strict --ignore-missing checksums.txt)
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker push "$IMAGE:$TAG"
           docker tag "$IMAGE:$TAG" "$IMAGE:latest"
-          docker push "$IMAGE:latest"
+          if ! docker push "$IMAGE:$TAG" || ! docker push "$IMAGE:latest"; then
+            echo "::warning::GHCR publication was denied. The verified container archive remains available on the GitHub release."
+          fi
 
       - name: Publish
         env:
