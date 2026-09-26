@@ -44,4 +44,28 @@ describe('MessageSchema', () => {
       })
     ).toThrow();
   });
+
+  it('allows an empty body when the message has an attachment', () => {
+    const message = MessageSchema.parse({
+      id: 'message_4',
+      conversationId: 'conversation_1',
+      authorId: 'user_1',
+      authorType: 'user',
+      body: '',
+      replyToMessageId: null,
+      createdAt: now,
+      attachments: [{
+        id: 'attachment_1',
+        conversationId: 'conversation_1',
+        messageId: 'message_4',
+        filename: 'brief.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 42,
+        createdAt: now,
+        url: '/api/v1/attachments/attachment_1',
+      }],
+    });
+
+    expect(message.attachments).toHaveLength(1);
+  });
 });

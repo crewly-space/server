@@ -34,5 +34,9 @@ export const MessageSchema = z.object({
   replyToMessageId: z.string().min(1).nullable(),
   createdAt: z.string().datetime(),
   attachments: z.array(AttachmentSchema).default([]),
+}).superRefine((message, context) => {
+  if (message.body.trim().length === 0 && message.attachments.length === 0) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['body'], message: 'message needs text or an attachment' });
+  }
 });
 export type Message = z.infer<typeof MessageSchema>;
