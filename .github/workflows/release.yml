@@ -126,7 +126,7 @@ jobs:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -u
-          archive="deploy/dist/crewly-server-container_${TAG}.tar.gz"
+          archive="deploy/dist/crewly-server_container_${TAG}.tar.gz"
           docker save "$IMAGE:$TAG" | gzip -9 > "$archive"
           (cd deploy/dist && sha256sum "$(basename "$archive")" >> checksums.txt)
           (cd deploy/dist && sha256sum --check --strict --ignore-missing checksums.txt)
@@ -141,15 +141,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          gh release create "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Crewly Server $TAG" \
-            --generate-notes \
-            --verify-tag \
-            deploy/dist/crewly-server_* \
-            deploy/dist/checksums.txt \
-            deploy/install.sh \
-            deploy/install.ps1 \
-            deploy/compose.yaml \
-            deploy/compose.proxy.yaml \
+          assets=(
+            deploy/dist/crewly-server_*
+            deploy/dist/checksums.txt
+            deploy/install.sh
+            deploy/install.ps1
+            deploy/compose.yaml
+            deploy/compose.proxy.yaml
             deploy/Caddyfile
+          )
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
+          else
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Crewly Server $TAG" \
+              --generate-notes \
+              --verify-tag \
+              "${assets[@]}"
+          fi
