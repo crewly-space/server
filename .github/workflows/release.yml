@@ -33,6 +33,11 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Verify release version
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: test "$TAG" = "v$(node -p "require('./package.json').version")"
+
       - name: Test before publishing
         run: |
           npm run typecheck
@@ -53,6 +58,23 @@ jobs:
 
       - name: Cross-compile the server
         run: bun run scripts/build-binary.ts
+
+      # Building an executable is not enough: an older Bun on PATH previously
+      # produced archives that compiled successfully but crashed before parsing
+      # flags because the embedded runtime could not resolve node:sqlite.
+      - name: Smoke-test the native server executable
+        run: |
+          ./dist-binary/crewly_linux_amd64/crewly-server --help
+          data_dir=$(mktemp -d)
+          ./dist-binary/crewly_linux_amd64/crewly-server \
+            --host 127.0.0.1 --port 18787 --data-dir "$data_dir" --log-level silent &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; rm -rf "$data_dir"' EXIT
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:18787/readyz >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:18787/readyz
 
       - name: Package every platform
         run: |

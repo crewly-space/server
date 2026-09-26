@@ -60,9 +60,12 @@ let failed = false;
 for (const { target, asset, binary } of selected) {
   const outfile = join(OUT_DIR, asset, binary);
   process.stdout.write(`  building ${target.padEnd(18)} `);
+  // Use the Bun runtime executing this script. Calling a bare `bun` can pick
+  // up an older binary elsewhere on PATH, producing an executable with a
+  // different embedded runtime (and, historically, no `node:sqlite`).
   const child = Bun.spawn(
     [
-      'bun',
+      process.execPath,
       'build',
       join(ROOT, 'src', 'index.ts'),
       '--compile',

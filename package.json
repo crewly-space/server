@@ -1,6 +1,6 @@
 {
   "name": "crewly-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -16,7 +16,7 @@
     "fetch:app": "node scripts/fetch-app.mjs"
   },
   "dependencies": {
-    "@fastify/static": "^10.1.3",
+    "@fastify/static": "10.1.3",
     "@fastify/websocket": "^11.0.1",
     "fastify": "^5.1.0",
     "zod": "^3.23.8"
