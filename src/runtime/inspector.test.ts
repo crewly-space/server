@@ -103,7 +103,7 @@ describe('run inspector', () => {
     });
     expect(trace.summary.durationMs).toBeGreaterThanOrEqual(0);
     expect(trace.events.map((e: { type: string }) => e.type)).toEqual([
-      'run.started', 'provider.call', 'provider.retry', 'provider.call', 'run.completed',
+      'run.started', 'routing.decision', 'provider.call', 'provider.retry', 'provider.call', 'run.completed',
     ]);
     expect(trace.tree).toMatchObject([{ runId: trace.run.runId, agentName: 'Helper', status: 'completed' }]);
 

@@ -255,7 +255,7 @@ describe('MCP routes and agent tools', () => {
     });
     for (let i = 0; i < 200 && sent.length < 2; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(sent[0]!.tools?.map((tool) => tool.name)).toEqual(['mcp_echo_whoami']);
+    expect(sent[0]!.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['mcp_echo_whoami', 'create_artifact']));
     expect(JSON.stringify(sent[1]!.messages.at(-1))).toContain('tok-from-vault');
     // The vault knows who read it.
     expect(db.prepare("SELECT actor_type FROM secret_audit WHERE action = 'accessed'").pluck().all()).toContain('mcp_server');

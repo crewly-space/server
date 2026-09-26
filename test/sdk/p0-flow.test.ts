@@ -67,7 +67,9 @@ it('P0 clean setup → provider-backed DM → persisted WS reply → new client 
   const reply = await delivered;
   expect(reply.body).toBe('Hello from the real provider path');
   expect(providerInput?.model).toBe('test-model');
-  expect(providerInput?.messages[0]).toEqual({ role: 'system', content: 'Agent instructions: Be concise.' });
+  expect(providerInput?.messages[0]).toMatchObject({ role: 'system' });
+  expect(providerInput?.messages[0]?.content).toContain('Agent instructions: Be concise.');
+  expect(providerInput?.messages[0]?.content).toContain('Capability grounding (authoritative)');
   expect(providerInput?.messages.at(-1)).toEqual({ role: 'user', content: 'Hello' });
   expect(db.prepare('SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ?').get(dm.id)).toEqual({ n: 2 });
   ws.close();
