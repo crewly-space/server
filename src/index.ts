@@ -13,7 +13,7 @@ import { pruneOperationalData } from './maintenance.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {

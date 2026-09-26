@@ -16,6 +16,10 @@ on:
 
 permissions:
   contents: write
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   release:
@@ -102,10 +106,12 @@ jobs:
       # nothing on a clean checkout and the build failed for everyone but the
       # machine that had run fetch:app.
       - name: Build the container image
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          docker build -f deploy/Dockerfile -t crewly-server:${{ github.event.inputs.tag || github.ref_name }} .
+          docker build -f deploy/Dockerfile -t "$IMAGE:$TAG" .
           docker run --rm -d --name smoke -e CREWLY_HOST=0.0.0.0 -p 8787:8787 \
-            crewly-server:${{ github.event.inputs.tag || github.ref_name }}
+            "$IMAGE:$TAG"
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:8787/readyz >/dev/null && break
             sleep 2
@@ -114,6 +120,15 @@ jobs:
           curl -sf -o /dev/null -w "app: %{http_code}\n" http://127.0.0.1:8787/
           docker logs smoke | tail -5
           docker stop smoke
+
+      - name: Publish the server container
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$IMAGE:$TAG"
+          docker tag "$IMAGE:$TAG" "$IMAGE:latest"
+          docker push "$IMAGE:latest"
 
       - name: Publish
         env:

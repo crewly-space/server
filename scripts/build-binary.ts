@@ -15,6 +15,12 @@
 import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
+const [bunMajor, bunMinor] = Bun.version.split('.').map(Number);
+if (bunMajor < 1 || (bunMajor === 1 && bunMinor < 4)) {
+  console.error(`Bun 1.4 or newer is required to build release binaries (found ${Bun.version})`);
+  process.exit(1);
+}
+
 interface Target {
   /** Bun's --target triple. */
   target: string;
