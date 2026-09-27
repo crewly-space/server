@@ -136,6 +136,29 @@ jobs:
             echo "::warning::GHCR publication was denied. The verified container archive remains available on the GitHub release."
           fi
 
+      # The CLI refuses a server release unless checksums.txt carries a valid
+      # Ed25519 signature from the key it embeds (RELEASE_PUBLIC_KEY in the
+      # CLI's src/server-install.ts). This runs after the container archive is
+      # appended, so the signature covers the final listing. See RELEASING.md.
+      - name: Sign the checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        working-directory: deploy/dist
+        run: |
+          set -eu
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::error::RELEASE_SIGNING_KEY is not set; the CLI refuses an unsigned release"
+            exit 1
+          fi
+          key=$(mktemp)
+          pub=$(mktemp)
+          trap 'rm -f "$key" "$pub"' EXIT
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key"
+          openssl pkeyutl -sign -rawin -inkey "$key" -in checksums.txt -out checksums.txt.sig
+          openssl pkey -in "$key" -pubout -out "$pub"
+          openssl pkeyutl -verify -rawin -pubin -inkey "$pub" -in checksums.txt -sigfile checksums.txt.sig
+          echo "Signed with public key: $(openssl pkey -pubin -in "$pub" -outform DER | tail -c 32 | base64)"
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -144,6 +167,7 @@ jobs:
           assets=(
             deploy/dist/crewly-server_*
             deploy/dist/checksums.txt
+            deploy/dist/checksums.txt.sig
             deploy/install.sh
             deploy/install.ps1
             deploy/compose.yaml
