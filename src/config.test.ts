@@ -54,11 +54,14 @@ describe('loadConfig', () => {
   });
 
   it('reads an outbound mail provider from CREWLY_MAIL_*, and refuses half of one', () => {
-    expect(loadConfig({}, []).mail).toBeUndefined();
-    expect(loadConfig({ CREWLY_MAIL_PROVIDER: 'resend', CREWLY_MAIL_API_KEY: 're_x', CREWLY_MAIL_FROM: 'Crewly <a@example.com>' }, []).mail)
+    // An empty data directory, so a developer's own data/.env cannot leak in.
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-config-'));
+    expect(loadConfig({ CREWLY_DATA_DIR: dataDir }, []).mail).toBeUndefined();
+    expect(loadConfig({ CREWLY_DATA_DIR: dataDir, CREWLY_MAIL_PROVIDER: 'resend', CREWLY_MAIL_API_KEY: 're_x', CREWLY_MAIL_FROM: 'Crewly <a@example.com>' }, []).mail)
       .toEqual({ provider: 'resend', apiKey: 're_x', fromAddress: 'Crewly <a@example.com>' });
-    expect(() => loadConfig({ CREWLY_MAIL_PROVIDER: 'resend', CREWLY_MAIL_API_KEY: 're_x' }, [])).toThrow(/CREWLY_MAIL_FROM/);
-    expect(() => loadConfig({ CREWLY_MAIL_PROVIDER: 'smtp', CREWLY_MAIL_API_KEY: 'x', CREWLY_MAIL_FROM: 'a@example.com' }, [])).toThrow(/resend or postmark/);
+    expect(() => loadConfig({ CREWLY_DATA_DIR: dataDir, CREWLY_MAIL_PROVIDER: 'resend', CREWLY_MAIL_API_KEY: 're_x' }, [])).toThrow(/CREWLY_MAIL_FROM/);
+    expect(() => loadConfig({ CREWLY_DATA_DIR: dataDir, CREWLY_MAIL_PROVIDER: 'smtp', CREWLY_MAIL_API_KEY: 'x', CREWLY_MAIL_FROM: 'a@example.com' }, [])).toThrow(/resend or postmark/);
+    fs.rmSync(dataDir, { recursive: true, force: true });
   });
 });
 
