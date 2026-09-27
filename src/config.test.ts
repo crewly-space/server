@@ -25,7 +25,7 @@ describe('loadConfig', () => {
     );
     expect(config.port).toBe(6060);
     expect(config.host).toBe('127.0.0.2');
-    expect(config.trustProxy).toBe(true);
+    expect(config.trustProxy).toEqual(['127.0.0.1', '::1']);
   });
 
   it('loads .env from the selected data directory without overriding process env', () => {
@@ -33,8 +33,14 @@ describe('loadConfig', () => {
     fs.writeFileSync(path.join(dataDir, '.env'), 'CREWLY_PORT=9090\nCREWLY_TRUST_PROXY=yes\n');
     const config = loadConfig({ CREWLY_DATA_DIR: dataDir, CREWLY_PORT: '7070' }, []);
     expect(config.port).toBe(7070);
-    expect(config.trustProxy).toBe(true);
+    expect(config.trustProxy).toEqual(['127.0.0.1', '::1']);
     fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('trusts forwarding headers only from the proxies it is given', () => {
+    expect(loadConfig({}, []).trustProxy).toBe(false);
+    expect(loadConfig({ CREWLY_TRUST_PROXY: '172.17.0.1, 10.0.0.0/8' }, []).trustProxy).toEqual(['172.17.0.1', '10.0.0.0/8']);
+    expect(() => loadConfig({ CREWLY_TRUST_PROXY: 'everyone' }, [])).toThrow(/CREWLY_TRUST_PROXY/);
   });
 
   it('rejects unknown options', () => {

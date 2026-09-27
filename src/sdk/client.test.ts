@@ -29,6 +29,7 @@ describe('CrewlyClient', () => {
 
   it('ws() returns a fresh WsClient sharing the same base URL', () => {
     class FakeWebSocket {
+      send(): void {}
       constructor(public url: string) {}
       close(): void {}
     }

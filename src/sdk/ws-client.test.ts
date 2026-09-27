@@ -9,6 +9,7 @@ class FakeWebSocket {
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
   closed = false;
+  sent: string[] = [];
 
   constructor(public url: string) {
     FakeWebSocket.instances.push(this);
@@ -18,6 +19,8 @@ class FakeWebSocket {
     this.closed = true;
     this.onclose?.();
   }
+
+  send(data: string): void { this.sent.push(data); }
 
   emitMessage(event: WsServerEvent): void {
     this.onmessage?.({ data: JSON.stringify(event) });
@@ -29,6 +32,12 @@ function freshFakeWebSocketImpl(): WebSocketConstructor {
   return FakeWebSocket;
 }
 
+/** Opens the socket and returns the authenticate message the client sent first. */
+function authenticateSent(socket: FakeWebSocket): { type: string; token: string; sinceSeq?: number } {
+  socket.onopen?.();
+  return JSON.parse(socket.sent[0]!) as { type: string; token: string; sinceSeq?: number };
+}
+
 const EVENT_FIXTURE: WsServerEvent = {
   seq: 1,
   topic: 'conversation:conv_1',
@@ -38,23 +47,24 @@ const EVENT_FIXTURE: WsServerEvent = {
 };
 
 describe('WsClient', () => {
-  it('connect opens a socket with the token in the query string', () => {
+  it('connect keeps the token out of the URL and sends it as the first message', () => {
     const WebSocketImpl = freshFakeWebSocketImpl();
     const client = new WsClient('http://localhost:4000', WebSocketImpl);
 
     client.connect({ token: 'tok_1' });
 
     expect(FakeWebSocket.instances).toHaveLength(1);
-    expect(FakeWebSocket.instances[0].url).toBe('ws://localhost:4000/api/v1/ws?token=tok_1');
+    expect(FakeWebSocket.instances[0].url).toBe('ws://localhost:4000/api/v1/ws');
+    expect(authenticateSent(FakeWebSocket.instances[0])).toEqual({ type: 'authenticate', token: 'tok_1' });
   });
 
-  it('connect includes sinceSeq in the query string when given', () => {
+  it('connect includes sinceSeq in the authenticate message when given', () => {
     const WebSocketImpl = freshFakeWebSocketImpl();
     const client = new WsClient('http://localhost:4000', WebSocketImpl);
 
     client.connect({ token: 'tok_1', sinceSeq: 42 });
 
-    expect(FakeWebSocket.instances[0].url).toBe('ws://localhost:4000/api/v1/ws?token=tok_1&sinceSeq=42');
+    expect(authenticateSent(FakeWebSocket.instances[0])).toEqual({ type: 'authenticate', token: 'tok_1', sinceSeq: 42 });
   });
 
   it('translates an http:// baseUrl to ws:// and https:// to wss://', () => {
@@ -63,7 +73,7 @@ describe('WsClient', () => {
 
     client.connect({ token: 'tok_1' });
 
-    expect(FakeWebSocket.instances[0].url).toBe('wss://api.example.com/api/v1/ws?token=tok_1');
+    expect(FakeWebSocket.instances[0].url).toBe('wss://api.example.com/api/v1/ws');
   });
 
   it('joins /ws without a duplicate slash when baseUrl ends in a slash', () => {
@@ -72,10 +82,10 @@ describe('WsClient', () => {
 
     client.connect({ token: 'tok_1' });
 
-    expect(FakeWebSocket.instances[0].url).toBe('ws://localhost:4000/api/v1/ws?token=tok_1');
+    expect(FakeWebSocket.instances[0].url).toBe('ws://localhost:4000/api/v1/ws');
   });
 
-  it('onOpen fires when the underlying socket opens', () => {
+  it('onOpen fires once the server confirms authentication, not when the socket opens', () => {
     const WebSocketImpl = freshFakeWebSocketImpl();
     const client = new WsClient('http://localhost:4000', WebSocketImpl);
     const opened = vi.fn();
@@ -83,6 +93,8 @@ describe('WsClient', () => {
 
     client.connect({ token: 'tok_1' });
     FakeWebSocket.instances[0].onopen?.();
+    expect(opened).not.toHaveBeenCalled();
+    FakeWebSocket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'authenticated' }) });
 
     expect(opened).toHaveBeenCalledOnce();
   });
@@ -143,7 +155,7 @@ describe('WsClient', () => {
 
     expect(FakeWebSocket.instances).toHaveLength(2);
     expect(FakeWebSocket.instances[0].closed).toBe(true);
-    expect(FakeWebSocket.instances[1].url).toBe('ws://localhost:4000/api/v1/ws?token=tok_1&sinceSeq=7');
+    expect(authenticateSent(FakeWebSocket.instances[1])).toEqual({ type: 'authenticate', token: 'tok_1', sinceSeq: 7 });
   });
 
   it('reconnect preserves an explicit sinceSeq before any event arrives', () => {
@@ -153,7 +165,7 @@ describe('WsClient', () => {
 
     client.reconnect();
 
-    expect(FakeWebSocket.instances[1].url).toBe('ws://localhost:4000/api/v1/ws?token=tok_1&sinceSeq=42');
+    expect(authenticateSent(FakeWebSocket.instances[1])).toEqual({ type: 'authenticate', token: 'tok_1', sinceSeq: 42 });
   });
 
   it('automatically replays after a dropped socket and deduplicates replayed events', () => {
@@ -167,7 +179,7 @@ describe('WsClient', () => {
       FakeWebSocket.instances[0].emitMessage({ ...EVENT_FIXTURE, seq: 7 });
       FakeWebSocket.instances[0].onclose?.();
       vi.advanceTimersByTime(1000);
-      expect(FakeWebSocket.instances[1].url).toContain('sinceSeq=7');
+      expect(authenticateSent(FakeWebSocket.instances[1]).sinceSeq).toBe(7);
       FakeWebSocket.instances[1].emitMessage({ ...EVENT_FIXTURE, seq: 7 });
       FakeWebSocket.instances[1].emitMessage({ ...EVENT_FIXTURE, seq: 8 });
       expect(handler).toHaveBeenCalledTimes(2);

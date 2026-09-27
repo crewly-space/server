@@ -110,7 +110,7 @@ function processReply(db: Database, hub: ConnectionHub, message: InboundMessage)
   if (!user || user.suspended_at) return { status: 'rejected', reason: 'unknown_user' };
   // The address is a capability, but only for the person it was given to.
   if (user.email.toLowerCase() !== message.from.email.toLowerCase()) return { status: 'rejected', reason: 'sender_mismatch' };
-  if (message.authenticated === false) return { status: 'rejected', reason: 'sender_not_authenticated' };
+  if (message.authenticated !== true) return { status: 'rejected', reason: 'sender_not_authenticated' };
   if (!getConversation(db, token.conversation_id) || !isParticipant(db, token.conversation_id, user.id, 'user')) {
     return { status: 'rejected', reason: 'not_a_participant' };
   }
@@ -129,7 +129,7 @@ function processRoute(db: Database, hub: ConnectionHub, message: InboundMessage)
   const attachments = message.attachments.length
     ? `\n\nAttachments (not kept): ${message.attachments.map((file) => file.name).join(', ')}`
     : '';
-  const warning = message.authenticated === false ? '\n\n(The sender could not be verified.)' : '';
+  const warning = '';
   const body = `Email from ${sender} to ${message.recipient}: ${message.subject || '(no subject)'}\n\n${message.text.trim()}${attachments}${warning}`;
   return { status: 'delivered', conversationId: route.conversation_id, messageId: post(db, hub, route.conversation_id, route.posted_by, body) };
 }

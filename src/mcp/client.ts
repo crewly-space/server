@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { fetchPublicHttps } from '../security/outbound.js';
 
 /** The protocol revision Crewly speaks; servers answer with the one they will use. */
 export const MCP_PROTOCOL_VERSION = '2025-06-18';
@@ -89,7 +90,7 @@ function httpFailure(status: number, url: string): McpError {
 }
 
 function connectHttp(config: Extract<McpTransportConfig, { transport: 'http' }>, options: McpClientOptions): Connection {
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  const fetchImpl = options.fetchImpl;
   const timeoutMs = options.timeoutMs ?? 15_000;
   let sessionId: string | undefined;
   let protocolVersion: string | undefined;
@@ -98,7 +99,7 @@ function connectHttp(config: Extract<McpTransportConfig, { transport: 'http' }>,
   const post = async (payload: Record<string, unknown>): Promise<Response> => {
     let response: Response;
     try {
-      response = await fetchImpl(config.url, {
+      response = await fetchPublicHttps(config.url, {
         method: 'POST',
         headers: {
           ...config.headers,
@@ -109,7 +110,7 @@ function connectHttp(config: Extract<McpTransportConfig, { transport: 'http' }>,
         },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(timeoutMs),
-      });
+      }, fetchImpl);
     } catch (error) {
       const reason = error as Error & { cause?: { code?: string } };
       if (reason.name === 'TimeoutError') {
@@ -143,7 +144,7 @@ function connectHttp(config: Extract<McpTransportConfig, { transport: 'http' }>,
     async close() {
       if (!sessionId) return;
       // Ending the session is a courtesy; a server that does not support it is fine.
-      await fetchImpl(config.url, { method: 'DELETE', headers: { ...config.headers, 'mcp-session-id': sessionId } }).catch(() => undefined);
+      await fetchPublicHttps(config.url, { method: 'DELETE', headers: { ...config.headers, 'mcp-session-id': sessionId } }, fetchImpl).catch(() => undefined);
     },
   };
 }

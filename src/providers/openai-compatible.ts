@@ -7,6 +7,7 @@ import {
   ProviderModelsUnsupportedError,
   ProviderUnavailableError,
 } from './errors.js';
+import { fetchPublicHttps, parsePublicHttpsUrl } from '../security/outbound.js';
 
 interface OpenAiToolCall {
   id: string;
@@ -73,13 +74,13 @@ export class OpenAICompatibleClient implements ProviderClient {
   ) {
     // A base URL saved with a trailing slash turned every path into `//models`,
     // which some providers answer with a 404.
-    this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.baseUrl = parsePublicHttpsUrl(baseUrl).toString().replace(/\/+$/, '');
   }
 
   async chat(request: ChatRequest): Promise<ProviderChatResult> {
     let response: Response;
     try {
-      response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+      response = await fetchPublicHttps(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
@@ -97,7 +98,7 @@ export class OpenAICompatibleClient implements ProviderClient {
               }))
             : undefined,
         }),
-      });
+      }, this.fetchImpl === globalThis.fetch ? undefined : this.fetchImpl);
     } catch (err) {
       throw new ProviderUnavailableError(`${this.kind} request failed: ${(err as Error).message}`);
     }
@@ -135,9 +136,9 @@ export class OpenAICompatibleClient implements ProviderClient {
   async listModels(providerId: string = this.kind): Promise<ModelInfo[]> {
     let response: Response;
     try {
-      response = await this.fetchImpl(`${this.baseUrl}/models`, {
+      response = await fetchPublicHttps(`${this.baseUrl}/models`, {
         headers: { Authorization: `Bearer ${this.apiKey}`, accept: 'application/json' },
-      });
+      }, this.fetchImpl === globalThis.fetch ? undefined : this.fetchImpl);
     } catch (err) {
       throw new ProviderUnavailableError(`${this.kind} models request failed: ${(err as Error).message}`);
     }

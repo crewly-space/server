@@ -60,13 +60,14 @@ describe('device pairing routes', () => {
       method: 'POST', url: `/api/v1/devices/pairings/code/${pairing.userCode}/approve`,
       headers: { authorization: `Bearer ${token}` },
     });
-    expect(approved.json()).toEqual({ status: 'approved', deviceId: id.deviceId });
+    expect(approved.json()).toEqual({ status: 'approved', deviceId: id.deviceId, serverPublicKey: pairing.serverPublicKey });
 
     const claimed = await app.inject({
       method: 'POST', url: `/api/v1/devices/pairings/${pairing.pairingId}/claim`,
       payload: { pollToken: pairing.pollToken },
     });
-    expect(claimed.json()).toEqual({ status: 'approved', deviceId: id.deviceId });
+    expect(pairing.serverPublicKey).toEqual(expect.any(String));
+    expect(claimed.json()).toEqual({ status: 'approved', deviceId: id.deviceId, serverPublicKey: pairing.serverPublicKey });
     const replay = await app.inject({
       method: 'POST', url: `/api/v1/devices/pairings/${pairing.pairingId}/claim`,
       payload: { pollToken: pairing.pollToken },

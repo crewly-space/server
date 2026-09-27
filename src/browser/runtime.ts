@@ -1,5 +1,3 @@
-import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../db/driver.js';
 import type { ToolsetProvider, ToolOutcome } from '../providers/respond.js';
@@ -7,6 +5,7 @@ import { createApproval } from '../approvals/repository.js';
 import { capabilityActionHash, evaluateCapability, recordPolicyDecision, type CapabilityScope, type ExecutionCapability } from '../permissions/capabilities.js';
 import { createArtifact } from '../artifacts/service.js';
 import type { AttachmentStore } from '../attachments/service.js';
+import { fetchPublicHttps, parsePublicHttpsUrl } from '../security/outbound.js';
 
 export interface BrowserSnapshot { url: string; title: string; text: string; elements: Array<{ index: number; role: string; name: string; href?: string }>; }
 export interface BrowserAdapter {
@@ -16,21 +15,6 @@ export interface BrowserAdapter {
   action(handle: string, input: { action: 'back' | 'forward' | 'reload' | 'click' | 'type' | 'select' | 'scroll'; index?: number; value?: string }): Promise<BrowserSnapshot>;
   screenshot(handle: string, fullPage: boolean): Promise<{ data: Buffer; mimeType: 'image/png' | 'image/svg+xml' }>;
   close(handle: string): Promise<void>;
-}
-
-function privateIp(address: string): boolean {
-  if (address.includes(':')) return address === '::1' || address === '::' || /^f[cd]/i.test(address) || /^fe[89ab]/i.test(address) || address.startsWith('::ffff:');
-  const [a, b] = address.split('.').map(Number);
-  return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
-}
-
-async function publicHttpUrl(raw: string): Promise<URL> {
-  const url = new URL(raw);
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('browser_url_not_allowed');
-  const host = url.hostname.replace(/^\[|\]$/g, '');
-  const addresses = isIP(host) ? [{ address: host }] : await lookup(host, { all: true });
-  if (!addresses.length || addresses.some((entry) => privateIp(entry.address))) throw new Error('browser_private_network_blocked');
-  return url;
 }
 
 function plainText(html: string): string {
@@ -59,7 +43,9 @@ export class FetchBrowserAdapter implements BrowserAdapter {
   async create(): Promise<string> { const id = randomUUID(); this.sessions.set(id, { history: [], index: -1 }); return id; }
   private get(handle: string) { const session = this.sessions.get(handle); if (!session) throw new Error('browser_session_expired'); return session; }
   async navigate(handle: string, raw: string): Promise<BrowserSnapshot> {
-    const url = await publicHttpUrl(raw); const response = await this.fetchImpl(url, { redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { 'user-agent': 'CrewlyBrowser/1' } });
+    let url: URL;
+    try { url = parsePublicHttpsUrl(raw); } catch { throw new Error('browser_url_not_allowed'); }
+    const response = await fetchPublicHttps(url, { redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { 'user-agent': 'CrewlyBrowser/1' } }, this.fetchImpl === globalThis.fetch ? undefined : this.fetchImpl);
     if (!response.ok) throw new Error(`browser_navigation_failed_${response.status}`);
     const type = response.headers.get('content-type') ?? ''; if (!type.includes('text/html') && !type.includes('text/plain')) throw new Error('browser_unsupported_content');
     const page = snapshotOf(url.toString(), await response.text()); const session = this.get(handle);

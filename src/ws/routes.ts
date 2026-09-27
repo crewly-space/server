@@ -18,31 +18,28 @@ export function registerWsRoutes(
       socket.close(4003, 'forbidden_origin');
       return;
     }
-    const url = new URL(request.url, 'http://localhost');
-    const token = url.searchParams.get('token') ?? '';
-    const userId = verifySessionToken(app.db, token);
-    if (!userId) {
-      socket.close(4001, 'unauthorized');
-      return;
-    }
-
-    const conversationTopics = listConversationsForParticipant(app.db, userId, { includeChannels: true }).map(
-      (c) => `conversation:${c.id}`
-    );
-    // Agent status is server-wide: everyone sees the same canonical state.
-    // So are channel changes: the event names the channel, and each reader
-    // fetches what they may see of it.
-    const topics = [`user:${userId}`, AGENT_STATUS_TOPIC, CHANNELS_TOPIC, ...conversationTopics];
-    hub.subscribe(socket, topics, userId);
-
-    const sinceSeqParam = url.searchParams.get('sinceSeq');
-    if (sinceSeqParam !== null) {
-      const missed = hub.replaySince(topics, Number(sinceSeqParam));
-      for (const event of missed) {
-        socket.send(JSON.stringify(event));
+    let authenticated = false;
+    const timer = setTimeout(() => socket.close(4001, 'authentication timed out'), 10_000);
+    timer.unref?.();
+    socket.on('message', (raw) => {
+      if (authenticated) return;
+      let message: { type?: unknown; token?: unknown; sinceSeq?: unknown };
+      try { message = JSON.parse(raw.toString()) as typeof message; } catch { socket.close(4001, 'unauthorized'); return; }
+      if (message.type !== 'authenticate' || typeof message.token !== 'string') { socket.close(4001, 'unauthorized'); return; }
+      const userId = verifySessionToken(app.db, message.token);
+      if (!userId) { socket.close(4001, 'unauthorized'); return; }
+      authenticated = true;
+      clearTimeout(timer);
+      const conversationTopics = listConversationsForParticipant(app.db, userId, { includeChannels: true }).map(
+        (c) => `conversation:${c.id}`
+      );
+      const topics = [`user:${userId}`, AGENT_STATUS_TOPIC, CHANNELS_TOPIC, ...conversationTopics];
+      hub.subscribe(socket, topics, userId);
+      socket.send(JSON.stringify({ type: 'authenticated' }));
+      if (typeof message.sinceSeq === 'number' && Number.isSafeInteger(message.sinceSeq) && message.sinceSeq >= 0) {
+        for (const event of hub.replaySince(topics, message.sinceSeq)) socket.send(JSON.stringify(event));
       }
-    }
-
-    socket.on('close', () => hub.unsubscribe(socket));
+    });
+    socket.on('close', () => { clearTimeout(timer); hub.unsubscribe(socket); });
   });
 }

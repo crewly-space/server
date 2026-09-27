@@ -146,13 +146,13 @@ export class AiGateway {
   private readonly listeners: GatewayCallListener[] = [];
   private pricer: GatewayPricer = () => null;
   private readonly db: Database;
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl?: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
 
   constructor(private readonly options: AiGatewayOptions) {
     this.db = options.db;
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.fetchImpl = options.fetchImpl;
     this.sleep = options.sleep ?? defaultSleep;
     this.now = options.now ?? Date.now;
     this.rateLimits = new RateLimitBoard(this.now);

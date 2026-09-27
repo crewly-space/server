@@ -17,11 +17,14 @@ import {
   type AutomationAction,
   type AutomationInput,
 } from './service.js';
+import { parsePublicHttpsUrl } from '../security/outbound.js';
 
 const ActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('post_message'), conversationId: z.string().min(1).optional(), body: z.string().trim().min(1).max(100_000) }),
   z.object({ type: z.literal('invoke_agent'), agentId: z.string().min(1), conversationId: z.string().min(1).optional(), prompt: z.string().trim().max(100_000).optional() }),
-  z.object({ type: z.literal('call_webhook'), url: z.string().url().max(2048), method: z.enum(['POST', 'PUT']).optional(), body: z.unknown().optional() }),
+  z.object({ type: z.literal('call_webhook'), url: z.string().url().max(2048).refine((value) => {
+    try { parsePublicHttpsUrl(value); return true; } catch { return false; }
+  }, 'Webhook URL must use public HTTPS'), method: z.enum(['POST', 'PUT']).optional(), body: z.unknown().optional() }),
 ]);
 const BodySchema = z.object({
   name: z.string().trim().min(2).max(80),

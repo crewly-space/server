@@ -23,6 +23,12 @@ import { resolveProviderClient } from './registry.js';
 import { providerHealth } from '../gateway/health.js';
 import { enableOnDevices } from './device-enable.js';
 import { describeModelListFailure } from './errors.js';
+import { parsePublicHttpsUrl } from '../security/outbound.js';
+import { allowedCallbackUrl } from '../auth/callback-url.js';
+
+const PublicHttpsUrl = z.string().min(1).refine((value) => {
+  try { parsePublicHttpsUrl(value); return true; } catch { return false; }
+}, 'URL must use HTTPS and must not target a private or reserved address');
 
 function isAgentdBackedKind(kind: ProviderKind): boolean {
   return (AGENTD_BACKED_PROVIDER_KINDS as readonly ProviderKind[]).includes(kind);
@@ -33,7 +39,7 @@ const CreateProviderBodySchema = z
     id: z.string().min(1),
     kind: ProviderKindSchema,
     apiKey: z.string().min(1).optional(),
-    baseUrl: z.string().min(1).optional(),
+    baseUrl: PublicHttpsUrl.optional(),
   })
   .superRefine((body, ctx) => {
     // agentd-backed kinds (claude-subscription, ollama) don't consume apiKey/baseUrl
@@ -58,7 +64,7 @@ const CreateProviderBodySchema = z
 
 const UpdateProviderBodySchema = z.object({
   apiKey: z.string().min(1).optional(),
-  baseUrl: z.string().min(1).optional(),
+  baseUrl: PublicHttpsUrl.optional(),
 }).refine((body) => body.apiKey !== undefined || body.baseUrl !== undefined, {
   message: 'provide apiKey or baseUrl',
 });
@@ -91,7 +97,7 @@ const OAuthCompleteBodySchema = z.object({
 
 export function registerProviderRoutes(
   app: FastifyInstance,
-  options: { fetchImpl?: typeof fetch } = {}
+  options: { fetchImpl?: typeof fetch; callbackOrigins?: string[] } = {}
 ): void {
   const oauthFetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
 
@@ -106,6 +112,9 @@ export function registerProviderRoutes(
       return;
     }
     const body = OAuthStartBodySchema.parse(request.body);
+    if (!allowedCallbackUrl(request, body.callbackUrl, options.callbackOrigins ?? [])) {
+      reply.code(400).send({ error: 'invalid_callback_url' }); return;
+    }
     const providerId = body.id ?? body.kind;
     if (getProviderConfig(app.db, providerId)) {
       reply.code(409).send({ error: 'provider_exists' });

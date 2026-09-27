@@ -12,8 +12,9 @@ import { prepareSetupClaim } from './auth/setup-claim.js';
 import { pruneOperationalData } from './maintenance.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import { loadOrCreateAgentdServerIdentity } from './devices/server-identity.js';
 
-const VERSION = '0.1.2';
+const VERSION = '0.1.5';
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -45,8 +46,7 @@ Usage: crewly-server [options]
   runMigrations(db);
   const setupClaim = prepareSetupClaim(config.dataDir, countUsers(db) > 0);
   if (setupClaim.token) {
-    console.warn(`First-run claim token: ${setupClaim.token}`);
-    console.warn(`It is also stored in ${setupClaim.file} until the owner account is created.`);
+    console.warn(`First-run claim token created at ${setupClaim.file}; read it from the server host to claim ownership.`);
   }
   const app = await buildApp({
     db,
@@ -65,6 +65,7 @@ Usage: crewly-server [options]
     attachmentDir: config.attachmentsDir,
     attachmentMaxBytes: config.attachmentMaxBytes,
     mailDefault: config.mail,
+    agentdServerIdentity: await loadOrCreateAgentdServerIdentity(config.dataDir),
   });
 
   const jobRunner = new JobRunner(db, {

@@ -6,6 +6,7 @@ import { CONNECTOR_CAPABILITIES, CONNECTOR_PROVIDERS, consumeConnectorState, exc
 import { connectConnector, createPendingConnector, getConnector, listConnectorAudit, listConnectorGrants, listConnectors, refreshConnector, revokeConnector, setConnectorGrants } from './service.js';
 import { importSlackQuickStart, previewSlackChannels } from './slack-import.js';
 import { hasPermission } from '../permissions/roles.js';
+import { allowedCallbackUrl } from '../auth/callback-url.js';
 
 const CapabilitySchema = z.enum(CONNECTOR_CAPABILITIES as unknown as [string, ...string[]]);
 const StartSchema = z.object({ callbackUrl: z.string().url(), scopes: z.array(z.string().min(1).max(80)).max(20).optional() });
@@ -30,7 +31,7 @@ function sendConnectorError(reply: FastifyReply, error: unknown): void {
   throw error;
 }
 
-export function registerConnectorRoutes(app: FastifyInstance, options: { fetchImpl?: typeof fetch; githubOAuth?: ConnectorOAuthConfig; linearOAuth?: ConnectorOAuthConfig; slackOAuth?: ConnectorOAuthConfig } = {}): void {
+export function registerConnectorRoutes(app: FastifyInstance, options: { fetchImpl?: typeof fetch; githubOAuth?: ConnectorOAuthConfig; linearOAuth?: ConnectorOAuthConfig; slackOAuth?: ConnectorOAuthConfig; callbackOrigins?: string[] } = {}): void {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   app.get('/api/v1/connectors/providers', { preHandler: requireAuth }, async (_request, reply) => {
     reply.send({ providers: CONNECTOR_PROVIDERS.map((provider) => ({ provider, label: PROVIDERS[provider].label, description: PROVIDERS[provider].description, capabilities: PROVIDERS[provider].capabilities, scopes: PROVIDERS[provider].scopes })) });
@@ -41,7 +42,7 @@ export function registerConnectorRoutes(app: FastifyInstance, options: { fetchIm
   app.post('/api/v1/connectors/oauth/github/start', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request, reply)) return;
     const config = oauthConfig(options, 'github'); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured' }); return; }
-    const body = StartSchema.parse(request.body); const connectorId = randomUUID();
+    const body = StartSchema.parse(request.body); if (!allowedCallbackUrl(request, body.callbackUrl, options.callbackOrigins ?? [])) { reply.code(400).send({ error: 'invalid_callback_url' }); return; } const connectorId = randomUUID();
     createPendingConnector(app.db, { id: connectorId, provider: 'github', ownerUserId: request.user!.id }, { type: 'user', id: request.user!.id });
     reply.send(startGitHubAuthorization(app.db, { connectorId, userId: request.user!.id, callbackUrl: body.callbackUrl, scopes: body.scopes }, config));
   });
@@ -60,7 +61,7 @@ export function registerConnectorRoutes(app: FastifyInstance, options: { fetchIm
   app.post('/api/v1/connectors/oauth/linear/start', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request, reply)) return;
     const config = oauthConfig(options, 'linear'); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured' }); return; }
-    const body = StartSchema.parse(request.body); const connectorId = randomUUID();
+    const body = StartSchema.parse(request.body); if (!allowedCallbackUrl(request, body.callbackUrl, options.callbackOrigins ?? [])) { reply.code(400).send({ error: 'invalid_callback_url' }); return; } const connectorId = randomUUID();
     createPendingConnector(app.db, { id: connectorId, provider: 'linear', ownerUserId: request.user!.id }, { type: 'user', id: request.user!.id });
     reply.send(startLinearAuthorization(app.db, { connectorId, userId: request.user!.id, callbackUrl: body.callbackUrl, scopes: body.scopes }, config));
   });
@@ -81,7 +82,7 @@ export function registerConnectorRoutes(app: FastifyInstance, options: { fetchIm
   app.post('/api/v1/connectors/oauth/slack/start', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request, reply)) return;
     const config = oauthConfig(options, 'slack'); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured' }); return; }
-    const body = StartSchema.parse(request.body); const connectorId = randomUUID();
+    const body = StartSchema.parse(request.body); if (!allowedCallbackUrl(request, body.callbackUrl, options.callbackOrigins ?? [])) { reply.code(400).send({ error: 'invalid_callback_url' }); return; } const connectorId = randomUUID();
     createPendingConnector(app.db, { id: connectorId, provider: 'slack', ownerUserId: request.user!.id }, { type: 'user', id: request.user!.id });
     reply.send(startSlackAuthorization(app.db, { connectorId, userId: request.user!.id, callbackUrl: body.callbackUrl, scopes: body.scopes }, config));
   });

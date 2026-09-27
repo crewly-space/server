@@ -27,7 +27,8 @@ describe('AgentdOperationNameSchema', () => {
 
 describe('signed agentd connection messages', () => {
   it('parses challenge, authentication, and heartbeat messages', () => {
-    expect(AgentdChallengeSchema.parse({ type: 'challenge', nonce: 'nonce' }).nonce).toBe('nonce');
+    expect(AgentdChallengeSchema.parse({ type: 'challenge', nonce: 'nonce', serverSignature: 's'.repeat(86) }).nonce).toBe('nonce');
+    expect(() => AgentdChallengeSchema.parse({ type: 'challenge', nonce: 'nonce' })).toThrow();
     expect(AgentdAuthenticateSchema.parse({
       type: 'authenticate',
       deviceId: 'dev_0123456789abcdef0123',

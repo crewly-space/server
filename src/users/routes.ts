@@ -133,7 +133,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
     const user = createUser(app.db, {
       email,
       displayName: body.displayName.trim(),
-      passwordHash: hashPassword(body.password),
+      passwordHash: await hashPassword(body.password),
       role: body.role,
     });
     reply.code(201).send(publicUser(user));
@@ -334,7 +334,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
     const user = createUser(app.db, {
       email,
       displayName: body.displayName.trim(),
-      passwordHash: hashPassword(body.password),
+      passwordHash: await hashPassword(body.password),
       role: invite.role,
     });
     // Losing the race means somebody else just spent this invite; the account

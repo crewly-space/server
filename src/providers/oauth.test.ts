@@ -36,6 +36,24 @@ describe('connecting a provider by signing in to it', () => {
   }
 
   const callbackUrl = 'http://localhost:4000/settings/providers/callback';
+  const trustedAppOrigins = ['http://localhost:4000'];
+
+  it('refuses to send the provider back to an address this server does not trust', async () => {
+    const { fetchImpl } = openRouterStub();
+    const app = await buildApp({ db, fetchImpl, trustedAppOrigins });
+    const token = await setupOwner(app);
+
+    const start = await app.inject({
+      method: 'POST',
+      url: '/api/v1/providers/oauth/start',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { kind: 'openrouter', callbackUrl: 'https://attacker.example/callback' },
+    });
+
+    expect(start.statusCode).toBe(400);
+    expect(start.json()).toEqual({ error: 'invalid_callback_url' });
+    await app.close();
+  });
 
   it('advertises which provider kinds support it', async () => {
     const app = await buildApp({ db });
@@ -53,7 +71,7 @@ describe('connecting a provider by signing in to it', () => {
 
   it('starts a flow with PKCE and completes it into a stored provider', async () => {
     const { fetchImpl, bodies } = openRouterStub();
-    const app = await buildApp({ db, fetchImpl });
+    const app = await buildApp({ db, fetchImpl, trustedAppOrigins });
     const token = await setupOwner(app);
 
     const start = await app.inject({
@@ -89,7 +107,7 @@ describe('connecting a provider by signing in to it', () => {
 
   it('refuses to redeem the same state twice', async () => {
     const { fetchImpl } = openRouterStub();
-    const app = await buildApp({ db, fetchImpl });
+    const app = await buildApp({ db, fetchImpl, trustedAppOrigins });
     const token = await setupOwner(app);
     const start = await app.inject({
       method: 'POST',
@@ -119,7 +137,7 @@ describe('connecting a provider by signing in to it', () => {
 
   it('rejects a state the server never issued', async () => {
     const { fetchImpl } = openRouterStub();
-    const app = await buildApp({ db, fetchImpl });
+    const app = await buildApp({ db, fetchImpl, trustedAppOrigins });
     const token = await setupOwner(app);
 
     const response = await app.inject({
@@ -149,7 +167,7 @@ describe('connecting a provider by signing in to it', () => {
 
   it('reports a provider that refuses the exchange instead of storing nothing silently', async () => {
     const fetchImpl = (async () => new Response('nope', { status: 400 })) as unknown as typeof fetch;
-    const app = await buildApp({ db, fetchImpl });
+    const app = await buildApp({ db, fetchImpl, trustedAppOrigins });
     const token = await setupOwner(app);
     const start = await app.inject({
       method: 'POST',
@@ -179,7 +197,7 @@ describe('connecting a provider by signing in to it', () => {
 
   it('will not start a second flow for a provider id that already exists', async () => {
     const { fetchImpl } = openRouterStub();
-    const app = await buildApp({ db, fetchImpl });
+    const app = await buildApp({ db, fetchImpl, trustedAppOrigins });
     const token = await setupOwner(app);
     await app.inject({
       method: 'POST',

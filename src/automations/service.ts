@@ -4,6 +4,7 @@ import { createMessage } from '../messages/repository.js';
 import type { ConnectionHub } from '../ws/hub.js';
 import { runAgentTurn, type RespondFn } from '../runtime/engine.js';
 import type { AgentRunQueue } from '../runtime/queue.js';
+import { fetchPublicHttps } from '../security/outbound.js';
 
 export type AutomationTriggerType = 'webhook' | 'message' | 'schedule' | 'run';
 export type AutomationAction =
@@ -229,13 +230,11 @@ async function executeActions(deps: AutomationDeps, rule: Automation, event: Aut
       outputs.push({ type: action.type, runId: result.run.runId, messageId: result.message.id });
       continue;
     }
-    const url = new URL(action.url);
-    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('automation_webhook_url_invalid');
-    const response = await (deps.fetchImpl ?? globalThis.fetch)(url, {
+    const response = await fetchPublicHttps(action.url, {
       method: action.method ?? 'POST',
       headers: { 'content-type': 'application/json', 'x-crewly-automation': rule.id },
       body: JSON.stringify(action.body ?? event.payload),
-    });
+    }, deps.fetchImpl);
     if (!response.ok) throw new Error(`automation_webhook_failed_${response.status}`);
     outputs.push({ type: action.type, status: response.status });
   }

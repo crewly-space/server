@@ -3,16 +3,19 @@ import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
 import { hasPermission } from '../permissions/roles.js';
 import { fetchRegistryItems, getRegistrySettings, installRegistryItem, listRegistryInstallations, pinRegistryInstallation, updateRegistrySettings } from './service.js';
+import { parsePublicHttpsUrl } from '../security/outbound.js';
 
 const admin = (app: FastifyInstance, userId: string) => hasPermission(app.db, userId, 'integrations.manage');
-export function registerRegistryRoutes(app: FastifyInstance, fetchImpl: typeof fetch): void {
+export function registerRegistryRoutes(app: FastifyInstance, fetchImpl?: typeof fetch): void {
   app.get('/api/v1/registry/settings', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request.user!.id)) { reply.code(403).send({ error: 'integrations_manage_required' }); return; }
     reply.send(getRegistrySettings(app.db));
   });
   app.put('/api/v1/registry/settings', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request.user!.id)) { reply.code(403).send({ error: 'integrations_manage_required' }); return; }
-    const body = z.object({ enabled: z.boolean(), registryUrl: z.string().url().nullable(), allowUnverified: z.boolean().default(false) }).parse(request.body);
+    const body = z.object({ enabled: z.boolean(), registryUrl: z.string().url().refine((value) => {
+      try { parsePublicHttpsUrl(value); return true; } catch { return false; }
+    }, 'Registry URL must use public HTTPS').nullable(), allowUnverified: z.boolean().default(false) }).parse(request.body);
     reply.send(updateRegistrySettings(app.db, { ...body, userId: request.user!.id }));
   });
   app.get('/api/v1/registry/items', { preHandler: requireAuth }, async (request, reply) => {

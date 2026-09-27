@@ -86,8 +86,11 @@ describe('runtime end-to-end: agent invocation, WS delivery, and max-hop protect
     expect(dm.statusCode).toBe(201);
     const conversationId = dm.json().id as string;
 
-    const socket = new WebSocket(`ws://${baseUrl}/api/v1/ws?token=${token}`);
+    const socket = new WebSocket(`ws://${baseUrl}/api/v1/ws`);
     await waitForOpen(socket);
+    const authenticated = waitForMessage(socket, 'authenticated');
+    socket.send(JSON.stringify({ type: 'authenticate', token }));
+    await authenticated;
 
     const messagePromise = waitForMessage(socket);
     const invoke = await app.inject({

@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
 import type { DeviceConnectionHub } from './hub.js';
+import type { AgentdServerIdentity } from './server-identity.js';
 import { getDevice, getPairing, getPairingByCode, listDevicesForUser, type DeviceRecord } from './repository.js';
 
 const PAIRING_TTL_MS = 10 * 60_000;
@@ -35,7 +36,7 @@ function expired(expiresAt: string): boolean {
   return new Date(expiresAt).getTime() <= Date.now();
 }
 
-export function registerDeviceRoutes(app: FastifyInstance, hub: DeviceConnectionHub): void {
+export function registerDeviceRoutes(app: FastifyInstance, hub: DeviceConnectionHub, serverIdentity: AgentdServerIdentity): void {
   const pairingWindows = new Map<string, { count: number; resetAt: number }>();
   app.post('/api/v1/devices/pairings', async (request, reply) => {
     const nowMs = Date.now();
@@ -76,6 +77,7 @@ export function registerDeviceRoutes(app: FastifyInstance, hub: DeviceConnection
       userCode,
       verificationUrl: `${request.protocol}://${request.headers.host ?? request.hostname}/?pair=${userCode}`,
       expiresAt: new Date(now.getTime() + PAIRING_TTL_MS).toISOString(),
+      serverPublicKey: serverIdentity.publicKey,
     });
   });
 
@@ -114,7 +116,7 @@ export function registerDeviceRoutes(app: FastifyInstance, hub: DeviceConnection
     ).run(pairing.device_id, request.user!.id, pairing.device_name, pairing.public_key, pairing.platform, now, now);
     app.db.prepare('UPDATE device_pairings SET approved_by = ?, approved_at = ? WHERE id = ?')
       .run(request.user!.id, now, pairing.id);
-    reply.send({ status: 'approved', deviceId: pairing.device_id });
+    reply.send({ status: 'approved', deviceId: pairing.device_id, serverPublicKey: serverIdentity.publicKey });
   });
 
   app.post('/api/v1/devices/pairings/:id/claim', async (request, reply) => {
@@ -129,7 +131,7 @@ export function registerDeviceRoutes(app: FastifyInstance, hub: DeviceConnection
       return;
     }
     app.db.prepare('DELETE FROM device_pairings WHERE id = ?').run(pairing.id);
-    reply.send({ status: 'approved', deviceId: pairing.device_id });
+    reply.send({ status: 'approved', deviceId: pairing.device_id, serverPublicKey: serverIdentity.publicKey });
   });
 
   app.get('/api/v1/devices', { preHandler: requireAuth }, async (request, reply) => {

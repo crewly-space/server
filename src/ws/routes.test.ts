@@ -47,11 +47,30 @@ describe('WebSocket delivery and reconnect/replay', () => {
     return new Promise((resolve) => socket.once('open', () => resolve()));
   }
 
-  it('delivers a live event published after the socket connects', async () => {
-    const socket = new WebSocket(`ws://${baseUrl}/api/v1/ws?token=${token}`);
-    await waitForOpen(socket);
+  /** Opens a socket, authenticates by first message, and queues what arrives after. */
+  function connectWs(authToken: string, sinceSeq?: number) {
+    const socket = new WebSocket(`ws://${baseUrl}/api/v1/ws`);
+    const queue: Record<string, unknown>[] = [];
+    const waiters: Array<(message: Record<string, unknown>) => void> = [];
+    socket.on('message', (data) => {
+      const message = JSON.parse(data.toString()) as Record<string, unknown>;
+      const waiter = waiters.shift();
+      if (waiter) waiter(message); else queue.push(message);
+    });
+    const next = (): Promise<Record<string, unknown>> =>
+      queue.length ? Promise.resolve(queue.shift()!) : new Promise((resolve) => waiters.push(resolve));
+    socket.once('open', () => socket.send(JSON.stringify({ type: 'authenticate', token: authToken, ...(sinceSeq === undefined ? {} : { sinceSeq }) })));
+    const ready = next().then((message) => {
+      if (message.type !== 'authenticated') throw new Error(`expected authenticated, got ${String(message.type)}`);
+    });
+    return { socket, next, ready };
+  }
 
-    const messagePromise = waitForMessage(socket);
+  it('delivers a live event published after the socket connects', async () => {
+    const { socket, next, ready } = connectWs(token);
+    await ready;
+
+    const messagePromise = next();
     app.hub.publish(`user:${userId}`, 'user.updated', { hello: 'world' });
     const received = await messagePromise;
 
@@ -61,23 +80,32 @@ describe('WebSocket delivery and reconnect/replay', () => {
   });
 
   it('replays events published while disconnected when reconnecting with sinceSeq', async () => {
-    const firstSocket = new WebSocket(`ws://${baseUrl}/api/v1/ws?token=${token}`);
-    await waitForOpen(firstSocket);
+    const { socket: firstSocket, ready: firstReady } = connectWs(token);
+    await firstReady;
     firstSocket.close();
     await new Promise((resolve) => firstSocket.once('close', resolve));
 
     const missedWhileDisconnected = app.hub.publish(`user:${userId}`, 'user.updated', { n: 1 });
 
-    const secondSocket = new WebSocket(`ws://${baseUrl}/api/v1/ws?token=${token}&sinceSeq=0`);
-    const replayed = await waitForMessage(secondSocket);
+    const { socket: secondSocket, next: secondNext, ready: secondReady } = connectWs(token, 0);
+    await secondReady;
+    const replayed = await secondNext();
 
     expect(replayed.seq).toBe(missedWhileDisconnected.seq);
     expect(replayed.payload).toEqual({ n: 1 });
     secondSocket.close();
   });
 
+  it('never reads a token from the query string', async () => {
+    const socket = new WebSocket(`ws://${baseUrl}/api/v1/ws?token=${token}`);
+    await waitForOpen(socket);
+    socket.send(JSON.stringify({ type: 'subscribe' }));
+    const closeCode = await new Promise<number>((resolve) => socket.once('close', resolve));
+    expect(closeCode).toBe(4001);
+  });
+
   it('closes the connection with 4001 for an invalid token', async () => {
-    const socket = new WebSocket(`ws://${baseUrl}/api/v1/ws?token=not-a-real-token`);
+    const { socket } = connectWs('not-a-real-token');
     const closeCode = await new Promise<number>((resolve) => socket.once('close', resolve));
     expect(closeCode).toBe(4001);
   });
@@ -93,10 +121,10 @@ describe('WebSocket delivery and reconnect/replay', () => {
       ],
     });
 
-    const socket = new WebSocket(`ws://${baseUrl}/api/v1/ws?token=${token}`);
-    await waitForOpen(socket);
+    const { socket, next, ready } = connectWs(token);
+    await ready;
 
-    const messagePromise = waitForMessage(socket);
+    const messagePromise = next();
     app.hub.publish(`conversation:${conversation.id}`, 'message.created', { body: 'hi' });
     const received = await messagePromise;
 

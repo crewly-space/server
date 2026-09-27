@@ -100,7 +100,7 @@ export function encryptDatabaseSecret(db: Database, plaintext: string): string {
 }
 
 export function decryptDatabaseSecret(db: Database, stored: string): string {
-  if (!stored.startsWith(PREFIX)) return stored; // Legacy plaintext is migrated on the next update.
+  if (!stored.startsWith(PREFIX)) throw new Error('database secret is not encrypted');
   const parts = stored.slice(PREFIX.length).split(':');
   if (parts.length !== 3) throw new Error('encrypted database secret is malformed');
   const [ivValue, tagValue, ciphertextValue] = parts as [string, string, string];

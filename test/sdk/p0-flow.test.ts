@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { buildApp } from '../../src/app.js';
 import { openDatabase } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/migrate.js';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { CrewlyClient } from '../../src/sdk/client.js';
 
@@ -14,6 +14,7 @@ let app: Awaited<ReturnType<typeof buildApp>> | undefined;
 let db: ReturnType<typeof openDatabase> | undefined;
 let dataDir: string | undefined;
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await app?.close();
   await new Promise<void>((resolve) => provider?.close(() => resolve()) ?? resolve());
   db?.close();
@@ -21,6 +22,8 @@ afterEach(async () => {
 });
 
 it('P0 clean setup → provider-backed DM → persisted WS reply → new client history', async () => {
+  // The fake provider listens on loopback, which only a self-hosted server may reach.
+  vi.stubEnv('CREWLY_ALLOW_PRIVATE_NETWORK', 'true');
   let providerInput: { model: string; messages: { role: string; content: string }[] } | undefined;
   provider = createServer(async (req, res) => {
     if (req.url !== '/v1/chat/completions') { res.writeHead(404).end(); return; }

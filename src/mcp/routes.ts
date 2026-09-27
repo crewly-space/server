@@ -16,6 +16,7 @@ import {
   type McpCapability,
 } from './repository.js';
 import { mergeRedacted, publicMcpServer, testMcpServer } from './service.js';
+import { parsePublicHttpsUrl } from '../security/outbound.js';
 
 const CapabilitySchema = z.enum(MCP_CAPABILITIES as [McpCapability, ...McpCapability[]]);
 const ValuesSchema = z.record(z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), z.string().max(8192));
@@ -23,7 +24,9 @@ const ValuesSchema = z.record(z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), z.stri
 const ServerBodySchema = z.object({
   name: z.string().trim().min(1).max(60),
   transport: z.enum(['http', 'stdio']),
-  url: z.string().url().max(2048).optional(),
+  url: z.string().url().max(2048).refine((value) => {
+    try { parsePublicHttpsUrl(value); return true; } catch { return false; }
+  }, 'HTTP MCP servers must use a public HTTPS URL').optional(),
   command: z.string().min(1).max(1024).optional(),
   args: z.array(z.string().max(4096)).max(64).optional(),
   headers: ValuesSchema.optional(),
@@ -35,9 +38,6 @@ const ServerBodySchema = z.object({
 const CreateServerSchema = ServerBodySchema.superRefine((body, ctx) => {
   if (body.transport === 'http' && !body.url) ctx.addIssue({ code: 'custom', path: ['url'], message: 'An HTTP MCP server needs a url' });
   if (body.transport === 'stdio' && !body.command) ctx.addIssue({ code: 'custom', path: ['command'], message: 'A local MCP server needs a command' });
-  if (body.transport === 'http' && body.url && !/^https?:\/\//.test(body.url)) {
-    ctx.addIssue({ code: 'custom', path: ['url'], message: 'Use an http or https URL' });
-  }
 });
 
 const DisabledToolsSchema = z.object({ disabled: z.array(z.string().min(1)).max(500) });

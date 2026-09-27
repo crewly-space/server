@@ -43,14 +43,13 @@ describe('sessions', () => {
     db.close();
   });
 
-  it('upgrades a pre-hardening plaintext session on first use', () => {
+  it('never accepts a plaintext session token, however old', () => {
     const { db, user } = freshDbWithUser();
     const token = 'a'.repeat(64);
     db.prepare('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)').run(
       token, user.id, '2026-09-17T12:00:00.000Z', '2099-01-01T00:00:00.000Z',
     );
-    expect(verifySessionToken(db, token)).toBe(user.id);
-    expect(db.prepare('SELECT token FROM sessions').pluck().get()).not.toBe(token);
+    expect(verifySessionToken(db, token)).toBeUndefined();
     db.close();
   });
 

@@ -13,6 +13,7 @@ import {
 import type { DeviceConnectionHub } from './hub.js';
 import type { ConnectionHub } from '../ws/hub.js';
 import { getDevice, touchDevice } from './repository.js';
+import { agentdServerSignaturePayload, type AgentdServerIdentity } from './server-identity.js';
 
 const SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const AUTH_WINDOW_MS = 60_000;
@@ -24,8 +25,8 @@ function signaturePayload(deviceId: string, timestamp: string, nonce: string): B
 export function registerDeviceSocket(
   app: FastifyInstance,
   hub: DeviceConnectionHub,
-  events?: ConnectionHub,
-  options: { version?: string } = {}
+  events: ConnectionHub | undefined,
+  options: { version?: string; serverIdentity: AgentdServerIdentity }
 ): void {
   app.get('/api/v1/agentd/connect', { websocket: true }, (socket) => {
     const nonce = randomBytes(24).toString('base64url');
@@ -34,7 +35,11 @@ export function registerDeviceSocket(
     let negotiatedCapabilities: string[] = [];
     const authTimer = setTimeout(() => socket.close(4001, 'authentication timed out'), 15_000);
     authTimer.unref?.();
-    socket.send(JSON.stringify({ type: 'challenge', nonce }));
+    socket.send(JSON.stringify({
+      type: 'challenge',
+      nonce,
+      serverSignature: options.serverIdentity.sign(agentdServerSignaturePayload(nonce)),
+    }));
 
     socket.on('message', (raw) => {
       let decoded: unknown;

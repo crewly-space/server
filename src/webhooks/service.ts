@@ -21,7 +21,7 @@ export function createWebhook(db: Database, input: { channelId: string; name: st
   db.prepare(`INSERT INTO incoming_webhooks (id, channel_id, name, token_hash, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .run(id, input.channelId, input.name, hash(secret), input.createdBy, now, now);
   const webhook = view(row(db, id)!);
-  return { webhook, secret, endpoint: `${input.endpointBase.replace(/\/$/, '')}/api/v1/webhooks/${id}/${secret}` };
+  return { webhook, secret, endpoint: `${input.endpointBase.replace(/\/$/, '')}/api/v1/webhooks/${id}` };
 }
 export function listWebhooks(db: Database, channelId?: string): WebhookView[] {
   const sql = channelId ? 'SELECT * FROM incoming_webhooks WHERE channel_id = ? ORDER BY created_at DESC' : 'SELECT * FROM incoming_webhooks ORDER BY created_at DESC';
@@ -31,7 +31,7 @@ export function rotateWebhook(db: Database, id: string, endpointBase: string): C
   const current = row(db, id); if (!current || current.revoked_at) return undefined;
   const secret = randomBytes(32).toString('base64url'); const now = new Date().toISOString();
   db.prepare('UPDATE incoming_webhooks SET token_hash = ?, updated_at = ? WHERE id = ?').run(hash(secret), now, id);
-  return { webhook: view(row(db, id)!), secret, endpoint: `${endpointBase.replace(/\/$/, '')}/api/v1/webhooks/${id}/${secret}` };
+  return { webhook: view(row(db, id)!), secret, endpoint: `${endpointBase.replace(/\/$/, '')}/api/v1/webhooks/${id}` };
 }
 export function revokeWebhook(db: Database, id: string): WebhookView | undefined {
   const current = row(db, id); if (!current) return undefined;

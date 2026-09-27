@@ -4,6 +4,7 @@ export type WsEventHandler = (event: WsServerEvent) => void;
 
 export interface WebSocketConnection {
   close(code?: number, reason?: string): void;
+  send(data: string): void;
 }
 
 export type WebSocketConstructor = new (url: string) => WebSocketConnection;
@@ -41,20 +42,22 @@ export class WsClient {
 
   private openSocket(input: { token: string; sinceSeq?: number }): void {
     const wsUrl = this.baseUrl.replace(/\/+$/, '').replace(/^http/, 'ws');
-    const params = new URLSearchParams({ token: input.token });
-    if (input.sinceSeq !== undefined) params.set('sinceSeq', String(input.sinceSeq));
-
-    const socket = new this.WebSocketImpl(`${wsUrl}/api/v1/ws?${params.toString()}`) as ActiveWebSocket;
+    const socket = new this.WebSocketImpl(`${wsUrl}/api/v1/ws`) as ActiveWebSocket;
     // Browsers surface connection failures as events, while implementations such as
     // `ws` also emit an error that becomes an uncaught exception without a handler.
     // The close event below owns reconnection, so consuming the paired error is enough.
     socket.onerror = () => {};
     socket.onopen = () => {
       if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-      for (const handler of this.openHandlers) handler();
+      socket.send(JSON.stringify({ type: 'authenticate', token: input.token, ...(input.sinceSeq !== undefined ? { sinceSeq: input.sinceSeq } : {}) }));
     };
     socket.onmessage = (event) => {
-      const parsed = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data)) as WsServerEvent;
+      const decoded = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data)) as WsServerEvent | { type: 'authenticated' };
+      if (decoded.type === 'authenticated' && !('seq' in decoded)) {
+        for (const handler of this.openHandlers) handler();
+        return;
+      }
+      const parsed = decoded as WsServerEvent;
       if (this.resumeSeq !== undefined && parsed.seq <= this.resumeSeq) return;
       this.lastSeq = this.lastSeq === undefined ? parsed.seq : Math.max(this.lastSeq, parsed.seq);
       this.resumeSeq = this.resumeSeq === undefined ? parsed.seq : Math.max(this.resumeSeq, parsed.seq);

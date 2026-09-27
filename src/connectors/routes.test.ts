@@ -20,6 +20,7 @@ describe('first-class connectors', () => {
     ];
     app = await buildApp({
       db,
+      trustedAppOrigins: ['https://crewly.test'],
       githubOAuth: { clientId: 'client', clientSecret: 'secret' },
       linearOAuth: { clientId: 'linear-client', clientSecret: 'linear-secret' },
       fetchImpl: async (input) => {

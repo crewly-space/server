@@ -13,7 +13,7 @@ export interface AppConfig {
   host: string;
   webDir?: string;
   logLevel: string;
-  trustProxy: boolean;
+  trustProxy: string[] | false;
   /**
    * Set together by a Crewly Cloud provisioner, and absent on a self-hosted
    * server, which signs people in locally and knows nothing about a Cloud.
@@ -134,7 +134,7 @@ export function loadConfig(
     host: resolved.CREWLY_HOST ?? '127.0.0.1',
     webDir: resolved.CREWLY_WEB_DIR ? path.resolve(resolved.CREWLY_WEB_DIR) : undefined,
     logLevel,
-    trustProxy: parseBoolean(resolved.CREWLY_TRUST_PROXY),
+    trustProxy: parseTrustProxy(resolved.CREWLY_TRUST_PROXY),
     cloudHandoff: handoffPublicKey && deploymentId
       ? { publicKey: handoffPublicKey, deploymentId }
       : undefined,
@@ -190,4 +190,14 @@ function readEnvFile(file: string): NodeJS.ProcessEnv {
 function parseBoolean(value: string | undefined): boolean {
   if (!value) return false;
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+}
+
+function parseTrustProxy(value: string | undefined): string[] | false {
+  if (!value || ['0', 'false', 'no', 'off'].includes(value.toLowerCase())) return false;
+  if (['1', 'true', 'yes', 'on'].includes(value.toLowerCase())) return ['127.0.0.1', '::1'];
+  const entries = value.split(',').map((entry) => entry.trim()).filter(Boolean);
+  if (!entries.length || entries.some((entry) => !/^[0-9a-f:.]+(?:\/\d{1,3})?$/i.test(entry))) {
+    throw new Error('CREWLY_TRUST_PROXY must be true for loopback proxies, or a comma-separated IP/CIDR allowlist');
+  }
+  return entries;
 }

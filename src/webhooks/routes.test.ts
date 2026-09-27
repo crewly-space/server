@@ -26,9 +26,12 @@ describe('incoming channel webhooks', () => {
     expect(created.json().endpoint).toContain('https://crewly.test/api/v1/webhooks/');
     const endpoint = created.json().endpoint as string;
     const payload = { title: 'Payment failed', body: 'Checkout is down', severity: 'critical', source_url: 'https://sentry.test/1', event_id: 'evt-1' };
-    const first = await app.inject({ method: 'POST', url: endpoint.replace('https://crewly.test', ''), payload });
+    expect(endpoint).not.toContain(created.json().secret);
+    const signed = { authorization: `Bearer ${created.json().secret as string}` };
+    expect((await app.inject({ method: 'POST', url: endpoint.replace('https://crewly.test', ''), payload })).statusCode).toBe(401);
+    const first = await app.inject({ method: 'POST', url: endpoint.replace('https://crewly.test', ''), headers: signed, payload });
     expect(first.statusCode).toBe(201);
-    const second = await app.inject({ method: 'POST', url: endpoint.replace('https://crewly.test', ''), payload });
+    const second = await app.inject({ method: 'POST', url: endpoint.replace('https://crewly.test', ''), headers: { 'x-crewly-webhook-secret': created.json().secret as string }, payload });
     expect(second.statusCode).toBe(200);
     expect(second.json()).toMatchObject({ duplicate: true, messageId: first.json().messageId });
     const history = await app.inject({ method: 'GET', url: `/api/v1/conversations/${channelId}/messages`, headers });
@@ -42,8 +45,10 @@ describe('incoming channel webhooks', () => {
     const oldEndpoint = created.json().endpoint as string;
     const rotated = await app.inject({ method: 'POST', url: `/api/v1/webhooks/${created.json().webhook.id}/rotate`, headers });
     expect(rotated.statusCode).toBe(200);
-    expect((await app.inject({ method: 'POST', url: oldEndpoint.replace('https://crewly.test', ''), payload: { body: 'old' } })).statusCode).toBe(404);
-    expect((await app.inject({ method: 'POST', url: rotated.json().endpoint.replace('https://crewly.test', ''), payload: { body: 'new' } })).statusCode).toBe(201);
+    const post = (url: string, secret: string, body: string) =>
+      app.inject({ method: 'POST', url: url.replace('https://crewly.test', ''), headers: { authorization: `Bearer ${secret}` }, payload: { body } });
+    expect((await post(oldEndpoint, created.json().secret, 'old')).statusCode).toBe(404);
+    expect((await post(rotated.json().endpoint, rotated.json().secret, 'new')).statusCode).toBe(201);
     expect((await app.inject({ method: 'POST', url: `/api/v1/webhooks/${created.json().webhook.id}/revoke`, headers })).json().revokedAt).toBeTruthy();
   });
 });

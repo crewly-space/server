@@ -124,7 +124,7 @@ describe('cloud handoff', () => {
     createUser(db, {
       email: 'buyer@example.com',
       displayName: 'Buyer',
-      passwordHash: hashPassword('a-password-they-chose'),
+      passwordHash: await hashPassword('a-password-they-chose'),
       role: 'admin',
     });
     const app = await handoffApp();

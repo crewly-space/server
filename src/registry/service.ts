@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Database } from '../db/driver.js';
 import { createSkill, getSkill, parseSkillManifest, updateSkill } from '../skills/skills.js';
 import { createMcpServer, getMcpServer, updateMcpServer, type McpCapability } from '../mcp/repository.js';
+import { fetchPublicHttps, parsePublicHttpsUrl } from '../security/outbound.js';
 
 const SecretReference = /^\{\{\s*secret:[A-Z][A-Z0-9_]*\s*\}\}$/;
 const RegistryVersionSchema = z.object({ version: z.string().min(1).max(40), manifest: z.unknown() });
@@ -25,9 +26,9 @@ export function updateRegistrySettings(db: Database, input: { enabled: boolean; 
   return getRegistrySettings(db);
 }
 
-export async function fetchRegistryItems(db: Database, fetchImpl: typeof fetch): Promise<RegistryItem[]> {
+export async function fetchRegistryItems(db: Database, fetchImpl?: typeof fetch): Promise<RegistryItem[]> {
   const settings = getRegistrySettings(db); if (!settings.enabled || !settings.registryUrl) throw new Error('registry_disabled');
-  const response = await fetchImpl(settings.registryUrl, { headers: { accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(10_000) });
+  const response = await fetchPublicHttps(settings.registryUrl, { headers: { accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(10_000) }, fetchImpl);
   if (!response.ok) throw new Error(`registry_unavailable_${response.status}`);
   const body = await response.json() as { items?: unknown }; return z.array(RegistryItemSchema).max(10_000).parse(body.items ?? []);
 }
@@ -40,6 +41,9 @@ function mcpManifest(value: unknown): { name: string; transport: 'http' | 'stdio
   for (const field of [...Object.values(parsed.headers), ...Object.values(parsed.env)]) {
     if (field && !SecretReference.test(field) && !/^(Bearer|Basic|Token|Bot)\s*$/i.test(field)) throw new Error('registry_presets_may_only_reference_secrets');
   }
+  if (parsed.transport === 'stdio') throw new Error('registry_stdio_presets_not_allowed');
+  if (!parsed.url) throw new Error('registry_mcp_url_required');
+  parsePublicHttpsUrl(parsed.url);
   return parsed;
 }
 

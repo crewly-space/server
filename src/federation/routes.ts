@@ -5,11 +5,12 @@ import { requireAuth } from '../auth/middleware.js';
 import { hasPermission } from '../permissions/roles.js';
 import { PROTOCOL_VERSION } from '../protocol/index.js';
 import { FEDERATION_SCOPE, acceptFederationConnection, confirmFederationConnection, createFederationInvitation, federationSettings, federationSignature, getFederationConnection, listFederationConnections, listFederationEvents, receiveFederationEvent, receiveFederationInvitation, revokeFederationConnection, updateFederationSettings, verifyFederationSignature } from './service.js';
+import { fetchPublicHttps, parsePublicHttpsUrl } from '../security/outbound.js';
 
 const Scopes = z.array(z.string().regex(FEDERATION_SCOPE)).min(1).max(50).transform((value) => [...new Set(value)]);
 const admin = (app: FastifyInstance, userId: string) => hasPermission(app.db, userId, 'integrations.manage');
 
-export function registerFederationRoutes(app: FastifyInstance, options: { publicUrl?: string; fetchImpl: typeof fetch }): void {
+export function registerFederationRoutes(app: FastifyInstance, options: { publicUrl?: string; fetchImpl?: typeof fetch }): void {
   app.get('/api/v1/federation', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request.user!.id)) { reply.code(403).send({ error: 'integrations_manage_required' }); return; }
     reply.send({ settings: federationSettings(app.db), connections: listFederationConnections(app.db) });
@@ -22,15 +23,20 @@ export function registerFederationRoutes(app: FastifyInstance, options: { public
   app.post('/api/v1/federation/connections', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request.user!.id)) { reply.code(403).send({ error: 'integrations_manage_required' }); return; }
     if (!options.publicUrl) { reply.code(503).send({ error: 'public_url_required' }); return; }
-    const body = z.object({ remoteUrl: z.string().url(), scopes: Scopes }).parse(request.body);
+    const body = z.object({ remoteUrl: z.string().url().refine((value) => {
+      try { parsePublicHttpsUrl(value); return true; } catch { return false; }
+    }, 'Federation peers must use public HTTPS'), scopes: Scopes }).parse(request.body);
     const pending = createFederationInvitation(app.db, { ...body, createdBy: request.user!.id });
-    const response = await options.fetchImpl(new URL('/api/v1/federation/invitations', body.remoteUrl), { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ...pending.invitation, originUrl: options.publicUrl, protocolVersion: PROTOCOL_VERSION }), redirect: 'error', signal: AbortSignal.timeout(10_000) });
+    const response = await fetchPublicHttps(new URL('/api/v1/federation/invitations', body.remoteUrl), { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...pending.invitation, originUrl: options.publicUrl, protocolVersion: PROTOCOL_VERSION }), redirect: 'error', signal: AbortSignal.timeout(10_000) }, options.fetchImpl);
     if (!response.ok) { reply.code(502).send({ error: 'remote_invitation_failed' }); return; }
     reply.code(201).send(pending.connection);
   });
-  app.post('/api/v1/federation/invitations', async (request, reply) => {
-    const body = z.object({ connectionId: z.string().uuid(), originUrl: z.string().url(), serverId: z.string().uuid(), serverName: z.string().min(1).max(80), scopes: Scopes,
+  app.post('/api/v1/federation/invitations', { preHandler: requireAuth }, async (request, reply) => {
+    if (!admin(app, request.user!.id)) { reply.code(403).send({ error: 'integrations_manage_required' }); return; }
+    const body = z.object({ connectionId: z.string().uuid(), originUrl: z.string().url().refine((value) => {
+      try { parsePublicHttpsUrl(value); return true; } catch { return false; }
+    }, 'Federation peers must use public HTTPS'), serverId: z.string().uuid(), serverName: z.string().min(1).max(80), scopes: Scopes,
       secret: z.string().min(32).max(200), protocolVersion: z.string() }).parse(request.body);
     if (body.protocolVersion !== PROTOCOL_VERSION) { reply.code(409).send({ error: 'protocol_incompatible', protocolVersion: PROTOCOL_VERSION }); return; }
     // The remote admin still has to accept this pending invitation locally.
@@ -44,8 +50,8 @@ export function registerFederationRoutes(app: FastifyInstance, options: { public
     const originConnectionId = event ? String((JSON.parse(event) as { originConnectionId: string }).originConnectionId) : '';
     const payload = JSON.stringify({ remoteServerId: settings.serverId, remoteConnectionId: accepted.connection.id, remoteName: settings.displayName }); const timestamp = new Date().toISOString();
     const signature = federationSignature(app.db, accepted.connection.id, timestamp, payload);
-    const response = await options.fetchImpl(new URL(`/api/v1/federation/connections/${originConnectionId}/confirm`, accepted.connection.remoteUrl), {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-crewly-federation-time': timestamp, 'x-crewly-federation-signature': signature }, body: payload, redirect: 'error', signal: AbortSignal.timeout(10_000) });
+    const response = await fetchPublicHttps(new URL(`/api/v1/federation/connections/${originConnectionId}/confirm`, accepted.connection.remoteUrl), {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-crewly-federation-time': timestamp, 'x-crewly-federation-signature': signature }, body: payload, redirect: 'error', signal: AbortSignal.timeout(10_000) }, options.fetchImpl);
     if (!response.ok) { reply.code(502).send({ error: 'remote_confirmation_failed' }); return; }
     reply.send(accepted.connection);
   });
@@ -73,8 +79,8 @@ export function registerFederationRoutes(app: FastifyInstance, options: { public
     const settings = federationSettings(app.db); const event = { id: randomUUID(), originServerId: settings.serverId, ...body };
     const raw = JSON.stringify(event); const timestamp = new Date().toISOString(); const signature = federationSignature(app.db, id, timestamp, raw);
     if (!connection.remoteConnectionId) { reply.code(409).send({ error: 'remote_connection_id_missing' }); return; }
-    const response = await options.fetchImpl(new URL(`/api/v1/federation/connections/${connection.remoteConnectionId}/events`, connection.remoteUrl), { method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-crewly-federation-time': timestamp, 'x-crewly-federation-signature': signature }, body: raw, redirect: 'error', signal: AbortSignal.timeout(10_000) });
+    const response = await fetchPublicHttps(new URL(`/api/v1/federation/connections/${connection.remoteConnectionId}/events`, connection.remoteUrl), { method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-crewly-federation-time': timestamp, 'x-crewly-federation-signature': signature }, body: raw, redirect: 'error', signal: AbortSignal.timeout(10_000) }, options.fetchImpl);
     app.db.prepare(`INSERT INTO federation_events (id, connection_id, origin_server_id, causation_id, event_type, scope, direction, hop_count, payload, status, created_at)
       VALUES (?, ?, ?, ?, ?, ?, 'outbound', ?, ?, ?, ?)`)
       .run(event.id, id, settings.serverId, event.causationId ?? null, event.type, event.scope, event.hopCount, JSON.stringify(event.payload), response.ok ? 'delivered' : 'failed', timestamp);

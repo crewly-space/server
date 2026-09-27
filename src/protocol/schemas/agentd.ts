@@ -39,6 +39,7 @@ export type AgentdEvent = z.infer<typeof AgentdEventSchema>;
 export const AgentdChallengeSchema = z.object({
   type: z.literal('challenge'),
   nonce: z.string().min(1),
+  serverSignature: z.string().min(40),
 });
 export type AgentdChallenge = z.infer<typeof AgentdChallengeSchema>;
 

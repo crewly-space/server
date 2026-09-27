@@ -59,13 +59,14 @@ import { registerFederationRoutes } from './federation/routes.js';
 import { browserToolset, FetchBrowserAdapter, type BrowserAdapter } from './browser/runtime.js';
 import { registerBrowserRoutes } from './browser/routes.js';
 import { registerRegistryRoutes } from './registry/routes.js';
+import { createAgentdServerIdentity, type AgentdServerIdentity } from './devices/server-identity.js';
 
 export interface BuildAppOptions {
   db: Database;
   respond?: RespondFn;
   webDir?: string;
   logger?: boolean | { level: string };
-  trustProxy?: boolean;
+  trustProxy?: boolean | string[];
   /** Outbound fetch for provider OAuth exchanges; injected by tests. */
   fetchImpl?: typeof fetch;
   /** One-time secret required by the first owner setup on a packaged server. */
@@ -107,6 +108,8 @@ export interface BuildAppOptions {
   attachmentMaxBytes?: number;
   /** Managed headless browser target. Defaults to an isolated fetch/DOM target. */
   browserAdapter?: BrowserAdapter;
+  /** Stable Ed25519 identity pinned by agentd clients during pairing. */
+  agentdServerIdentity?: AgentdServerIdentity;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -194,6 +197,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   const hub = new ConnectionHub(opts.db);
   app.decorate('hub', hub);
   const deviceHub = new DeviceConnectionHub();
+  const agentdServerIdentity = opts.agentdServerIdentity ?? createAgentdServerIdentity();
   app.decorate('deviceHub', deviceHub);
   await app.register(websocketPlugin);
 
@@ -236,15 +240,15 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerNotificationService(opts.db, notifications);
   app.decorate('notifications', notifications);
   registerNotificationRoutes(app, notifications);
-  registerDeviceRoutes(app, deviceHub);
+  registerDeviceRoutes(app, deviceHub, agentdServerIdentity);
   registerAgentRoutes(app);
   registerConversationRoutes(app);
   registerChannelRoutes(app);
   registerWebhookRoutes(app, { publicUrl: opts.publicUrl });
-  registerFederationRoutes(app, { publicUrl: opts.publicUrl, fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis) });
+  registerFederationRoutes(app, { publicUrl: opts.publicUrl, fetchImpl: opts.fetchImpl });
   const gateway = opts.gateway ?? new AiGateway({
     db: opts.db,
-    fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
+    fetchImpl: opts.fetchImpl,
     deviceHub,
   });
   app.decorate('gateway', gateway);
@@ -271,7 +275,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerMcpRoutes(app, mcpOptions);
   registerSkillSecretHooks();
   registerSkillRoutes(app);
-  registerRegistryRoutes(app, opts.fetchImpl ?? globalThis.fetch.bind(globalThis));
+  registerRegistryRoutes(app, opts.fetchImpl);
   const respond: RespondFn = opts.respond ?? createProviderRespond(opts.db, globalThis.fetch.bind(globalThis), deviceHub, {
     gateway,
     instructions: [skillInstructions(opts.db)],
@@ -279,7 +283,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       mcpToolset(opts.db, mcpOptions),
       connectorToolset(opts.db, opts.fetchImpl ?? globalThis.fetch.bind(globalThis)),
       artifactToolset({ db: opts.db, store: attachmentStore }),
-      browserToolset({ db: opts.db, adapter: opts.browserAdapter ?? new FetchBrowserAdapter(opts.fetchImpl ?? globalThis.fetch.bind(globalThis)), store: attachmentStore }),
+      browserToolset({ db: opts.db, adapter: opts.browserAdapter ?? new FetchBrowserAdapter(opts.fetchImpl), store: attachmentStore }),
       delegationToolset({
         db: opts.db,
         hub,
@@ -305,8 +309,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerMessageRoutes(app, hub, respond);
   registerMemoryFactRoutes(app);
   registerConversationSummaryRoutes(app);
-  registerProviderRoutes(app, { fetchImpl: opts.fetchImpl });
-  registerConnectorRoutes(app, { fetchImpl: opts.fetchImpl, githubOAuth: opts.githubOAuth, linearOAuth: opts.linearOAuth, slackOAuth: opts.slackOAuth });
+  registerProviderRoutes(app, { fetchImpl: opts.fetchImpl, callbackOrigins: opts.trustedAppOrigins });
+  registerConnectorRoutes(app, { fetchImpl: opts.fetchImpl, githubOAuth: opts.githubOAuth, linearOAuth: opts.linearOAuth, slackOAuth: opts.slackOAuth, callbackOrigins: opts.trustedAppOrigins });
   registerAttachmentRoutes(app, {
     store: attachmentStore,
     directory: opts.attachmentDir ?? path.join(process.cwd(), '.crewly-attachments'),
@@ -316,7 +320,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerRunInspectorRoutes(app, hub);
   registerApprovalRoutes(app);
   registerWsRoutes(app, hub, opts.trustedAppOrigins ?? []);
-  registerDeviceSocket(app, deviceHub, hub, { version: serverVersion });
+  registerDeviceSocket(app, deviceHub, hub, { version: serverVersion, serverIdentity: agentdServerIdentity });
 
   if (opts.webDir && fs.existsSync(path.join(opts.webDir, 'index.html'))) {
     await app.register(fastifyStatic, { root: opts.webDir, prefix: '/', index: false });

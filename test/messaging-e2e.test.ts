@@ -37,6 +37,25 @@ describe('messaging end-to-end: dm/group creation, persistence, WS delivery, rec
     return new Promise((resolve) => socket.once('open', () => resolve()));
   }
 
+  /** Opens a socket, authenticates by first message, and queues what arrives after. */
+  function connectWs(authToken: string, sinceSeq?: number) {
+    const socket = new WebSocket(`ws://${baseUrl}/api/v1/ws`);
+    const queue: Record<string, unknown>[] = [];
+    const waiters: Array<(message: Record<string, unknown>) => void> = [];
+    socket.on('message', (data) => {
+      const message = JSON.parse(data.toString()) as Record<string, unknown>;
+      const waiter = waiters.shift();
+      if (waiter) waiter(message); else queue.push(message);
+    });
+    const next = (): Promise<Record<string, unknown>> =>
+      queue.length ? Promise.resolve(queue.shift()!) : new Promise((resolve) => waiters.push(resolve));
+    socket.once('open', () => socket.send(JSON.stringify({ type: 'authenticate', token: authToken, ...(sinceSeq === undefined ? {} : { sinceSeq }) })));
+    const ready = next().then((message) => {
+      if (message.type !== 'authenticated') throw new Error(`expected authenticated, got ${String(message.type)}`);
+    });
+    return { socket, next, ready };
+  }
+
   it('proves the full messaging path: group creation, message persistence, live WS delivery, and reconnect/replay across a disconnect', async () => {
     const setup = await app.inject({
       method: 'POST',
@@ -58,10 +77,10 @@ describe('messaging end-to-end: dm/group creation, persistence, WS delivery, rec
     expect(group.statusCode).toBe(201);
     const conversationId = group.json().id as string;
 
-    const bobSocket = new WebSocket(`ws://${baseUrl}/api/v1/ws?token=${bobToken}`);
-    await waitForOpen(bobSocket);
+    const { socket: bobSocket, next: bobNext, ready: bobReady } = connectWs(bobToken);
+    await bobReady;
 
-    const firstMessagePromise = waitForMessage(bobSocket);
+    const firstMessagePromise = bobNext();
     const firstPost = await app.inject({
       method: 'POST',
       url: `/api/v1/conversations/${conversationId}/messages`,
@@ -92,8 +111,9 @@ describe('messaging end-to-end: dm/group creation, persistence, WS delivery, rec
     });
     expect(list.json()).toHaveLength(2);
 
-    const bobReconnect = new WebSocket(`ws://${baseUrl}/api/v1/ws?token=${bobToken}&sinceSeq=${lastSeenSeq}`);
-    const replayed = await waitForMessage(bobReconnect);
+    const { socket: bobReconnect, next: reconnectNext, ready: reconnectReady } = connectWs(bobToken, lastSeenSeq);
+    await reconnectReady;
+    const replayed = await reconnectNext();
     expect(replayed.type).toBe('message.created');
     expect((replayed.payload as { body: string }).body).toBe('moved to tuesday, sent while bob was offline');
     bobReconnect.close();

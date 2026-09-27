@@ -35,6 +35,8 @@ const LoginBodySchema = z.object({
   password: z.string().min(1),
 });
 
+const DUMMY_PASSWORD_HASH = 'scrypt$131072$8$1$00000000000000000000000000000000$673d7eb61236d914688fd456b000e0123557c24b289652cb398643fd7c82148879decda1c103f99d5cbfd20ca5c2fcedb3d84cb1cae7dc639ad433164809f8f0';
+
 export function registerAuthRoutes(
   app: FastifyInstance,
   options: {
@@ -174,7 +176,7 @@ export function registerAuthRoutes(
     const user = createUser(app.db, {
       email: body.email.trim().toLowerCase(),
       displayName: body.displayName,
-      passwordHash: hashPassword(body.password),
+      passwordHash: await hashPassword(body.password),
       role: 'owner',
     });
     ensureDefaultChannel(app.db, { id: user.id, role: 'owner' });
@@ -190,13 +192,14 @@ export function registerAuthRoutes(
     const authSettings = getAuthSettings(app.db);
     // An account that only exists through Cloud has no password to check, and
     // an empty one must never be treated as a match.
-    if (!user || !user.password_hash || !verifyPassword(body.password, user.password_hash)) {
+    const passwordMatches = await verifyPassword(body.password, user?.password_hash ?? DUMMY_PASSWORD_HASH);
+    if (!user || !user.password_hash || !passwordMatches) {
       reply.code(401).send({ error: 'invalid_credentials' });
       return;
     }
     if (authSettings.mode === 'crewly' && user.role === 'member') { reply.code(403).send({ error: 'local_login_disabled' }); return; }
     // Said plainly: somebody whose access was withdrawn should be told that,
-    // not left guessing at their own password.
+    // not left guessing at their own password. Only the right password gets here.
     if (user.suspended_at) {
       reply.code(403).send({ error: 'account_suspended' });
       return;
