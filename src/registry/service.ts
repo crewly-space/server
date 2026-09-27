@@ -4,8 +4,10 @@ import type { Database } from '../db/driver.js';
 import { createSkill, getSkill, parseSkillManifest, updateSkill } from '../skills/skills.js';
 import { createMcpServer, getMcpServer, updateMcpServer, type McpCapability } from '../mcp/repository.js';
 import { fetchPublicHttps, parsePublicHttpsUrl } from '../security/outbound.js';
+import { CATALOG, isCatalogId } from './catalog.js';
 
-const SecretReference = /^\{\{\s*secret:[A-Z][A-Z0-9_]*\s*\}\}$/;
+// A preset value may hold only secret references, optionally after an auth scheme ("Bearer {{secret:X}}").
+const SecretReferences = /\{\{\s*secret:[A-Z][A-Z0-9_]*\s*\}\}/g;
 const RegistryVersionSchema = z.object({ version: z.string().min(1).max(40), manifest: z.unknown() });
 export const RegistryItemSchema = z.object({
   id: z.string().min(1).max(200), type: z.enum(['skill', 'mcp_preset']), name: z.string().min(1).max(100),
@@ -33,13 +35,30 @@ export async function fetchRegistryItems(db: Database, fetchImpl?: typeof fetch)
   const body = await response.json() as { items?: unknown }; return z.array(RegistryItemSchema).max(10_000).parse(body.items ?? []);
 }
 
+/**
+ * Everything an owner can install: the built-in Crewly catalog, always, plus
+ * the configured registry when it is enabled. A registry cannot shadow a
+ * catalog item, so "Crewly · verified" always means the one shipped here.
+ */
+export async function listRegistryItems(db: Database, fetchImpl?: typeof fetch): Promise<RegistryItem[]> {
+  const settings = getRegistrySettings(db);
+  const remote = settings.enabled && settings.registryUrl ? await fetchRegistryItems(db, fetchImpl) : [];
+  return [...CATALOG, ...remote.filter((item) => !isCatalogId(item.id))];
+}
+
+export async function findRegistryItem(db: Database, id: string, type: RegistryItem['type'], fetchImpl?: typeof fetch): Promise<RegistryItem | undefined> {
+  if (isCatalogId(id)) return CATALOG.find((item) => item.id === id && item.type === type);
+  return (await listRegistryItems(db, fetchImpl)).find((item) => item.id === id && item.type === type);
+}
+
 function manifestText(value: unknown): string { if (typeof value !== 'string') throw new Error('registry_skill_manifest_invalid'); return value; }
 function mcpManifest(value: unknown): { name: string; transport: 'http' | 'stdio'; url?: string; command?: string; args?: string[]; headers?: Record<string, string>; env?: Record<string, string>; capabilities?: McpCapability[] } {
   const parsed = z.object({ name: z.string().min(1).max(60), transport: z.enum(['http','stdio']), url: z.string().url().optional(), command: z.string().min(1).optional(),
     args: z.array(z.string()).max(64).default([]), headers: z.record(z.string(), z.string()).default({}), env: z.record(z.string(), z.string()).default({}),
     capabilities: z.array(z.enum(['shell','filesystem','network'])).default([]) }).parse(value);
   for (const field of [...Object.values(parsed.headers), ...Object.values(parsed.env)]) {
-    if (field && !SecretReference.test(field) && !/^(Bearer|Basic|Token|Bot)\s*$/i.test(field)) throw new Error('registry_presets_may_only_reference_secrets');
+    const literal = field.replace(SecretReferences, '').trim();
+    if (literal && !/^(Bearer|Basic|Token|Bot)$/i.test(literal)) throw new Error('registry_presets_may_only_reference_secrets');
   }
   if (parsed.transport === 'stdio') throw new Error('registry_stdio_presets_not_allowed');
   if (!parsed.url) throw new Error('registry_mcp_url_required');
