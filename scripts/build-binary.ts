@@ -76,6 +76,12 @@ for (const { target, asset, binary } of selected) {
       '--compile',
       `--target=${target}`,
       '--minify',
+      // A compiled Bun executable otherwise reads bunfig.toml and .env from
+      // whatever directory it was started in. An `origin` there becomes
+      // Bun.serve's baseURI and the server dies with "baseURI must have a
+      // hostname"; the server is configured by its flags and CREWLY_* only.
+      '--no-compile-autoload-bunfig',
+      '--no-compile-autoload-dotenv',
       `--outfile=${outfile}`,
     ],
     { stdout: 'pipe', stderr: 'pipe', cwd: ROOT },
