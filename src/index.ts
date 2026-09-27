@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadOrCreateAgentdServerIdentity } from './devices/server-identity.js';
 
-const VERSION = '0.1.5';
+const VERSION = '0.1.6';
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
