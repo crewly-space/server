@@ -1,8 +1,13 @@
 import type { Database } from './driver.js';
-import { EMBEDDED_MIGRATIONS } from './migrations.generated.js';
+import { EMBEDDED_MIGRATIONS, EMBEDDED_POSTGRES_MIGRATIONS } from './migrations.generated.js';
 import { encryptLegacyProviderSecrets } from './secrets.js';
 
 export function runMigrations(db: Database): string[] {
+  if (db.dialect === 'postgres') {
+    const applied = runPostgresMigrations(db);
+    encryptLegacyProviderSecrets(db);
+    return applied;
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       name TEXT PRIMARY KEY,
@@ -47,5 +52,32 @@ export function runMigrations(db: Database): string[] {
     if (enforced) db.pragma('foreign_keys = ON');
   }
   encryptLegacyProviderSecrets(db);
+  return newlyApplied;
+}
+
+/**
+ * PostgreSQL starts from a baseline equal to the SQLite history, then applies
+ * its own counterparts in order. Every one runs inside a single transaction
+ * holding an advisory lock, so two processes booting against one database
+ * cannot both apply the same change, and a failure leaves nothing half-done.
+ */
+function runPostgresMigrations(db: Database): string[] {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    )
+  `);
+  const newlyApplied: string[] = [];
+  db.transaction(() => {
+    db.exec('SELECT pg_advisory_xact_lock(7331002, hashtext(current_schema()))');
+    const applied = new Set(db.prepare('SELECT name FROM schema_migrations').pluck().all() as string[]);
+    for (const { name, sql } of EMBEDDED_POSTGRES_MIGRATIONS) {
+      if (applied.has(name)) continue;
+      db.exec(sql);
+      db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)').run(name, new Date().toISOString());
+      newlyApplied.push(name);
+    }
+  })();
   return newlyApplied;
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Database } from '../db/driver.js';
+import { isUniqueViolation, type Database } from '../db/driver.js';
 import { decryptDatabaseSecret, encryptDatabaseSecret } from '../db/secrets.js';
 import {
   crewlyTransport,
@@ -266,7 +266,7 @@ export class MailService {
         encryptDatabaseSecret(this.db, JSON.stringify(payload)), settings.provider, now, now);
     } catch (error) {
       // Two concurrent sends with one key: the other one won, and that is the delivery.
-      if (message.idempotencyKey && error instanceof Error && error.message.includes('UNIQUE')) {
+      if (message.idempotencyKey && isUniqueViolation(error)) {
         return toDelivery(this.db.prepare('SELECT * FROM mail_deliveries WHERE idempotency_key = ?').get(message.idempotencyKey) as DeliveryRow);
       }
       throw error;

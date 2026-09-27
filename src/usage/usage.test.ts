@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { createAgent } from '../agents/repository.js';
@@ -30,8 +31,8 @@ function fresh() {
 function spend(db: Database, agentId: string | null, micros: number, at = new Date()) {
   db.prepare(
     `INSERT INTO provider_calls (id, provider_id, provider_kind, model, purpose, agent_id, attempt, status, cost_micros, input_tokens, output_tokens, latency_ms, created_at)
-     VALUES (lower(hex(randomblob(8))), 'primary', 'anthropic', 'claude-haiku-4-5', 'agent_turn', ?, 1, 'ok', ?, 100, 50, 10, ?)`,
-  ).run(agentId, micros, at.toISOString());
+     VALUES (?, 'primary', 'anthropic', 'claude-haiku-4-5', 'agent_turn', ?, 1, 'ok', ?, 100, 50, 10, ?)`,
+  ).run(randomUUID(), agentId, micros, at.toISOString());
 }
 
 const target = { providerId: 'primary', model: 'claude-haiku-4-5' };

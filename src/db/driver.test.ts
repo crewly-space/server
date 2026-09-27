@@ -40,7 +40,8 @@ describe('sqlite driver', () => {
     expect(database.prepare('SELECT n FROM users WHERE id = ?').get('u1')).toEqual({ n: 1 });
   });
 
-  it('reports changes and lastInsertRowid', () => {
+  // PostgreSQL has no rowid to report; an insert that needs its key uses RETURNING.
+  it.skipIf(Boolean(process.env.CREWLY_TEST_DATABASE_URL))('reports changes and lastInsertRowid', () => {
     const result = db()
       .prepare('INSERT INTO users (id, email, n) VALUES (?, ?, ?)')
       .run('u1', 'a@b.c', 1);

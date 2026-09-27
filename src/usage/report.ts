@@ -59,7 +59,7 @@ export function usageReport(
   const group = GROUP_EXPRESSIONS[input.groupBy];
   const rows = db
     .prepare(
-      `SELECT ${group} AS key, a.name AS agentName, ${AGGREGATES}
+      `SELECT ${group} AS key, MAX(a.name) AS agentName, ${AGGREGATES}
        FROM provider_calls c LEFT JOIN agents a ON a.id = c.agent_id
        WHERE ${where.join(' AND ')}
        GROUP BY ${group}

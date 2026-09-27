@@ -189,7 +189,9 @@ export function removePendingAttachment(db: Database, store: AttachmentStore, id
 /** Remove abandoned uploads and bytes left behind by a deleted user/conversation. */
 export function pruneAttachments(db: Database, store: AttachmentStore, now = new Date()): number {
   const tableExists = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'attachments'",
+    db.dialect === 'postgres'
+      ? "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'attachments'"
+      : "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'attachments'",
   ).get();
   if (!tableExists) return 0;
   const cutoff = new Date(now.getTime() - PENDING_ATTACHMENT_RETENTION_MS).toISOString();

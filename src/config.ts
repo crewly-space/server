@@ -4,6 +4,11 @@ import path from 'node:path';
 export interface AppConfig {
   port: number;
   dataDir: string;
+  /**
+   * PostgreSQL instead of SQLite (CREWLY_DATABASE_URL). Set by Superserver for
+   * hosted servers; a self-hosted server keeps SQLite in its data directory.
+   */
+  databaseUrl?: string;
   host: string;
   webDir?: string;
   logLevel: string;
@@ -34,6 +39,7 @@ export interface AppConfig {
 const ARG_TO_ENV: Record<string, string> = {
   '--port': 'CREWLY_PORT',
   '--data-dir': 'CREWLY_DATA_DIR',
+  '--database-url': 'CREWLY_DATABASE_URL',
   '--host': 'CREWLY_HOST',
   '--web-dir': 'CREWLY_WEB_DIR',
   '--log-level': 'CREWLY_LOG_LEVEL',
@@ -99,6 +105,10 @@ export function loadConfig(
   if (!Number.isInteger(attachmentMaxBytes) || attachmentMaxBytes < 1 || attachmentMaxBytes > 100 * 1024 * 1024) {
     throw new Error(`CREWLY_ATTACHMENT_MAX_BYTES must be an integer from 1 to 104857600, got ${resolved.CREWLY_ATTACHMENT_MAX_BYTES}`);
   }
+  const databaseUrl = resolved.CREWLY_DATABASE_URL?.trim();
+  if (databaseUrl && !/^postgres(ql)?:\/\//.test(databaseUrl)) {
+    throw new Error('CREWLY_DATABASE_URL must be a postgres:// or postgresql:// URL');
+  }
   const logLevel = resolved.CREWLY_LOG_LEVEL ?? 'info';
   if (!['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'].includes(logLevel)) {
     throw new Error(`CREWLY_LOG_LEVEL is invalid: ${logLevel}`);
@@ -106,6 +116,7 @@ export function loadConfig(
   return {
     port,
     dataDir,
+    ...(databaseUrl ? { databaseUrl } : {}),
     host: resolved.CREWLY_HOST ?? '127.0.0.1',
     webDir: resolved.CREWLY_WEB_DIR ? path.resolve(resolved.CREWLY_WEB_DIR) : undefined,
     logLevel,

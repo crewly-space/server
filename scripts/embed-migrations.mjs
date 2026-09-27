@@ -1,5 +1,6 @@
 /**
- * Inlines every `src/db/migrations/*.sql` file into a generated TypeScript module.
+ * Inlines every `src/db/migrations/*.sql` and `src/db/migrations-postgres/*.sql`
+ * file into a generated TypeScript module.
  *
  * The server ships two ways: as a Node process that can read its own `dist`
  * directory, and as a single `bun build --compile` executable that has no
@@ -12,20 +13,26 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const source = path.join(__dirname, '..', 'src', 'db', 'migrations');
-const target = path.join(__dirname, '..', 'src', 'db', 'migrations.generated.ts');
+const db = path.join(__dirname, '..', 'src', 'db');
+const target = path.join(db, 'migrations.generated.ts');
 
-const files = fs
-  .readdirSync(source)
-  .filter((file) => file.endsWith('.sql'))
-  .sort();
+/** SQLite's history, and PostgreSQL's (a baseline, then its own counterparts). */
+function embed(directory) {
+  const files = fs
+    .readdirSync(path.join(db, directory))
+    .filter((file) => file.endsWith('.sql'))
+    .sort();
+  const entries = files
+    .map((file) => {
+      const sql = fs.readFileSync(path.join(db, directory, file), 'utf8').replace(/\r\n/g, '\n');
+      return `  { name: ${JSON.stringify(file)}, sql: ${JSON.stringify(sql)} },`;
+    })
+    .join('\n');
+  return { count: files.length, entries };
+}
 
-const entries = files
-  .map((file) => {
-    const sql = fs.readFileSync(path.join(source, file), 'utf8').replace(/\r\n/g, '\n');
-    return `  { name: ${JSON.stringify(file)}, sql: ${JSON.stringify(sql)} },`;
-  })
-  .join('\n');
+const sqlite = embed('migrations');
+const postgres = embed('migrations-postgres');
 
 fs.writeFileSync(
   target,
@@ -38,9 +45,15 @@ export interface EmbeddedMigration {
 }
 
 export const EMBEDDED_MIGRATIONS: readonly EmbeddedMigration[] = [
-${entries}
+${sqlite.entries}
+];
+
+export const EMBEDDED_POSTGRES_MIGRATIONS: readonly EmbeddedMigration[] = [
+${postgres.entries}
 ];
 `
 );
 
-console.log(`embed-migrations: wrote ${files.length} migration(s) to src/db/migrations.generated.ts`);
+console.log(
+  `embed-migrations: wrote ${sqlite.count} SQLite and ${postgres.count} PostgreSQL migration(s) to src/db/migrations.generated.ts`
+);

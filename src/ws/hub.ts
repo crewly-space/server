@@ -19,11 +19,12 @@ export class ConnectionHub {
 
   publish(topic: string, type: string, payload: Record<string, unknown>): WsServerEvent {
     const createdAt = new Date().toISOString();
-    const info = this.db
-      .prepare('INSERT INTO event_log (topic, type, payload, created_at) VALUES (?, ?, ?, ?)')
-      .run(topic, type, JSON.stringify(payload), createdAt);
+    const seq = this.db
+      .prepare('INSERT INTO event_log (topic, type, payload, created_at) VALUES (?, ?, ?, ?) RETURNING seq')
+      .pluck()
+      .get(topic, type, JSON.stringify(payload), createdAt);
     const event: WsServerEvent = {
-      seq: Number(info.lastInsertRowid),
+      seq: Number(seq),
       topic,
       type,
       payload,

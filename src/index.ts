@@ -41,7 +41,7 @@ Usage: crewly-server [options]
   if (!config.webDir) {
     console.warn('Crewly app is disabled (no --web-dir); serving the API only');
   }
-  const db = openDatabase(config.dataDir, { managedSecretsKey: config.managedSecretsKey });
+  const db = openDatabase(config.dataDir, { managedSecretsKey: config.managedSecretsKey, databaseUrl: config.databaseUrl });
   runMigrations(db);
   const setupClaim = prepareSetupClaim(config.dataDir, countUsers(db) > 0);
   if (setupClaim.token) {

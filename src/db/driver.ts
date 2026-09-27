@@ -25,6 +25,8 @@ export interface Statement {
 }
 
 export interface Database {
+  /** Which engine is underneath; SQL the two disagree on branches on this. */
+  readonly dialect: 'sqlite' | 'postgres';
   prepare(sql: string): Statement;
   exec(sql: string): void;
   /** Runs `fn` inside a transaction, returning a callable like better-sqlite3's. */
@@ -35,6 +37,13 @@ export interface Database {
    */
   pragma(source: string, options?: { simple?: boolean }): unknown;
   close(): void;
+}
+
+/** True when a write was refused by a unique key or primary key, on either engine. */
+export function isUniqueViolation(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if ((error as { code?: unknown }).code === '23505') return true;
+  return /UNIQUE constraint failed|PRIMARY KEY constraint failed/.test(error.message);
 }
 
 /** `pluck()` returns only the first column, which `node:sqlite` has no helper for. */
@@ -64,6 +73,7 @@ function adaptStatement(statement: StatementSync): Statement {
 
 function adaptDatabase(db: DatabaseSync): Database {
   return {
+    dialect: 'sqlite',
     prepare: (sql: string) => adaptStatement(db.prepare(sql)),
     exec: (sql: string) => db.exec(sql),
     // better-sqlite3 hands back a callable that wraps the work in a

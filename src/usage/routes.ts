@@ -12,6 +12,7 @@ import {
 } from './budgets.js';
 import { deleteModelPrice, listModelPrices, setModelPrice } from './pricing.js';
 import { exportProviderCalls, usageReport } from './report.js';
+import { isUniqueViolation } from '../db/driver.js';
 
 const MICROS_PER_USD = 1_000_000;
 
@@ -124,7 +125,7 @@ export function registerUsageRoutes(app: FastifyInstance): void {
       });
       reply.code(201).send(withUsd(budgetStatus(app.db, budget)));
     } catch (error) {
-      if (String((error as Error).message).includes('UNIQUE')) {
+      if (isUniqueViolation(error)) {
         reply.code(409).send({ error: 'budget_exists', message: 'There is already a budget for that scope and period' });
         return;
       }

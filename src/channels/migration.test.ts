@@ -2,7 +2,8 @@ import { it, expect } from 'vitest';
 import { openSqlite } from '../db/driver.js';
 import { EMBEDDED_MIGRATIONS } from '../db/migrations.generated.js';
 import { runMigrations } from '../db/migrate.js';
-it('widens conversations for channels without losing what points at them', () => {
+// Replays SQLite's own migration history, so it has nothing to say about PostgreSQL.
+it.skipIf(Boolean(process.env.CREWLY_TEST_DATABASE_URL))('widens conversations for channels without losing what points at them', () => {
   const db = openSqlite(':memory:');
   db.pragma('foreign_keys = ON');
   db.exec('CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');

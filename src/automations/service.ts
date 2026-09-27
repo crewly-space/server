@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { Database } from '../db/driver.js';
+import { isUniqueViolation, type Database } from '../db/driver.js';
 import { createMessage } from '../messages/repository.js';
 import type { ConnectionHub } from '../ws/hub.js';
 import { runAgentTurn, type RespondFn } from '../runtime/engine.js';
@@ -202,7 +202,7 @@ function beginRun(db: Database, rule: Automation, event: AutomationEvent): Autom
       VALUES (?, ?, ?, ?, 'running', ?, ?, ?)`)
       .run(id, rule.id, event.eventId ?? null, event.dedupeKey, event.hopCount ?? 0, JSON.stringify(event.payload), now);
   } catch (error) {
-    if (error instanceof Error && error.message.includes('UNIQUE')) return undefined;
+    if (isUniqueViolation(error)) return undefined;
     throw error;
   }
   return runView(db.prepare('SELECT * FROM automation_runs WHERE id = ?').get(id) as RunRow);
