@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { MailEnvDefault } from './mail/service.js';
 
 export interface AppConfig {
   port: number;
@@ -34,6 +35,8 @@ export interface AppConfig {
   attachmentsDir: string;
   /** Maximum decoded attachment size in bytes. */
   attachmentMaxBytes: number;
+  /** Outbound mail from CREWLY_MAIL_*, used until an admin saves mail settings. */
+  mail?: MailEnvDefault;
 }
 
 const ARG_TO_ENV: Record<string, string> = {
@@ -109,6 +112,17 @@ export function loadConfig(
   if (databaseUrl && !/^postgres(ql)?:\/\//.test(databaseUrl)) {
     throw new Error('CREWLY_DATABASE_URL must be a postgres:// or postgresql:// URL');
   }
+  const mailProvider = resolved.CREWLY_MAIL_PROVIDER?.trim();
+  let mail: MailEnvDefault | undefined;
+  if (mailProvider) {
+    if (mailProvider !== 'resend' && mailProvider !== 'postmark') {
+      throw new Error(`CREWLY_MAIL_PROVIDER must be resend or postmark, got ${mailProvider}`);
+    }
+    const apiKey = resolved.CREWLY_MAIL_API_KEY?.trim();
+    const fromAddress = resolved.CREWLY_MAIL_FROM?.trim();
+    if (!apiKey || !fromAddress) throw new Error('CREWLY_MAIL_PROVIDER needs CREWLY_MAIL_API_KEY and CREWLY_MAIL_FROM');
+    mail = { provider: mailProvider, apiKey, fromAddress };
+  }
   const logLevel = resolved.CREWLY_LOG_LEVEL ?? 'info';
   if (!['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'].includes(logLevel)) {
     throw new Error(`CREWLY_LOG_LEVEL is invalid: ${logLevel}`);
@@ -132,6 +146,7 @@ export function loadConfig(
     ...(resolved.CREWLY_SECRETS_KEY?.trim() ? { managedSecretsKey: resolved.CREWLY_SECRETS_KEY.trim() } : {}),
     attachmentsDir: path.resolve(resolved.CREWLY_ATTACHMENTS_DIR ?? path.join(dataDir, 'attachments')),
     attachmentMaxBytes,
+    ...(mail ? { mail } : {}),
   };
 }
 

@@ -39,7 +39,7 @@ import { registerDeviceRoutes } from './devices/routes.js';
 import { registerDeviceSocket } from './devices/socket.js';
 import { registerCrewlyRoutes } from './crewly/routes.js';
 import { DEFAULT_CREWLY_CLOUD_URL } from './crewly/connection.js';
-import { MailService } from './mail/service.js';
+import { MailService, type MailEnvDefault } from './mail/service.js';
 import { registerMailRoutes } from './mail/routes.js';
 import { emailChannel, inAppChannel, NotificationService, registerNotificationService } from './notifications/service.js';
 import { registerNotificationRoutes } from './notifications/routes.js';
@@ -91,6 +91,8 @@ export interface BuildAppOptions {
   crewlyCloudUrl?: string;
   /** The outbound mail gateway; built from `fetchImpl` when absent. */
   mail?: MailService;
+  /** Outbound mail from the environment, used until an admin saves mail settings. */
+  mailDefault?: MailEnvDefault;
   /** Where people reach this server, for links in notifications (CREWLY_PUBLIC_URL). */
   publicUrl?: string;
   /** Optional GitHub OAuth app credentials for the first first-class connector. */
@@ -221,7 +223,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
     version: serverVersion,
   });
-  const mail = opts.mail ?? new MailService(opts.db, { fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis) });
+  const mail = opts.mail ?? new MailService(opts.db, {
+    fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
+    envDefault: opts.mailDefault,
+  });
   app.decorate('mail', mail);
   registerMailRoutes(app, mail, { fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis) });
   const notifications = new NotificationService(opts.db, [

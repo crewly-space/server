@@ -86,6 +86,17 @@ export class MailDisabledError extends Error {
 }
 export class MailSettingsError extends Error {}
 
+/**
+ * A provider from the environment (CREWLY_MAIL_PROVIDER, CREWLY_MAIL_API_KEY,
+ * CREWLY_MAIL_FROM), used until an admin saves settings of their own. The key
+ * stays in the environment and is never written to the database.
+ */
+export interface MailEnvDefault {
+  provider: 'resend' | 'postmark';
+  apiKey: string;
+  fromAddress: string;
+}
+
 interface SettingsRow {
   provider: MailProvider;
   from_address: string | null;
@@ -157,6 +168,7 @@ export class MailService {
       fetchImpl: typeof fetch;
       /** Replaces the transport for a provider; tests use it to stand in for SMTP. */
       transports?: Partial<Record<MailProvider, (settings: MailSettingsView, secret: string | undefined) => MailTransport>>;
+      envDefault?: MailEnvDefault;
     },
   ) {}
 
@@ -166,7 +178,12 @@ export class MailService {
 
   settings(): MailSettingsView {
     const row = this.settingsRow();
-    if (!row) return { provider: 'disabled', fromAddress: null, config: {}, hasSecret: false, updatedAt: null };
+    if (!row) {
+      const fallback = this.options.envDefault;
+      return fallback
+        ? { provider: fallback.provider, fromAddress: fallback.fromAddress, config: {}, hasSecret: true, updatedAt: null }
+        : { provider: 'disabled', fromAddress: null, config: {}, hasSecret: false, updatedAt: null };
+    }
     return {
       provider: row.provider,
       fromAddress: row.from_address,
@@ -209,7 +226,9 @@ export class MailService {
   private transport(): MailTransport {
     const row = this.settingsRow();
     const settings = this.settings();
-    const secret = row?.secret_ciphertext ? decryptDatabaseSecret(this.db, row.secret_ciphertext) : undefined;
+    const secret = row
+      ? row.secret_ciphertext ? decryptDatabaseSecret(this.db, row.secret_ciphertext) : undefined
+      : this.options.envDefault?.apiKey;
     const override = this.options.transports?.[settings.provider];
     if (override) return override(settings, secret);
     switch (settings.provider) {

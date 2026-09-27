@@ -20,6 +20,20 @@ It's never returned by the API, never sent to a browser, and never kept in plain
 Switching to another provider discards the old key. SMTP, Resend and Postmark all work without
 a Crewly account.
 
+### From the environment
+
+Resend or Postmark can also be set in the environment, or in the data directory's `.env`:
+
+```sh
+CREWLY_MAIL_PROVIDER=resend            # or postmark
+CREWLY_MAIL_API_KEY=re_...
+CREWLY_MAIL_FROM="Crewly <notifications@example.com>"
+```
+
+The server uses it until an admin saves mail settings, and saved settings always win. The
+key stays in the environment and isn't written to the database. The server won't start
+with a provider but no key or from address.
+
 ## Delivery and retries
 
 Every message is recorded as a delivery with its provider, status, attempts, error class,

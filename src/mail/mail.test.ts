@@ -230,6 +230,41 @@ describe('Crewly Mail', () => {
   });
 });
 
+describe('a provider from the environment', () => {
+  let db: Database;
+  beforeEach(() => {
+    db = openSqlite(':memory:');
+    runMigrations(db);
+  });
+  afterEach(() => db.close());
+
+  const envDefault = { provider: 'resend' as const, apiKey: 're_env', fromAddress: 'Crewly <crew@example.com>' };
+
+  it('sends through Resend with the environment key until an admin saves settings', async () => {
+    const calls: Array<{ headers: Record<string, string>; body: Record<string, unknown> }> = [];
+    const service = new MailService(db, {
+      envDefault,
+      fetchImpl: async (_url, init) => {
+        calls.push({ headers: init!.headers as Record<string, string>, body: JSON.parse(String(init!.body)) });
+        return new Response(JSON.stringify({ id: 'rs_1' }), { status: 200 });
+      },
+    });
+    expect(service.settings()).toMatchObject({ provider: 'resend', fromAddress: 'Crewly <crew@example.com>', hasSecret: true, updatedAt: null });
+    const delivery = await service.send({ to: 'a@example.com', template: { id: 'mail.test', variables: {} } });
+    expect(delivery).toMatchObject({ status: 'sent', provider: 'resend', providerMessageId: 'rs_1' });
+    expect(calls[0]!.headers.authorization).toBe('Bearer re_env');
+    expect(calls[0]!.body.from).toBe('Crewly <crew@example.com>');
+    expect(db.prepare('SELECT COUNT(*) FROM mail_settings').pluck().get()).toBe(0);
+  });
+
+  it('gives way to settings an admin saved', async () => {
+    const service = new MailService(db, { envDefault, fetchImpl: fetch });
+    service.updateSettings({ provider: 'disabled' }, null);
+    expect(service.enabled()).toBe(false);
+    await expect(service.send({ to: 'a@example.com', template: { id: 'mail.test', variables: {} } })).rejects.toBeInstanceOf(MailDisabledError);
+  });
+});
+
 describe('mail routes and invites', () => {
   let db: Database;
   let app: Awaited<ReturnType<typeof buildApp>>;

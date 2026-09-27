@@ -64,6 +64,7 @@ Usage: crewly-server [options]
     publicUrl: config.publicUrl,
     attachmentDir: config.attachmentsDir,
     attachmentMaxBytes: config.attachmentMaxBytes,
+    mailDefault: config.mail,
   });
 
   const jobRunner = new JobRunner(db, {

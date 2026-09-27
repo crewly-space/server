@@ -46,5 +46,13 @@ describe('loadConfig', () => {
     expect(loadConfig({}, []).maxDelegationDepth).toBeUndefined();
     expect(() => loadConfig({ CREWLY_MAX_DELEGATION_DEPTH: '9' }, [])).toThrow(/1 to 4/);
   });
+
+  it('reads an outbound mail provider from CREWLY_MAIL_*, and refuses half of one', () => {
+    expect(loadConfig({}, []).mail).toBeUndefined();
+    expect(loadConfig({ CREWLY_MAIL_PROVIDER: 'resend', CREWLY_MAIL_API_KEY: 're_x', CREWLY_MAIL_FROM: 'Crewly <a@example.com>' }, []).mail)
+      .toEqual({ provider: 'resend', apiKey: 're_x', fromAddress: 'Crewly <a@example.com>' });
+    expect(() => loadConfig({ CREWLY_MAIL_PROVIDER: 'resend', CREWLY_MAIL_API_KEY: 're_x' }, [])).toThrow(/CREWLY_MAIL_FROM/);
+    expect(() => loadConfig({ CREWLY_MAIL_PROVIDER: 'smtp', CREWLY_MAIL_API_KEY: 'x', CREWLY_MAIL_FROM: 'a@example.com' }, [])).toThrow(/resend or postmark/);
+  });
 });
 
