@@ -1,76 +1,168 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-$Repository = 'crewly-space/server'
+# Installs only the crewly CLI. `crewly init` then asks how this device is
+# used; the server and app are downloaded by the CLI only if the user picks a
+# mode that hosts them, so a device that just connects to an existing server
+# never carries them.
+
+# Windows PowerShell 5.1 on older .NET defaults to TLS 1.0/1.1, which GitHub
+# refuses.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
 $CliRepository = 'crewly-space/cli'
 $Version = if ($env:CREWLY_VERSION) { $env:CREWLY_VERSION } else { 'latest' }
 $InstallDir = if ($env:CREWLY_INSTALL_DIR) { $env:CREWLY_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Crewly\bin' }
-$Architecture = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()) {
-  'x64' { 'amd64' }
-  default { throw "Unsupported Windows architecture. Crewly currently publishes Windows x64 releases." }
+
+# PowerShell 5.1-compatible architecture detection.
+# Crewly currently publishes Windows x64 releases only.
+$Architecture = if ([Environment]::Is64BitOperatingSystem) {
+    'amd64'
+} else {
+    throw "Unsupported Windows architecture. Crewly currently publishes Windows x64 releases."
 }
 
 Write-Host "`n  Crewly installer" -ForegroundColor White
 Write-Host "  ------------------`n" -ForegroundColor DarkGray
 Write-Host "  [ok] Detected windows / $Architecture" -ForegroundColor Green
 
-# The server (with the bundled app) and the CLI ship from separate
-# repositories now, so each asset resolves against its own release.
-function Get-ReleaseUrl([string]$Repo) {
-  if ($env:CREWLY_RELEASE_BASE_URL) { return $env:CREWLY_RELEASE_BASE_URL.TrimEnd('/') }
-  if ($Version -eq 'latest') { return "https://github.com/$Repo/releases/latest/download" }
-  return "https://github.com/$Repo/releases/download/$Version"
+$CliReleaseUrl = if ($env:CREWLY_RELEASE_BASE_URL) {
+    $env:CREWLY_RELEASE_BASE_URL.TrimEnd('/')
+} elseif ($Version -eq 'latest') {
+    "https://github.com/$CliRepository/releases/latest/download"
+} else {
+    "https://github.com/$CliRepository/releases/download/$Version"
 }
-$ReleaseUrl = Get-ReleaseUrl $Repository
-$CliReleaseUrl = Get-ReleaseUrl $CliRepository
-$Asset = "crewly-server_windows_$Architecture.zip"
+
 $CliAsset = "crewly-cli_windows_$Architecture.zip"
-$TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("crewly-" + [Guid]::NewGuid().ToString('N'))
+
+$TempDir = Join-Path (
+    [System.IO.Path]::GetTempPath()
+) ("crewly-" + [Guid]::NewGuid().ToString('N'))
+
 New-Item -ItemType Directory -Path $TempDir | Out-Null
 
 try {
-  function Get-VerifiedAsset([string]$BaseUrl, [string]$AssetName, [string]$Label) {
-    Write-Host "  -> Downloading $Label" -ForegroundColor Cyan
-    $ChecksumFile = Join-Path $TempDir "checksums.$Label.txt"
-    Invoke-WebRequest "$BaseUrl/$AssetName" -OutFile (Join-Path $TempDir $AssetName)
-    Invoke-WebRequest "$BaseUrl/checksums.txt" -OutFile $ChecksumFile
-    $Line = Get-Content $ChecksumFile | Where-Object { $_ -match ([regex]::Escape($AssetName) + '$') } | Select-Object -First 1
-    if (!$Line) { throw "Release checksum for $AssetName is missing." }
+    Write-Host "  -> Downloading the Crewly CLI" -ForegroundColor Cyan
+
+    $ArchivePath = Join-Path $TempDir $CliAsset
+    $ChecksumFile = Join-Path $TempDir 'checksums.txt'
+
+    # -UseBasicParsing: without it, Windows PowerShell 5.1 needs Internet
+    # Explorer's engine, which is missing on Server Core and fresh installs.
+    Invoke-WebRequest `
+        "$CliReleaseUrl/$CliAsset" `
+        -OutFile $ArchivePath `
+        -UseBasicParsing
+
+    Invoke-WebRequest `
+        "$CliReleaseUrl/checksums.txt" `
+        -OutFile $ChecksumFile `
+        -UseBasicParsing
+
+    $Line = Get-Content $ChecksumFile |
+        Where-Object {
+            $_ -match ([regex]::Escape($CliAsset) + '$')
+        } |
+        Select-Object -First 1
+
+    if (!$Line) {
+        throw "Release checksum for $CliAsset is missing."
+    }
+
     $Expected = ($Line -split '\s+')[0].ToLowerInvariant()
-    $Actual = (Get-FileHash (Join-Path $TempDir $AssetName) -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($Expected -ne $Actual) { throw "Release checksum for $AssetName did not match." }
-    Expand-Archive (Join-Path $TempDir $AssetName) -DestinationPath $TempDir -Force
-    Write-Host "  [ok] Verified $Label" -ForegroundColor Green
-  }
+    $Actual = (Get-FileHash $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
 
-  Get-VerifiedAsset $ReleaseUrl $Asset 'server'
-  Get-VerifiedAsset $CliReleaseUrl $CliAsset 'CLI' 
-  foreach ($required in @('crewly.exe', 'crewly-server.exe', 'web\index.html')) {
-    if (!(Test-Path -LiteralPath (Join-Path $TempDir $required))) { throw "Release is missing $required" }
-  }
-  New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-  Copy-Item (Join-Path $TempDir 'crewly.exe') (Join-Path $InstallDir 'crewly.exe') -Force
-  Copy-Item (Join-Path $TempDir 'crewly-server.exe') (Join-Path $InstallDir 'crewly-server.exe') -Force
-  $WebDir = Join-Path $InstallDir 'web'
-  New-Item -ItemType Directory -Force -Path $WebDir | Out-Null
-  Copy-Item (Join-Path $TempDir 'web\*') $WebDir -Recurse -Force
+    if ($Expected -ne $Actual) {
+        throw "Release checksum for $CliAsset did not match."
+    }
 
-  $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-  if (!$env:CREWLY_NO_PATH -and ($UserPath -split ';') -notcontains $InstallDir) {
-    $NewPath = if ($UserPath) { "${UserPath};${InstallDir}" } else { $InstallDir }
-    [Environment]::SetEnvironmentVariable('Path', $NewPath, 'User')
-    $env:Path = "${env:Path};${InstallDir}"
-    Write-Host '  [ok] Added Crewly to your user PATH (new terminals will inherit it)' -ForegroundColor Green
-  }
-  Write-Host '  [ok] Installed CLI, server, and app' -ForegroundColor Green
+    Expand-Archive $ArchivePath -DestinationPath $TempDir -Force
 
-  if (!$env:CREWLY_SKIP_INIT -and !$env:CREWLY_SKIP_SETUP -and [Environment]::UserInteractive) {
-    Write-Host "`n  Starting Crewly setup`n" -ForegroundColor White
-    & (Join-Path $InstallDir 'crewly.exe') init
-    if ($LASTEXITCODE -ne 0) { throw "Crewly setup exited with code $LASTEXITCODE" }
-  } else {
-    Write-Host "`n  Next: crewly init`n" -ForegroundColor White
-  }
-} finally {
-  if (Test-Path -LiteralPath $TempDir) { Remove-Item -LiteralPath $TempDir -Recurse -Force }
+    if (!(Test-Path -LiteralPath (Join-Path $TempDir 'crewly.exe'))) {
+        throw "Release is missing crewly.exe"
+    }
+
+    Write-Host "  [ok] Verified the CLI" -ForegroundColor Green
+
+    New-Item `
+        -ItemType Directory `
+        -Force `
+        -Path $InstallDir |
+        Out-Null
+
+    Copy-Item `
+        (Join-Path $TempDir 'crewly.exe') `
+        (Join-Path $InstallDir 'crewly.exe') `
+        -Force
+
+    # Older installers put the server and app next to the CLI, where the CLI
+    # still looks first. Left behind, that copy would never be updated again,
+    # so drop it; the CLI downloads a current one the next time this device
+    # starts a server. A running server holds its .exe open, so this is best
+    # effort.
+    foreach ($legacy in @('crewly-server.exe', 'web')) {
+        $LegacyPath = Join-Path $InstallDir $legacy
+        if (Test-Path -LiteralPath $LegacyPath) {
+            try {
+                Remove-Item -LiteralPath $LegacyPath -Recurse -Force
+            } catch {
+                Write-Host "  [!] Could not remove the old $LegacyPath; stop the Crewly server and delete it" -ForegroundColor Yellow
+            }
+        }
+    }
+
+    $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+
+    if (
+        !$env:CREWLY_NO_PATH -and
+        ($UserPath -split ';') -notcontains $InstallDir
+    ) {
+        $NewPath = if ($UserPath) {
+            "${UserPath};${InstallDir}"
+        } else {
+            $InstallDir
+        }
+
+        [Environment]::SetEnvironmentVariable(
+            'Path',
+            $NewPath,
+            'User'
+        )
+
+        $env:Path = "${env:Path};${InstallDir}"
+
+        Write-Host `
+            '  [ok] Added Crewly to your user PATH (new terminals will inherit it)' `
+            -ForegroundColor Green
+    }
+
+    Write-Host `
+        '  [ok] Installed the Crewly CLI' `
+        -ForegroundColor Green
+
+    if (
+        !$env:CREWLY_SKIP_INIT -and
+        !$env:CREWLY_SKIP_SETUP -and
+        [Environment]::UserInteractive
+    ) {
+        Write-Host "`n  Starting Crewly setup`n" -ForegroundColor White
+
+        & (Join-Path $InstallDir 'crewly.exe') init
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Crewly setup exited with code $LASTEXITCODE"
+        }
+    }
+    else {
+        Write-Host "`n  Next: crewly init`n" -ForegroundColor White
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $TempDir) {
+        Remove-Item `
+            -LiteralPath $TempDir `
+            -Recurse `
+            -Force
+    }
 }

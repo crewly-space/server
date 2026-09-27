@@ -2,8 +2,9 @@
 # Package this repository's release asset: the server binary plus the built app.
 #
 # The CLI ships from crewly-cli and is packaged by that repo, because neither
-# repository can build the other's binary. install.sh fetches both assets and
-# verifies each against its own release checksums.txt.
+# repository can build the other's binary. install.sh installs only the CLI;
+# the CLI fetches this asset itself, verified against this release's
+# checksums.txt, when the user chooses to host a server on the device.
 #
 #   usage: package-release.sh <os> <arch> <crewly-server> <web-dir>
 set -eu

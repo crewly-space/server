@@ -1,11 +1,10 @@
 #!/usr/bin/env bun
 /**
- * Cross-compiles the standalone `crewly-server` executables the installer
- * drops next to the `crewly` CLI.
+ * Cross-compiles the standalone `crewly-server` executables the `crewly` CLI
+ * downloads when a device is set up to host a server.
  *
  * Without these, `crewly up` and `crewly server start` have nothing to
- * launch: the CLI looks for an `crewly-server` sibling and gives up when it
- * is missing. The CLI itself is built the same way over in the agentd repo, so
+ * launch. The CLI itself is built the same way over in the agentd repo, so
  * the two halves of a self-hosted install stay symmetrical — one archive, two
  * self-contained binaries, no Node and no Docker on the user's machine.
  *
