@@ -1,5 +1,12 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -9,7 +16,9 @@ jobs:
         with: { node-version: '24', cache: npm }
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
+      # Keep PostgreSQL below its connection ceiling while each test receives
+      # an isolated schema. This is intentionally slower and deterministic.
+      - run: npm test -- --maxWorkers=4
 
   # The same suite on PostgreSQL, the database hosted servers run on. It also
   # holds the PostgreSQL baseline to SQLite's schema (src/db/postgres.test.ts).

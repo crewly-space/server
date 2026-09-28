@@ -138,6 +138,17 @@ pg.types.setTypeParser(${INT8}, (value) => Number(value));
 pg.types.setTypeParser(${NUMERIC}, (value) => Number(value));
 let client = null;
 let connecting = null;
+function isConnectionError(error) {
+  const code = String(error && error.code || '');
+  const message = String(error && error.message || error);
+  return code.startsWith('08') || ['57P01', '57P02', '57P03'].includes(code)
+    || /connection (?:terminated|closed)|connection error|not queryable|server closed the connection/i.test(message);
+}
+function discard(connection) {
+  if (client === connection) client = null;
+  connecting = null;
+  try { connection.end().catch(() => {}); } catch {}
+}
 function connect() {
   if (connecting) return connecting;
   const next = new pg.Client({ connectionString: url, statement_timeout: statementTimeoutMs });
@@ -173,13 +184,17 @@ port.on('message', async (request) => {
         ? await connection.query({ text: request.text, values: request.values })
         : await connection.query(request.text);
     } catch (error) {
-      if (request.savepoint) await connection.query('ROLLBACK TO SAVEPOINT crewly_statement');
+      if (request.savepoint && !isConnectionError(error)) await connection.query('ROLLBACK TO SAVEPOINT crewly_statement');
       throw error;
     }
     if (request.savepoint) await connection.query('RELEASE SAVEPOINT crewly_statement');
     const last = Array.isArray(result) ? result[result.length - 1] : result;
     reply({ rows: last ? last.rows : [], rowCount: last && last.rowCount != null ? last.rowCount : 0 });
   } catch (error) {
+    // pg can reject the query before its asynchronous error/end event fires.
+    // Clear the dead client before replying so an immediate next statement
+    // reconnects instead of racing that event and failing a second time.
+    if (connection && isConnectionError(error)) discard(connection);
     reply({ error: { message: String(error && error.message || error), code: error && error.code, constraint: error && error.constraint, detail: error && error.detail } });
   }
 });
