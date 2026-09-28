@@ -39,14 +39,10 @@ Without that step the image is still valid — the server just serves no UI.
 
 ## External connectors
 
-The server exposes one first-class Connectors model for provider-native OAuth
-connections. GitHub is the first provider; configure a GitHub OAuth App with
-the callback URL used by the app and set `CREWLY_GITHUB_CLIENT_ID` and
-`CREWLY_GITHUB_CLIENT_SECRET` before starting the server. Connector tokens are
-encrypted with the same database secret key as the secrets vault. Connecting a
-service does not grant it to an agent: administrators must add an explicit
-connector capability grant, and calls are recorded in connector audit history
-without storing the token.
+Crewly includes native OAuth connectors for GitHub, GitLab, Linear, Notion,
+Google Drive and Slack. Tokens are encrypted, access is granted per capability,
+and calls are audited without recording credentials. See
+[connector setup and environment variables](docs/connectors.md).
 
 ## Self-hosting shape
 

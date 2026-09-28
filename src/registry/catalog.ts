@@ -16,16 +16,19 @@ interface PresetSpec {
   id: string; name: string; description: string; url: string;
   /** The vault secret sent as a bearer token; omitted for servers that need none. */
   secret?: string;
+  /** Additional vault secrets used by a URL or non-standard header. */
+  secrets?: string[];
+  headers?: Record<string, string>;
 }
 
 function preset(spec: PresetSpec): RegistryItem {
   return {
     id: `${PREFIX}${spec.id}`, type: 'mcp_preset', name: spec.name, description: spec.description,
     publisher: PUBLISHER, verified: true, compatibility: '*', requiredCapabilities: ['network.access'],
-    requiredSecrets: spec.secret ? [spec.secret] : [],
+    requiredSecrets: [...new Set([...(spec.secret ? [spec.secret] : []), ...(spec.secrets ?? [])])],
     versions: [{ version: '1', manifest: {
       name: spec.name, transport: 'http', url: spec.url, capabilities: ['network'],
-      headers: spec.secret ? { authorization: `Bearer {{secret:${spec.secret}}}` } : {},
+      headers: { ...(spec.secret ? { authorization: `Bearer {{secret:${spec.secret}}}` } : {}), ...(spec.headers ?? {}) },
     } }],
   };
 }
@@ -60,6 +63,22 @@ const PRESETS: RegistryItem[] = [
     description: 'Search the Cloudflare developer documentation. No key needed.' }),
   preset({ id: 'exa', name: 'Exa Search', url: 'https://mcp.exa.ai/mcp',
     description: 'Web search and page contents for research, from Exa. No key needed on the free tier.' }),
+  preset({ id: 'tavily', name: 'Tavily Search', url: 'https://mcp.tavily.com/mcp/?tavilyApiKey={{secret:TAVILY_API_KEY}}', secrets: ['TAVILY_API_KEY'],
+    description: 'Search, extract, map and crawl the web with Tavily. Uses a Tavily API key.' }),
+  preset({ id: 'firecrawl-keyless', name: 'Firecrawl · Search & scrape', url: 'https://mcp.firecrawl.dev/v2/mcp',
+    description: 'Keyless Firecrawl tools for web search, scraping and document parsing.' }),
+  preset({ id: 'firecrawl', name: 'Firecrawl · Full', url: 'https://mcp.firecrawl.dev/v2/mcp', secret: 'FIRECRAWL_API_KEY',
+    description: 'Firecrawl search, scrape, crawl, map and extraction tools. Uses a Firecrawl API key for the full tool set.' }),
+  preset({ id: 'postman-minimal', name: 'Postman · Minimal', url: 'https://mcp.postman.com/minimal', secret: 'POSTMAN_API_KEY',
+    description: 'Essential Postman workspace and collection tools with a smaller agent context. Uses a Postman API key.' }),
+  preset({ id: 'postman-code', name: 'Postman · Code', url: 'https://mcp.postman.com/code', secret: 'POSTMAN_API_KEY',
+    description: 'Postman tools for generating and synchronizing API client code. Uses a Postman API key.' }),
+  preset({ id: 'postman-full', name: 'Postman · Full', url: 'https://mcp.postman.com/mcp', secret: 'POSTMAN_API_KEY',
+    description: 'The full Postman MCP tool set for APIs, workspaces, collections and collaboration. Uses a Postman API key.' }),
+  preset({ id: 'postman-learn', name: 'Postman · Learn', url: 'https://mcp.postman.com/learn', secret: 'POSTMAN_API_KEY',
+    description: 'Search Postman documentation, tutorials and API reference content. Uses a Postman API key.' }),
+  preset({ id: 'postman-context-graph', name: 'Postman · Context Graph', url: 'https://mcp.postman.com/context-graph', secret: 'POSTMAN_API_KEY',
+    description: 'Explore API relationships and workspace context through Postman Context Graph. Uses a Postman API key.' }),
 ];
 
 const SKILLS: RegistryItem[] = [

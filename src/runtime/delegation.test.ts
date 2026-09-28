@@ -139,7 +139,7 @@ describe('agent-to-agent delegation', () => {
     await boot();
     replies.push(text('Hi.'));
     await ask('hello');
-    expect(sent[0]!.tools?.map((tool) => tool.name)).toEqual(['create_artifact']);
+    expect(sent[0]!.tools?.map((tool) => tool.name)).toEqual(['calculate', 'current_time', 'generate_uuid', 'hash_text', 'create_artifact']);
   });
 
   it('refuses a delegation back up the chain, so agents cannot loop', async () => {
@@ -163,9 +163,9 @@ describe('agent-to-agent delegation', () => {
     await boot(1);
     replies.push(delegate('Researcher', 'dig'), text('dug'), text('done'));
     await ask('go');
-    expect(sent[0]!.tools?.map((t) => t.name)).toEqual(['create_artifact', 'delegate_to_agent']);
-    // The researcher is one hop down, which is the limit: no tools are offered.
-    expect(sent[1]!.tools).toBeUndefined();
+    expect(sent[0]!.tools?.map((t) => t.name)).toEqual(['calculate', 'current_time', 'generate_uuid', 'hash_text', 'create_artifact', 'delegate_to_agent']);
+    // The researcher is one hop down, which is the limit: local utilities remain, but delegation is gone.
+    expect(sent[1]!.tools?.map((t) => t.name)).toEqual(['calculate', 'current_time', 'generate_uuid', 'hash_text']);
   });
 
   it('will not wake an agent that is on Do Not Disturb', async () => {

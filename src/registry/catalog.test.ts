@@ -31,6 +31,7 @@ describe('the built-in Crewly catalog', () => {
       expect(item.verified).toBe(true);
       if (item.type === 'skill') expect(parseSkillManifest(item.versions[0]!.manifest as string).name).toBe(item.name);
     }
+    expect(CATALOG.filter((item) => item.type === 'mcp_preset').length).toBeGreaterThanOrEqual(18);
   });
 
   it('can be browsed and installed with the registry disabled', async () => {
