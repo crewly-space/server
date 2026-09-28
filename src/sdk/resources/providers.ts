@@ -65,6 +65,17 @@ export interface DeviceEnableOutcome {
   error?: string;
 }
 
+/** Where this server stands with Crewly Gateway; see `gatewayStatus()`. */
+export type GatewayState = 'not_linked' | 'link_pending' | 'revoked' | 'missing_scope' | 'not_offered' | 'unavailable' | 'ready';
+export interface GatewayStatus {
+  state: GatewayState;
+  /** One sentence for the admin: what is wrong, and what to do. */
+  message: string;
+  cloudUrl: string | null;
+  missingScopes: string[];
+  models: ModelInfo[];
+}
+
 export class ProvidersResource {
   constructor(private readonly http: HttpClient) {}
 
@@ -99,6 +110,11 @@ export class ProvidersResource {
   /** Redeem the code the provider returned, storing the minted key. */
   completeOAuth(input: { state: string; code: string }): Promise<ProviderConfigPublic> {
     return this.http.request('POST', '/api/v1/providers/oauth/complete', input);
+  }
+
+  /** Whether Crewly Gateway works for this server now. Admins only; servers before 0.1.7 answer 404. */
+  gatewayStatus(): Promise<GatewayStatus> {
+    return this.http.request('GET', '/api/v1/providers/crewly-gateway/status');
   }
 
   list(): Promise<ProviderConfigPublic[]> {

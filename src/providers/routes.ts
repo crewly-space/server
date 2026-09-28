@@ -21,6 +21,7 @@ import {
 } from './oauth.js';
 import { resolveProviderClient } from './registry.js';
 import { providerHealth } from '../gateway/health.js';
+import { gatewayStatus } from './crewly-gateway.js';
 import { enableOnDevices } from './device-enable.js';
 import { describeModelListFailure } from './errors.js';
 import { parsePublicHttpsUrl } from '../security/outbound.js';
@@ -171,6 +172,15 @@ export function registerProviderRoutes(
       reply.code(409).send({ error: 'provider_exists' });
       return;
     }
+    // A Gateway that cannot answer yet would only fail on an agent's first
+    // reply; say now what is missing instead.
+    if (body.kind === 'crewly-gateway') {
+      const status = await gatewayStatus(app.db, oauthFetch);
+      if (status.state !== 'ready') {
+        reply.code(409).send({ error: 'gateway_not_ready', state: status.state, message: status.message });
+        return;
+      }
+    }
     const config = createProviderConfig(app.db, body);
     // A device-backed provider also has to be switched on where it runs. The
     // requester's own signed-in devices are asked to do that now, so nobody
@@ -218,6 +228,15 @@ export function registerProviderRoutes(
 
   // Members need provider IDs and kinds to configure their own agents, but do
   // not receive provider URLs, timestamps, or any credential-management data.
+  /** Whether Crewly Gateway works for this server now, and if not, the next step. */
+  app.get('/api/v1/providers/crewly-gateway/status', { preHandler: requireAuth }, async (request, reply) => {
+    if (!hasPermission(app.db, request.user!.id, 'providers.manage')) {
+      reply.code(403).send({ error: 'forbidden' });
+      return;
+    }
+    reply.send(await gatewayStatus(app.db, oauthFetch));
+  });
+
   app.get('/api/v1/providers/available', { preHandler: requireAuth }, async (_request, reply) => {
     reply.send(listProviderConfigs(app.db).map((config) => availability(config, healthOf(config))));
   });

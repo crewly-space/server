@@ -58,6 +58,8 @@ export {
 export {
   ProvidersResource,
   type DeviceEnableOutcome,
+  type GatewayState,
+  type GatewayStatus,
   type CreateProviderInput,
   type ProviderAvailability,
   type ProviderConfigPublic,
