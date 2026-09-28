@@ -60,6 +60,7 @@ import { browserToolset, FetchBrowserAdapter, type BrowserAdapter } from './brow
 import { registerBrowserRoutes } from './browser/routes.js';
 import { registerRegistryRoutes } from './registry/routes.js';
 import { createAgentdServerIdentity, type AgentdServerIdentity } from './devices/server-identity.js';
+import { utilityToolset } from './tools/utilities.js';
 
 export interface BuildAppOptions {
   db: Database;
@@ -98,8 +99,14 @@ export interface BuildAppOptions {
   publicUrl?: string;
   /** Optional GitHub OAuth app credentials for the first first-class connector. */
   githubOAuth?: ConnectorOAuthConfig;
+  /** Optional GitLab OAuth app credentials. */
+  gitlabOAuth?: ConnectorOAuthConfig;
   /** Optional Linear OAuth app credentials for the first first-class connector. */
   linearOAuth?: ConnectorOAuthConfig;
+  /** Optional Notion public integration OAuth credentials. */
+  notionOAuth?: ConnectorOAuthConfig;
+  /** Optional Google OAuth credentials used by the Drive connector. */
+  googleDriveOAuth?: ConnectorOAuthConfig;
   /** Optional Slack OAuth app credentials for connector and QuickStart import. */
   slackOAuth?: ConnectorOAuthConfig;
   /** Private filesystem path for uploaded attachment bytes. */
@@ -280,6 +287,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     gateway,
     instructions: [skillInstructions(opts.db)],
     toolsets: [
+      utilityToolset(),
       mcpToolset(opts.db, mcpOptions),
       connectorToolset(opts.db, opts.fetchImpl ?? globalThis.fetch.bind(globalThis)),
       artifactToolset({ db: opts.db, store: attachmentStore }),
@@ -310,7 +318,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerMemoryFactRoutes(app);
   registerConversationSummaryRoutes(app);
   registerProviderRoutes(app, { fetchImpl: opts.fetchImpl, callbackOrigins: opts.trustedAppOrigins });
-  registerConnectorRoutes(app, { fetchImpl: opts.fetchImpl, githubOAuth: opts.githubOAuth, linearOAuth: opts.linearOAuth, slackOAuth: opts.slackOAuth, callbackOrigins: opts.trustedAppOrigins });
+  registerConnectorRoutes(app, { fetchImpl: opts.fetchImpl, githubOAuth: opts.githubOAuth, gitlabOAuth: opts.gitlabOAuth,
+    linearOAuth: opts.linearOAuth, notionOAuth: opts.notionOAuth, googleDriveOAuth: opts.googleDriveOAuth,
+    slackOAuth: opts.slackOAuth, callbackOrigins: opts.trustedAppOrigins });
   registerAttachmentRoutes(app, {
     store: attachmentStore,
     directory: opts.attachmentDir ?? path.join(process.cwd(), '.crewly-attachments'),

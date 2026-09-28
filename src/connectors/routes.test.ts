@@ -22,11 +22,19 @@ describe('first-class connectors', () => {
       db,
       trustedAppOrigins: ['https://crewly.test'],
       githubOAuth: { clientId: 'client', clientSecret: 'secret' },
+      gitlabOAuth: { clientId: 'gitlab-client', clientSecret: 'gitlab-secret' },
       linearOAuth: { clientId: 'linear-client', clientSecret: 'linear-secret' },
+      notionOAuth: { clientId: 'notion-client', clientSecret: 'notion-secret' },
+      googleDriveOAuth: { clientId: 'google-client', clientSecret: 'google-secret' },
       fetchImpl: async (input) => {
         const url = String(input);
+        if (url.includes('gitlab.com/oauth/token')) return new Response(JSON.stringify({ access_token: 'gitlab-secret-token' }), { status: 200 });
+        if (url.includes('gitlab.com/api/v4/user')) return new Response(JSON.stringify({ id: 77, username: 'fox', web_url: 'https://gitlab.com/fox' }), { status: 200 });
         if (url.includes('api.linear.app/oauth/token')) return new Response(JSON.stringify({ access_token: 'linear-secret-token' }), { status: 200 });
         if (url.includes('api.linear.app/graphql')) return new Response(JSON.stringify({ data: { viewer: { id: 'workspace-1', name: 'Crewly Space', url: 'https://linear.app/acme' } } }), { status: 200 });
+        if (url.includes('api.notion.com/v1/oauth/token')) return new Response(JSON.stringify({ access_token: 'notion-secret-token', workspace_id: 'notion-workspace', workspace_name: 'Crewly Notes', bot_id: 'notion-bot' }), { status: 200 });
+        if (url.includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'google-secret-token' }), { status: 200 });
+        if (url.includes('googleapis.com/oauth2/v3/userinfo')) return new Response(JSON.stringify({ sub: 'google-user', name: 'Crewly Drive' }), { status: 200 });
         return responses.shift()!;
       },
     });
@@ -79,5 +87,25 @@ describe('first-class connectors', () => {
     expect(connected.statusCode).toBe(201);
     expect(connected.json()).toMatchObject({ provider: 'linear', accountName: 'Crewly Space', status: 'connected', scopes: ['read', 'write'] });
     expect(JSON.stringify(connected.json())).not.toContain('linear-secret-token');
+  });
+
+  it('discovers and connects GitLab, Notion and Google Drive through the generic OAuth API', async () => {
+    const listed = (await app.inject({ method: 'GET', url: '/api/v1/connectors/providers', headers: headers() })).json().providers;
+    expect(listed.map((entry: { provider: string }) => entry.provider)).toEqual(['github', 'gitlab', 'linear', 'notion', 'google-drive', 'slack']);
+
+    for (const expected of [
+      { provider: 'gitlab', authorizeHost: 'gitlab.com', accountName: 'fox' },
+      { provider: 'notion', authorizeHost: 'api.notion.com', accountName: 'Crewly Notes' },
+      { provider: 'google-drive', authorizeHost: 'accounts.google.com', accountName: 'Crewly Drive' },
+    ]) {
+      const callbackUrl = `https://crewly.test/?connector=${expected.provider}`;
+      const started = await app.inject({ method: 'POST', url: `/api/v1/connectors/oauth/${expected.provider}/start`, headers: headers(), payload: { callbackUrl } });
+      expect(started.statusCode).toBe(200);
+      expect(started.json().authorizeUrl).toContain(expected.authorizeHost);
+      const connected = await app.inject({ method: 'POST', url: `/api/v1/connectors/oauth/${expected.provider}/complete`, headers: headers(), payload: { state: started.json().state, code: `${expected.provider}-code` } });
+      expect(connected.statusCode).toBe(201);
+      expect(connected.json()).toMatchObject({ provider: expected.provider, accountName: expected.accountName, status: 'connected' });
+      expect(JSON.stringify(connected.json())).not.toContain('secret-token');
+    }
   });
 });

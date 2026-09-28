@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../db/driver.js';
 import { decryptDatabaseSecret, encryptDatabaseSecret } from '../db/secrets.js';
-import { githubRequest, linearRequest, slackRequest, PROVIDERS, type ConnectorCapability, type ConnectorProvider, type ConnectorStatus } from './providers.js';
+import { githubRequest, gitlabRequest, googleRequest, linearRequest, notionRequest, slackRequest, PROVIDERS, type ConnectorCapability, type ConnectorProvider, type ConnectorStatus } from './providers.js';
 
 export type ConnectorActor = { type: 'user' | 'agent' | 'automation' | 'integration' | 'system'; id: string | null };
 export type ConnectorGranteeType = 'agent' | 'automation' | 'integration';
@@ -80,21 +80,25 @@ export function refreshConnector(db: Database, id: string, actor: ConnectorActor
   const current = getConnectorRow(db, id); if (!current || !current.credential_ciphertext) throw new Error('connector_not_connected');
   const token = decryptDatabaseSecret(db, current.credential_ciphertext);
   return (async () => {
-    const result = current.provider === 'github'
-      ? await githubRequest(token, '/user', fetchImpl)
-      : current.provider === 'linear'
-        ? await linearRequest(token, 'query Viewer { viewer { id name email url } }', {}, fetchImpl)
-        : await slackRequest(token, 'auth.test', {}, fetchImpl);
-    if (result.status === 401) return setConnectorStatus(db, id, 'permission_revoked', actor, 'GitHub rejected the connector credential');
-    if (result.status === 403 && result.headers.get('x-ratelimit-remaining') === '0') return setConnectorStatus(db, id, 'rate_limited', actor, 'GitHub rate limit reached');
-    if (result.status >= 500) return setConnectorStatus(db, id, 'provider_unavailable', actor, 'GitHub is unavailable');
-    const profile = current.provider === 'github' ? result.body
-      : current.provider === 'linear' ? (result.body.data as { viewer?: Record<string, unknown> } | undefined)?.viewer
-        : { id: result.body.team_id, name: result.body.team, url: result.body.url };
+    const result = current.provider === 'github' ? await githubRequest(token, '/user', fetchImpl)
+      : current.provider === 'gitlab' ? await gitlabRequest(token, 'user', fetchImpl)
+        : current.provider === 'linear' ? await linearRequest(token, 'query Viewer { viewer { id name email url } }', {}, fetchImpl)
+          : current.provider === 'notion' ? await notionRequest(token, 'users/me', fetchImpl)
+            : current.provider === 'google-drive' ? await googleRequest(token, 'https://www.googleapis.com/oauth2/v3/userinfo', fetchImpl)
+              : await slackRequest(token, 'auth.test', {}, fetchImpl);
+    const label = PROVIDERS[current.provider].label;
+    if (result.status === 401) return setConnectorStatus(db, id, 'permission_revoked', actor, `${label} rejected the connector credential`);
+    if (result.status === 429 || (result.status === 403 && result.headers.get('x-ratelimit-remaining') === '0')) return setConnectorStatus(db, id, 'rate_limited', actor, `${label} rate limit reached`);
+    if (result.status >= 500) return setConnectorStatus(db, id, 'provider_unavailable', actor, `${label} is unavailable`);
+    const profile = current.provider === 'linear' ? (result.body.data as { viewer?: Record<string, unknown> } | undefined)?.viewer
+      : current.provider === 'slack' ? { id: result.body.team_id, name: result.body.team, url: result.body.url }
+        : current.provider === 'notion' ? { id: result.body.bot_id ?? result.body.id, name: current.account_name, url: current.account_url }
+          : current.provider === 'google-drive' ? { id: result.body.sub, name: result.body.name ?? result.body.email, url: current.account_url }
+            : result.body;
     if (result.status !== 200 || (current.provider === 'slack' && result.body.ok !== true) || !profile?.id) return setConnectorStatus(db, id, 'action_required', actor, `${current.provider} returned an unexpected account response`);
     const now = new Date().toISOString();
     db.prepare(`UPDATE connectors SET account_id = ?, account_name = ?, account_url = ?, status = 'connected', last_checked_at = ?, last_error = NULL, updated_at = ? WHERE id = ?`)
-      .run(String(profile.id), String(profile.login ?? profile.name ?? ''), typeof (profile.html_url ?? profile.url) === 'string' ? (profile.html_url ?? profile.url) : current.account_url, now, now, id);
+      .run(String(profile.id), String(profile.login ?? profile.username ?? profile.name ?? ''), typeof (profile.html_url ?? profile.web_url ?? profile.url) === 'string' ? (profile.html_url ?? profile.web_url ?? profile.url) : current.account_url, now, now, id);
     audit(db, current, 'refreshed', actor, { accountId: String(profile.id) });
     return getConnector(db, id)!;
   })();
@@ -165,6 +169,20 @@ export async function connectorCall(
     const init: RequestInit = input.operation === 'write' ? { method: 'POST', body: JSON.stringify({ title: input.payload.title, body: input.payload.body }) } : {};
     const response = await githubRequest(credential.token, path, fetchImpl, init);
     result = { status: response.status, body: response.body };
+  } else if (credential.provider === 'gitlab') {
+    const project = encodeURIComponent(String(input.payload.project ?? input.payload.repo ?? ''));
+    const item = encodeURIComponent(String(input.payload.issueNumber ?? input.payload.issueId ?? ''));
+    const path = input.capability === 'read_profile' ? 'user'
+      : input.capability === 'read_repository' ? `projects/${project}`
+        : input.capability === 'read_issues' || input.capability === 'create_issue' ? `projects/${project}/issues`
+          : input.capability === 'comment_on_pull_request' ? `projects/${project}/merge_requests/${item}/notes`
+            : `projects/${project}/issues/${item}/notes`;
+    const body = input.capability === 'create_issue'
+      ? { title: input.payload.title, description: input.payload.body }
+      : { body: input.payload.body };
+    const response = await gitlabRequest(credential.token, path, fetchImpl,
+      input.operation === 'write' ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {});
+    result = { status: response.status, body: response.body };
   } else if (credential.provider === 'linear') {
     const query = input.capability === 'read_issues'
       ? 'query Issues($first:Int){ issues(first:$first){ nodes { id identifier title url state { name } } } }'
@@ -180,6 +198,52 @@ export async function connectorCall(
         : { first: Math.min(50, Math.max(1, Number(input.payload.first ?? 20))) };
     const response = await linearRequest(credential.token, query, variables, fetchImpl);
     result = { status: response.status, body: response.body };
+  } else if (credential.provider === 'notion') {
+    const pageId = encodeURIComponent(String(input.payload.pageId ?? ''));
+    const text = String(input.payload.content ?? input.payload.body ?? '');
+    const path = input.capability === 'read_profile' ? 'users/me'
+      : input.capability === 'search_pages' ? 'search'
+        : input.capability === 'read_pages' ? `pages/${pageId}`
+          : input.capability === 'create_page' ? 'pages' : 'comments';
+    const body = input.capability === 'search_pages'
+      ? { query: String(input.payload.query ?? ''), page_size: Math.min(100, Math.max(1, Number(input.payload.first ?? 20))), filter: { property: 'object', value: 'page' } }
+      : input.capability === 'create_page'
+        ? { parent: { page_id: String(input.payload.parentPageId ?? input.payload.pageId ?? '') },
+          properties: { title: { type: 'title', title: [{ type: 'text', text: { content: String(input.payload.title ?? 'Untitled') } }] } },
+          ...(text ? { children: [{ object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: text } }] } }] } : {}) }
+        : { parent: { page_id: String(input.payload.pageId ?? '') }, rich_text: [{ type: 'text', text: { content: text } }] };
+    const response = await notionRequest(credential.token, path, fetchImpl,
+      ['search_pages', 'create_page', 'comment_on_page'].includes(input.capability)
+        ? { method: 'POST', body: JSON.stringify(body) } : {});
+    result = { status: response.status, body: response.body };
+  } else if (credential.provider === 'google-drive') {
+    const fileId = encodeURIComponent(String(input.payload.fileId ?? ''));
+    if (input.capability === 'read_profile') {
+      const response = await googleRequest(credential.token, 'https://www.googleapis.com/oauth2/v3/userinfo', fetchImpl);
+      result = { status: response.status, body: response.body };
+    } else if (input.capability === 'search_files') {
+      const url = new URL('https://www.googleapis.com/drive/v3/files');
+      const query = String(input.payload.query ?? '').replaceAll("'", "\\'");
+      if (query) url.searchParams.set('q', `name contains '${query}' and trashed = false`);
+      url.searchParams.set('pageSize', String(Math.min(100, Math.max(1, Number(input.payload.first ?? 20)))));
+      url.searchParams.set('fields', 'files(id,name,mimeType,modifiedTime,webViewLink,size),nextPageToken');
+      const response = await googleRequest(credential.token, url, fetchImpl);
+      result = { status: response.status, body: response.body };
+    } else if (input.capability === 'read_files') {
+      const url = new URL(`https://www.googleapis.com/drive/v3/files/${fileId}`);
+      url.searchParams.set('alt', 'media');
+      const response = await googleRequest(credential.token, url, fetchImpl);
+      result = { status: response.status, body: response.body };
+    } else {
+      const boundary = `crewly_${randomUUID().replaceAll('-', '')}`;
+      const metadata = JSON.stringify({ name: String(input.payload.filename ?? input.payload.title ?? 'Crewly file'),
+        mimeType: String(input.payload.mimeType ?? 'text/plain') });
+      const content = String(input.payload.content ?? input.payload.body ?? '');
+      const multipart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: ${String(input.payload.mimeType ?? 'text/plain')}\r\n\r\n${content}\r\n--${boundary}--`;
+      const response = await googleRequest(credential.token, 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink', fetchImpl,
+        { method: 'POST', headers: { 'content-type': `multipart/related; boundary=${boundary}` }, body: multipart });
+      result = { status: response.status, body: response.body };
+    }
   } else {
     const method = input.capability === 'read_channels' ? 'conversations.list'
       : input.capability === 'read_messages' ? 'conversations.history'

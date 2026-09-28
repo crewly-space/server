@@ -5,7 +5,14 @@ import { connectorCall, hasConnectorGrant, listConnectors } from './service.js';
 import { PROVIDERS } from './providers.js';
 import { authorizeCapabilityAction } from '../permissions/capabilities.js';
 
-const inputSchema = { type: 'object', properties: { repo: { type: 'string' }, first: { type: 'number' }, teamId: { type: 'string' }, issueId: { type: 'string' }, issueNumber: { type: 'number' }, title: { type: 'string' }, body: { type: 'string' } }, additionalProperties: false };
+const inputSchema = { type: 'object', properties: {
+  repo: { type: 'string', description: 'GitHub owner/repository.' }, project: { type: 'string', description: 'GitLab project path or numeric ID.' },
+  first: { type: 'number' }, teamId: { type: 'string' }, issueId: { type: 'string' }, issueNumber: { type: 'number' },
+  pageId: { type: 'string' }, parentPageId: { type: 'string' }, fileId: { type: 'string' }, query: { type: 'string' },
+  filename: { type: 'string' }, mimeType: { type: 'string' }, title: { type: 'string' }, body: { type: 'string' }, content: { type: 'string' },
+}, additionalProperties: false };
+
+const WRITE_CAPABILITIES = new Set(['create_issue', 'comment_on_issue', 'comment_on_pull_request', 'create_page', 'comment_on_page', 'create_file']);
 
 export function connectorToolset(db: Database, fetchImpl: typeof fetch = fetch): ToolsetProvider {
   return (agent: Agent, input): AgentToolset | undefined => {
@@ -24,7 +31,7 @@ export function connectorToolset(db: Database, fetchImpl: typeof fetch = fetch):
         const definition = granted.find((entry) => entry.name === call.name);
         if (!definition) return { content: `There is no connector tool called ${call.name}.`, isError: true };
         try {
-          const write = definition.capability === 'create_issue' || definition.capability === 'comment_on_issue' || definition.capability === 'comment_on_pull_request';
+          const write = WRITE_CAPABILITIES.has(definition.capability);
           if (input.run) {
             for (const capability of write ? ['network.access', 'external.side_effect'] as const : ['network.access'] as const) {
               const authorization = authorizeCapabilityAction(db, { agentId: agent.id, runId: input.run.runId, capability,

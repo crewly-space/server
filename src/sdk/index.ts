@@ -168,6 +168,7 @@ export {
   type ConnectorGrant,
   type ConnectorOAuthStart,
   type ConnectorProvider,
+  type ConnectorProviderDefinition,
   type ConnectorStatus,
   type SlackImportChannel,
   type SlackImportSummary,
