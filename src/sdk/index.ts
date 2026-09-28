@@ -236,6 +236,8 @@ export type {
   ChatMessage,
   ChatRequest,
   ChatResponse,
+  ConversationReplyMode,
+  ConversationReplySettings,
   ToolCall,
   ToolDefinition,
   Conversation,
