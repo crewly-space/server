@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { countUsers, createUser, getUserByEmail, getUserById } from '../users/repository.js';
+import { countUsers, createUser, getUserByEmail, getUserById, signsInWithCrewly } from '../users/repository.js';
 import { requireAuth } from './middleware.js';
 import { ensureDefaultChannel } from '../channels/repository.js';
 import { hashPassword, verifyPassword } from './password.js';
@@ -212,7 +212,9 @@ export function registerAuthRoutes(
   app.get('/api/v1/auth/me', { preHandler: requireAuth }, async (request, reply) => {
     const user = getUserById(app.db, request.user!.id)!;
     reply.send({ id: user.id, email: user.email, role: user.role,
-      displayName: user.display_name, avatarMode: user.avatar_mode ?? 'bloop' });
+      displayName: user.display_name, avatarMode: user.avatar_mode ?? 'bloop',
+      // How this person signs in, so the app offers only the changes that apply.
+      hasPassword: Boolean(user.password_hash), signsInWithCrewly: signsInWithCrewly(app.db, user.id) });
   });
   app.post('/api/v1/auth/logout', { preHandler: requireAuth }, async (request, reply) => {
     revokeSession(app.db, request.headers.authorization!.slice(7));

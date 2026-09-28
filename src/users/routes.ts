@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
 import { emitNotification } from '../notifications/service.js';
-import { hashPassword } from '../auth/password.js';
-import { createSession } from '../auth/session.js';
+import { hashPassword, verifyPassword } from '../auth/password.js';
+import { createSession, revokeOtherSessions } from '../auth/session.js';
 import { verifySessionToken } from '../auth/session.js';
 import {
   consumeInvite,
@@ -24,7 +24,10 @@ import {
   getUserByEmail,
   getUserById,
   listUsers,
+  setUserEmail,
+  setUserPassword,
   setUserRole,
+  signsInWithCrewly,
   setUserSuspended,
   updateOwnProfile,
   type Role,
@@ -60,6 +63,8 @@ const UpdateProfileBodySchema = z.object({
   avatarMode: z.enum(['bloop', 'blobatar', 'name']).optional(),
 });
 const SuspensionBodySchema = z.object({ suspended: z.boolean() });
+const ChangeEmailBodySchema = z.object({ email: z.string().trim().email().max(320), currentPassword: z.string().min(1).max(256) });
+const ChangePasswordBodySchema = z.object({ currentPassword: z.string().min(1).max(256), newPassword: z.string().min(12).max(256) });
 
 function publicUser(user: UserRow) {
   return {
@@ -113,6 +118,48 @@ export function registerUserRoutes(app: FastifyInstance): void {
   app.patch('/api/v1/users/me', { preHandler: requireAuth }, async (request, reply) => {
     const body = UpdateProfileBodySchema.parse(request.body);
     reply.send(publicUser(updateOwnProfile(app.db, request.user!.id, body)!));
+  });
+
+  /*
+   * A person's own sign-in email. Their current password proves it is them,
+   * not someone at an unlocked screen. An account without a password signs in
+   * only through Crewly, and its email is the Crewly account's: changed there.
+   */
+  app.put('/api/v1/users/me/email', { preHandler: requireAuth }, async (request, reply) => {
+    const body = ChangeEmailBodySchema.parse(request.body);
+    const user = getUserById(app.db, request.user!.id)!;
+    if (!user.password_hash) {
+      reply.code(409).send({ error: 'email_managed_by_crewly', message: 'This account signs in with Crewly, so its email is your Crewly account’s. Change it there.' });
+      return;
+    }
+    if (!(await verifyPassword(body.currentPassword, user.password_hash))) {
+      reply.code(403).send({ error: 'wrong_password', message: 'That is not your current password.' });
+      return;
+    }
+    const email = normaliseEmail(body.email);
+    const holder = getUserByEmail(app.db, email);
+    if (holder && holder.id !== user.id) {
+      reply.code(409).send({ error: 'email_taken', message: 'Another account on this server already uses that email.' });
+      return;
+    }
+    reply.send(publicUser(setUserEmail(app.db, user.id, email)!));
+  });
+
+  /** A person's own password; other sessions end, so a leaked one stops working. */
+  app.put('/api/v1/users/me/password', { preHandler: requireAuth }, async (request, reply) => {
+    const body = ChangePasswordBodySchema.parse(request.body);
+    const user = getUserById(app.db, request.user!.id)!;
+    if (!user.password_hash) {
+      reply.code(409).send({ error: 'password_managed_by_crewly', message: 'This account signs in with Crewly and has no password here.' });
+      return;
+    }
+    if (!(await verifyPassword(body.currentPassword, user.password_hash))) {
+      reply.code(403).send({ error: 'wrong_password', message: 'That is not your current password.' });
+      return;
+    }
+    setUserPassword(app.db, user.id, await hashPassword(body.newPassword));
+    revokeOtherSessions(app.db, user.id, request.headers.authorization!.slice(7));
+    reply.code(204).send();
   });
 
   app.post('/api/v1/users', { preHandler: requireAuth }, async (request, reply) => {

@@ -32,3 +32,8 @@ export function verifySessionToken(db: Database, token: string): string | undefi
 export function revokeSession(db: Database, token: string): void {
   db.prepare('DELETE FROM sessions WHERE token = ?').run(digestToken(token));
 }
+
+/** Signs a person out everywhere except the session in `keepToken`. */
+export function revokeOtherSessions(db: Database, userId: string, keepToken: string): void {
+  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(userId, digestToken(keepToken));
+}

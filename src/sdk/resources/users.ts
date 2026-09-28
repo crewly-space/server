@@ -74,6 +74,16 @@ export class UsersResource {
     return this.http.request('PATCH', '/api/v1/users/me', input);
   }
 
+  /** Changes the signed-in person's email; their current password confirms it. */
+  changeEmail(input: { email: string; currentPassword: string }): Promise<UserAccount> {
+    return this.http.request('PUT', '/api/v1/users/me/email', input);
+  }
+
+  /** Changes the signed-in person's password and signs out their other sessions. */
+  changePassword(input: { currentPassword: string; newPassword: string }): Promise<void> {
+    return this.http.request('PUT', '/api/v1/users/me/password', input);
+  }
+
   create(input: CreateUserInput): Promise<UserAccount> {
     return this.http.request('POST', '/api/v1/users', input);
   }

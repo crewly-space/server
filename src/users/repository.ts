@@ -96,6 +96,21 @@ export function updateOwnProfile(
   return getUserById(db, id);
 }
 
+/** Changes a person's sign-in email. The caller has checked who is asking and that the address is free. */
+export function setUserEmail(db: Database, id: string, email: string): UserRow | undefined {
+  db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, id);
+  return getUserById(db, id);
+}
+
+export function setUserPassword(db: Database, id: string, passwordHash: string): void {
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, id);
+}
+
+/** True when this person also signs in through Crewly, whose account then owns their email. */
+export function signsInWithCrewly(db: Database, id: string): boolean {
+  return db.prepare("SELECT 1 FROM external_identities WHERE user_id = ? AND provider = 'crewly-cloud'").get(id) !== undefined;
+}
+
 export function listUsers(db: Database): UserRow[] {
   return db.prepare('SELECT * FROM users ORDER BY created_at ASC').all() as UserRow[];
 }

@@ -8,6 +8,10 @@ export interface AuthUser {
   /** Returned by /auth/me; absent from a login or setup reply. */
   displayName?: string;
   avatarMode?: 'bloop' | 'blobatar' | 'name';
+  /** From /auth/me: false for an account that signs in only through Crewly. */
+  hasPassword?: boolean;
+  /** From /auth/me: this person also signs in through Crewly, whose account owns their email. */
+  signsInWithCrewly?: boolean;
 }
 
 export interface AuthResult {
