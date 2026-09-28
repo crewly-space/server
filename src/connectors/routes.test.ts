@@ -120,4 +120,34 @@ describe('first-class connectors', () => {
       expect(JSON.stringify(connected.json())).not.toContain('secret-token');
     }
   });
+
+  it('tells the admin which connectors are ready and what a missing one needs', async () => {
+    const providers = (await app.inject({ method: 'GET', url: '/api/v1/connectors/providers', headers: headers() })).json().providers;
+    expect(providers.find((entry: { provider: string }) => entry.provider === 'github')).toMatchObject({ configured: true });
+    const slack = providers.find((entry: { provider: string }) => entry.provider === 'slack');
+    expect(slack).toMatchObject({ configured: false, setup: { clientIdEnv: 'CREWLY_SLACK_CLIENT_ID', clientSecretEnv: 'CREWLY_SLACK_CLIENT_SECRET' } });
+    expect(slack.setup.setupUrl).toMatch(/^https:\/\/api\.slack\.com\//);
+
+    const started = await app.inject({ method: 'POST', url: '/api/v1/connectors/oauth/slack/start', headers: headers(), payload: { callbackUrl: 'https://crewly.test/?connector=slack' } });
+    expect(started.statusCode).toBe(503);
+    expect(started.json()).toMatchObject({ error: 'connector_oauth_not_configured', missing: ['CREWLY_SLACK_CLIENT_ID', 'CREWLY_SLACK_CLIENT_SECRET'] });
+    expect(started.json().message).toContain('CREWLY_SLACK_CLIENT_ID');
+  });
+
+  it('reconnects the same connector so its grants survive a disconnect', async () => {
+    const first = await app.inject({ method: 'POST', url: '/api/v1/connectors/oauth/linear/start', headers: headers(), payload: { callbackUrl: 'https://crewly.test/?connector=linear' } });
+    const id = (await app.inject({ method: 'POST', url: '/api/v1/connectors/oauth/linear/complete', headers: headers(), payload: { state: first.json().state, code: 'code' } })).json().id as string;
+    setConnectorGrants(db, id, [{ granteeType: 'agent', granteeId: 'agent-1', capability: 'read_issues' }], { type: 'user', id: ownerId });
+    await app.inject({ method: 'POST', url: `/api/v1/connectors/${id}/revoke`, headers: headers() });
+
+    const again = await app.inject({ method: 'POST', url: '/api/v1/connectors/oauth/linear/start', headers: headers(), payload: { callbackUrl: 'https://crewly.test/?connector=linear', connectorId: id } });
+    expect(again.json().connectorId).toBe(id);
+    const reconnected = await app.inject({ method: 'POST', url: '/api/v1/connectors/oauth/linear/complete', headers: headers(), payload: { state: again.json().state, code: 'code' } });
+    expect(reconnected.json()).toMatchObject({ id, status: 'connected' });
+    expect((await app.inject({ method: 'GET', url: '/api/v1/connectors', headers: headers() })).json().connectors).toHaveLength(1);
+    expect(connectorCredential(db, { connectorId: id, granteeType: 'agent', granteeId: 'agent-1', capability: 'read_issues' }, { type: 'agent', id: 'agent-1' }).token).toBe('linear-secret-token');
+
+    const wrong = await app.inject({ method: 'POST', url: '/api/v1/connectors/oauth/github/start', headers: headers(), payload: { callbackUrl: 'https://crewly.test/?connector=github', connectorId: id } });
+    expect(wrong.statusCode).toBe(409);
+  });
 });

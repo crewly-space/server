@@ -167,6 +167,7 @@ export {
   type ConnectorCapability,
   type ConnectorGrant,
   type ConnectorOAuthStart,
+  type ConnectorOAuthStartInput,
   type ConnectorProvider,
   type ConnectorProviderDefinition,
   type ConnectorStatus,

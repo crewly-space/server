@@ -2,14 +2,19 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
-import { CONNECTOR_CAPABILITIES, CONNECTOR_PROVIDERS, consumeConnectorState, exchangeAsanaCode, exchangeDropboxCode, exchangeGitHubCode, exchangeGitLabCode, exchangeGoogleCalendarCode, exchangeGoogleDriveCode, exchangeGmailCode, exchangeLinearCode, exchangeNotionCode, exchangeSlackCode, asanaRequest, dropboxRequest, githubRequest, gitlabRequest, googleRequest, linearRequest, PROVIDERS, startAsanaAuthorization, startDropboxAuthorization, startGitHubAuthorization, startGitLabAuthorization, startGoogleCalendarAuthorization, startGoogleDriveAuthorization, startGmailAuthorization, startLinearAuthorization, startNotionAuthorization, startSlackAuthorization, ConnectorOAuthError, type ConnectorCapability, type ConnectorOAuthConfig, type ConnectorProvider } from './providers.js';
-import { connectConnector, createPendingConnector, getConnector, listConnectorAudit, listConnectorGrants, listConnectors, refreshConnector, revokeConnector, setConnectorGrants } from './service.js';
+import { CONNECTOR_CAPABILITIES, CONNECTOR_PROVIDERS, consumeConnectorState, oauthEnvVars, exchangeAsanaCode, exchangeDropboxCode, exchangeGitHubCode, exchangeGitLabCode, exchangeGoogleCalendarCode, exchangeGoogleDriveCode, exchangeGmailCode, exchangeLinearCode, exchangeNotionCode, exchangeSlackCode, asanaRequest, dropboxRequest, githubRequest, gitlabRequest, googleRequest, linearRequest, PROVIDERS, startAsanaAuthorization, startDropboxAuthorization, startGitHubAuthorization, startGitLabAuthorization, startGoogleCalendarAuthorization, startGoogleDriveAuthorization, startGmailAuthorization, startLinearAuthorization, startNotionAuthorization, startSlackAuthorization, ConnectorOAuthError, type ConnectorCapability, type ConnectorOAuthConfig, type ConnectorProvider } from './providers.js';
+import { connectConnector, createPendingConnector, restartConnector, getConnector, listConnectorAudit, listConnectorGrants, listConnectors, refreshConnector, revokeConnector, setConnectorGrants } from './service.js';
 import { importSlackQuickStart, previewSlackChannels } from './slack-import.js';
 import { hasPermission } from '../permissions/roles.js';
 import { allowedCallbackUrl } from '../auth/callback-url.js';
 
 const CapabilitySchema = z.enum(CONNECTOR_CAPABILITIES as unknown as [string, ...string[]]);
-const StartSchema = z.object({ callbackUrl: z.string().url(), scopes: z.array(z.string().min(1).max(80)).max(20).optional() });
+const StartSchema = z.object({
+  callbackUrl: z.string().url(),
+  scopes: z.array(z.string().min(1).max(80)).max(20).optional(),
+  /** Reconnect this connector instead of adding another one. */
+  connectorId: z.string().min(1).max(200).optional(),
+});
 const CompleteSchema = z.object({ state: z.string().min(1).max(256), code: z.string().min(1).max(2048) });
 const GrantsSchema = z.object({ grants: z.array(z.object({ granteeType: z.enum(['agent', 'automation', 'integration']), granteeId: z.string().min(1).max(200), capability: CapabilitySchema })).max(500) });
 
@@ -33,10 +38,20 @@ function oauthConfig(options: ConnectorRouteOptions, provider: ConnectorProvider
                 : provider === 'gmail' ? options.gmailOAuth
                   : provider === 'dropbox' ? options.dropboxOAuth : options.slackOAuth;
   if (configured) return configured;
-  const prefix = provider.replace('-', '_').toUpperCase();
-  const clientId = process.env[`CREWLY_${prefix}_CLIENT_ID`];
-  const clientSecret = process.env[`CREWLY_${prefix}_CLIENT_SECRET`];
+  const env = oauthEnvVars(provider);
+  const clientId = process.env[env.clientId];
+  const clientSecret = process.env[env.clientSecret];
   return clientId && clientSecret ? { clientId, clientSecret } : undefined;
+}
+/** Tells the admin exactly what is missing, instead of a bare "not configured". */
+function sendNotConfigured(reply: FastifyReply, provider: ConnectorProvider): void {
+  const env = oauthEnvVars(provider);
+  reply.code(503).send({
+    error: 'connector_oauth_not_configured',
+    provider,
+    message: `${PROVIDERS[provider].label} sign-in is not set up on this server yet. Set ${env.clientId} and ${env.clientSecret}, then restart the server.`,
+    missing: [env.clientId, env.clientSecret].filter((name) => !process.env[name]),
+  });
 }
 function sendConnectorError(reply: FastifyReply, error: unknown): void {
   if (error instanceof ConnectorOAuthError) { reply.code(error.statusCode).send({ error: 'connector_oauth_failed', message: error.message }); return; }
@@ -47,7 +62,14 @@ function sendConnectorError(reply: FastifyReply, error: unknown): void {
 export function registerConnectorRoutes(app: FastifyInstance, options: ConnectorRouteOptions = {}): void {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   app.get('/api/v1/connectors/providers', { preHandler: requireAuth }, async (_request, reply) => {
-    reply.send({ providers: CONNECTOR_PROVIDERS.map((provider) => ({ provider, label: PROVIDERS[provider].label, description: PROVIDERS[provider].description, capabilities: PROVIDERS[provider].capabilities, scopes: PROVIDERS[provider].scopes })) });
+    reply.send({ providers: CONNECTOR_PROVIDERS.map((provider) => {
+      const env = oauthEnvVars(provider);
+      return { provider, label: PROVIDERS[provider].label, description: PROVIDERS[provider].description,
+        capabilities: PROVIDERS[provider].capabilities, scopes: PROVIDERS[provider].scopes,
+        // Whether an admin can connect it now, and if not, what they have to set.
+        configured: oauthConfig(options, provider) !== undefined,
+        setup: { clientIdEnv: env.clientId, clientSecretEnv: env.clientSecret, setupUrl: PROVIDERS[provider].setupUrl } };
+    }) });
   });
   app.get('/api/v1/connectors', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request, reply)) return; reply.send({ connectors: listConnectors(app.db) });
@@ -55,11 +77,16 @@ export function registerConnectorRoutes(app: FastifyInstance, options: Connector
   app.post('/api/v1/connectors/oauth/:provider/start', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request, reply)) return;
     const provider = z.enum(CONNECTOR_PROVIDERS).parse((request.params as { provider: string }).provider);
-    const config = oauthConfig(options, provider); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured', provider }); return; }
+    const config = oauthConfig(options, provider); if (!config) { sendNotConfigured(reply, provider); return; }
     const body = StartSchema.parse(request.body);
     if (!allowedCallbackUrl(request, body.callbackUrl, options.callbackOrigins ?? [])) { reply.code(400).send({ error: 'invalid_callback_url' }); return; }
-    const connectorId = randomUUID();
-    createPendingConnector(app.db, { id: connectorId, provider, ownerUserId: request.user!.id }, { type: 'user', id: request.user!.id });
+    const actor = { type: 'user' as const, id: request.user!.id };
+    let connectorId: string;
+    try {
+      connectorId = body.connectorId
+        ? restartConnector(app.db, { id: body.connectorId, provider }, actor).id
+        : createPendingConnector(app.db, { id: randomUUID(), provider, ownerUserId: request.user!.id }, actor).id;
+    } catch (error) { sendConnectorError(reply, error); return; }
     const common = { connectorId, userId: request.user!.id, callbackUrl: body.callbackUrl, scopes: body.scopes };
     const pending = provider === 'github' ? startGitHubAuthorization(app.db, common, config)
       : provider === 'gitlab' ? startGitLabAuthorization(app.db, common, config)
@@ -76,7 +103,7 @@ export function registerConnectorRoutes(app: FastifyInstance, options: Connector
   app.post('/api/v1/connectors/oauth/:provider/complete', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request, reply)) return;
     const provider = z.enum(CONNECTOR_PROVIDERS).parse((request.params as { provider: string }).provider);
-    const config = oauthConfig(options, provider); if (!config) { reply.code(503).send({ error: 'connector_oauth_not_configured', provider }); return; }
+    const config = oauthConfig(options, provider); if (!config) { sendNotConfigured(reply, provider); return; }
     const body = CompleteSchema.parse(request.body);
     try {
       const pending = consumeConnectorState(app.db, { state: body.state, userId: request.user!.id });

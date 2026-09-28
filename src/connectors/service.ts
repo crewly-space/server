@@ -51,6 +51,18 @@ export function createPendingConnector(db: Database, input: { id: string; provid
   audit(db, { id: input.id, provider: input.provider }, 'connection_started', actor);
   return getConnector(db, input.id)!;
 }
+/**
+ * Reuse an existing connector for a new sign-in, so reconnecting keeps its
+ * agent grants and history instead of leaving a revoked duplicate behind.
+ * Its status is untouched until the sign-in completes.
+ */
+export function restartConnector(db: Database, input: { id: string; provider: ConnectorProvider }, actor: ConnectorActor): ConnectorView {
+  const current = getConnectorRow(db, input.id);
+  if (!current) throw new Error('connector_not_found');
+  if (current.provider !== input.provider) throw new Error('connector_provider_mismatch');
+  audit(db, current, 'reconnection_started', actor);
+  return view(current);
+}
 export function connectConnector(db: Database, id: string, input: { token: string; accountId: string; accountName: string; accountUrl?: string; scopes: string[]; metadata?: Record<string, unknown> }, actor: ConnectorActor): ConnectorView {
   const current = getConnectorRow(db, id);
   if (!current) throw new Error('connector_not_found');
@@ -90,9 +102,15 @@ export function refreshConnector(db: Database, id: string, actor: ConnectorActor
                 : current.provider === 'dropbox' ? await dropboxRequest(token, 'users/get_current_account', fetchImpl, { method: 'POST', body: '{}' })
                   : await slackRequest(token, 'auth.test', {}, fetchImpl);
     const label = PROVIDERS[current.provider].label;
-    if (result.status === 401) return setConnectorStatus(db, id, 'permission_revoked', actor, `${label} rejected the connector credential`);
-    if (result.status === 429 || (result.status === 403 && result.headers.get('x-ratelimit-remaining') === '0')) return setConnectorStatus(db, id, 'rate_limited', actor, `${label} rate limit reached`);
-    if (result.status >= 500) return setConnectorStatus(db, id, 'provider_unavailable', actor, `${label} is unavailable`);
+    // Slack answers 200 with ok:false, so a dead token only shows in the body.
+    const slackError = current.provider === 'slack' && result.body.ok !== true ? String(result.body.error ?? '') : '';
+    if (result.status === 401 || ['invalid_auth', 'token_revoked', 'account_inactive', 'not_authed'].includes(slackError)) {
+      return setConnectorStatus(db, id, 'permission_revoked', actor, `${label} no longer accepts this connection. Reconnect to sign in again.`);
+    }
+    if (result.status === 429 || (result.status === 403 && result.headers.get('x-ratelimit-remaining') === '0') || slackError === 'ratelimited') {
+      return setConnectorStatus(db, id, 'rate_limited', actor, `${label} rate limit reached. Try again later.`);
+    }
+    if (result.status >= 500) return setConnectorStatus(db, id, 'provider_unavailable', actor, `${label} is unavailable right now.`);
     const profile = current.provider === 'linear' ? (result.body.data as { viewer?: Record<string, unknown> } | undefined)?.viewer
       : current.provider === 'asana' ? (() => { const user = result.body.data as Record<string, unknown> | undefined; return user ? { ...user, id: user.gid } : undefined; })()
       : current.provider === 'slack' ? { id: result.body.team_id, name: result.body.team, url: result.body.url }
@@ -103,7 +121,7 @@ export function refreshConnector(db: Database, id: string, actor: ConnectorActor
               ? { id: result.body.account_id, name: (result.body.name as Record<string, unknown> | undefined)?.display_name ?? result.body.email, url: current.account_url }
               : result.body;
     const normalized = profile as Record<string, unknown> | undefined;
-    if (result.status !== 200 || (current.provider === 'slack' && result.body.ok !== true) || !normalized?.id) return setConnectorStatus(db, id, 'action_required', actor, `${current.provider} returned an unexpected account response`);
+    if (result.status !== 200 || (current.provider === 'slack' && result.body.ok !== true) || !normalized?.id) return setConnectorStatus(db, id, 'action_required', actor, `${label} returned an unexpected account. Reconnect to sign in again.`);
     const now = new Date().toISOString();
     db.prepare(`UPDATE connectors SET account_id = ?, account_name = ?, account_url = ?, status = 'connected', last_checked_at = ?, last_error = NULL, updated_at = ? WHERE id = ?`)
       .run(String(normalized.id), String(normalized.login ?? normalized.username ?? normalized.name ?? ''), typeof (normalized.html_url ?? normalized.web_url ?? normalized.url) === 'string' ? (normalized.html_url ?? normalized.web_url ?? normalized.url) : current.account_url, now, now, id);

@@ -19,7 +19,8 @@ const WRITE_CAPABILITIES = new Set(['create_issue', 'comment_on_issue', 'comment
 
 export function connectorToolset(db: Database, fetchImpl: typeof fetch = fetch): ToolsetProvider {
   return (agent: Agent, input): AgentToolset | undefined => {
-    const definitions = listConnectors(db).flatMap((connector) => PROVIDERS[connector.provider].capabilities.map((capability) => ({
+    // A disconnected connector keeps its grants for when it is reconnected, but offers no tools meanwhile.
+    const definitions = listConnectors(db).filter((connector) => connector.status === 'connected').flatMap((connector) => PROVIDERS[connector.provider].capabilities.map((capability) => ({
       name: `connector_${connector.id.replace(/[^a-zA-Z0-9_]/g, '_')}_${capability}`.slice(0, 64),
       description: `${capability.replaceAll('_', ' ')} using the connected ${PROVIDERS[connector.provider].label}. Input is scoped to this connector and audited.`,
       inputSchema,

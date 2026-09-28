@@ -37,3 +37,13 @@ POST /api/v1/connectors/oauth/:provider/complete
 ```
 
 The original provider-specific SDK methods remain available and call these endpoints.
+
+`GET /api/v1/connectors/providers` reports, per provider, whether this server is
+`configured` for it and, under `setup`, the two environment variables and the page where
+the OAuth app is registered, so the app can show an admin what to do instead of a failed
+Connect. Starting a sign-in for an unconfigured provider answers `503` with the same
+explanation in `message` and the unset variables in `missing`.
+
+To reconnect a disconnected or broken connector, pass its `connectorId` to `start`. The
+sign-in then updates that connector, keeping its grants and audit history; a disconnected
+connector offers agents no tools until it is connected again.

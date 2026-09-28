@@ -45,6 +45,8 @@ export interface ConnectorProviderDefinition {
   description: string;
   capabilities: ConnectorCapability[];
   scopes: string[];
+  /** Where an admin registers the OAuth app this server signs in with. */
+  setupUrl: string;
 }
 
 export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> = {
@@ -54,6 +56,7 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     description: 'Repositories, issues and pull requests through a GitHub OAuth app.',
     capabilities: ['read_profile', 'read_repository', 'read_issues', 'create_issue', 'comment_on_pull_request'],
     scopes: ['read:user', 'repo'],
+    setupUrl: 'https://github.com/settings/applications/new',
   },
   gitlab: {
     provider: 'gitlab',
@@ -61,6 +64,7 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     description: 'Projects, issues and merge requests through a GitLab OAuth application.',
     capabilities: ['read_profile', 'read_repository', 'read_issues', 'create_issue', 'comment_on_issue', 'comment_on_pull_request'],
     scopes: ['read_user', 'api'],
+    setupUrl: 'https://gitlab.com/-/user_settings/applications',
   },
   linear: {
     provider: 'linear',
@@ -68,6 +72,7 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     description: 'Issues, projects and workflow updates through a Linear workspace connection.',
     capabilities: ['read_issues', 'read_projects', 'create_issue', 'comment_on_issue'],
     scopes: ['read', 'write'],
+    setupUrl: 'https://linear.app/settings/api/applications/new',
   },
   asana: {
     provider: 'asana',
@@ -75,6 +80,7 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     description: 'Projects, tasks and comments through an Asana OAuth application.',
     capabilities: ['read_profile', 'read_projects', 'read_issues', 'create_issue', 'comment_on_issue'],
     scopes: ['users:read', 'projects:read', 'tasks:read', 'tasks:write', 'stories:write'],
+    setupUrl: 'https://app.asana.com/0/my-apps',
   },
   notion: {
     provider: 'notion',
@@ -82,6 +88,7 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     description: 'Search, read and create pages shared with a Notion public integration.',
     capabilities: ['read_profile', 'search_pages', 'read_pages', 'create_page', 'comment_on_page'],
     scopes: [],
+    setupUrl: 'https://www.notion.so/profile/integrations',
   },
   'google-drive': {
     provider: 'google-drive',
@@ -89,6 +96,7 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     description: 'Search, read and create files through a Google OAuth application.',
     capabilities: ['read_profile', 'search_files', 'read_files', 'create_file'],
     scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/drive.file'],
+    setupUrl: 'https://console.cloud.google.com/apis/credentials',
   },
   'google-calendar': {
     provider: 'google-calendar',
@@ -96,6 +104,7 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     description: 'Calendars and events through a Google OAuth application.',
     capabilities: ['read_profile', 'read_calendar', 'read_events', 'create_event', 'update_event', 'delete_event'],
     scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/calendar.events'],
+    setupUrl: 'https://console.cloud.google.com/apis/credentials',
   },
   gmail: {
     provider: 'gmail',
@@ -103,6 +112,7 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     description: 'Search, read and send email through a Google OAuth application.',
     capabilities: ['read_profile', 'read_email', 'search_email', 'send_email'],
     scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send'],
+    setupUrl: 'https://console.cloud.google.com/apis/credentials',
   },
   dropbox: {
     provider: 'dropbox',
@@ -110,6 +120,7 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     description: 'Search, read and upload files through a Dropbox OAuth application.',
     capabilities: ['read_profile', 'search_files', 'read_files', 'create_file'],
     scopes: ['account_info.read', 'files.metadata.read', 'files.content.read', 'files.content.write'],
+    setupUrl: 'https://www.dropbox.com/developers/apps/create',
   },
   slack: {
     provider: 'slack',
@@ -117,6 +128,7 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     description: 'Selected channels, messages, and optional QuickStart import from a Slack workspace.',
     capabilities: ['read_profile', 'read_channels', 'read_messages', 'post_messages'],
     scopes: ['team:read', 'channels:read', 'groups:read', 'channels:history', 'groups:history', 'chat:write', 'users:read', 'users:read.email'],
+    setupUrl: 'https://api.slack.com/apps?new_app=1',
   },
 };
 
@@ -132,6 +144,12 @@ export interface PendingConnectorAuthorization {
 export interface ConnectorOAuthConfig {
   clientId: string;
   clientSecret: string;
+}
+
+/** The environment variables that hold a provider's OAuth app credentials. */
+export function oauthEnvVars(provider: ConnectorProvider): { clientId: string; clientSecret: string } {
+  const prefix = provider.replaceAll('-', '_').toUpperCase();
+  return { clientId: `CREWLY_${prefix}_CLIENT_ID`, clientSecret: `CREWLY_${prefix}_CLIENT_SECRET` };
 }
 
 export class ConnectorOAuthError extends Error {
