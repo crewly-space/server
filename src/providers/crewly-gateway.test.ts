@@ -60,6 +60,8 @@ describe('Crewly Gateway status', () => {
     link(db, 'connected', ['inference', 'models:read']);
     cloud = () => new Response(JSON.stringify({ error: 'gateway_not_configured' }), { status: 503 });
     expect(await status()).toMatchObject({ state: 'not_offered' });
+    cloud = () => new Response(JSON.stringify({ error: 'gateway_temporarily_unavailable' }), { status: 503 });
+    expect(await status()).toMatchObject({ state: 'not_offered', message: expect.stringMatching(/temporarily unavailable/) });
     cloud = () => new Response(JSON.stringify({ error: 'gateway_subscription_required' }), { status: 402 });
     expect(await status()).toMatchObject({ state: 'not_offered', message: expect.stringMatching(/no AI Gateway plan/) });
     cloud = () => { throw new Error('offline'); };
