@@ -130,6 +130,11 @@ export class ProvidersResource {
     return this.http.request('GET', '/api/v1/providers/health');
   }
 
+  /** Sends the smallest real request through a provider and model; admins only. */
+  verify(providerId: string, model: string): Promise<{ ok: true; model: string; reply: string; latencyMs: number }> {
+    return this.http.request('POST', `/api/v1/providers/${encodePathSegment(providerId)}/verify`, { model });
+  }
+
   listModels(providerId: string): Promise<ModelInfo[]> {
     return this.http.request('GET', `/api/v1/providers/${encodePathSegment(providerId)}/models`);
   }

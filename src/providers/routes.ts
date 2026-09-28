@@ -63,6 +63,8 @@ const CreateProviderBodySchema = z
     }
   });
 
+const VerifyBodySchema = z.object({ model: z.string().trim().min(1).max(200) });
+
 const UpdateProviderBodySchema = z.object({
   apiKey: z.string().min(1).optional(),
   baseUrl: PublicHttpsUrl.optional(),
@@ -314,6 +316,38 @@ export function registerProviderRoutes(
         detail: (err as Error)?.message,
       }, 'provider model discovery failed');
       reply.code(502).send({ error: failure.code, message: failure.message, retryable: failure.retryable });
+    }
+  });
+
+  /*
+   * Proves a provider and model answer, with the smallest real request: what
+   * setup ends on, so nobody learns on an agent's first reply that the key or
+   * the model was wrong. It spends a few tokens, so only admins may run it.
+   */
+  app.post('/api/v1/providers/:id/verify', { preHandler: requireAuth }, async (request, reply) => {
+    if (!hasPermission(app.db, request.user!.id, 'providers.manage')) {
+      reply.code(403).send({ error: 'forbidden' });
+      return;
+    }
+    const { id } = request.params as { id: string };
+    const { model } = VerifyBodySchema.parse(request.body);
+    const config = getProviderConfig(app.db, id);
+    if (!config) {
+      reply.code(404).send({ error: 'provider_not_found' });
+      return;
+    }
+    const started = Date.now();
+    try {
+      const client = resolveProviderClient(config, modelFetch, { db: app.db, hub: app.deviceHub, ownerUserId: request.user!.id });
+      const answer = await client.chat({ providerId: config.id, model, maxTokens: 16,
+        messages: [{ role: 'user', content: 'Reply with the single word: ready' }] });
+      reply.send({ ok: true, model, reply: answer.content.trim().slice(0, 200), latencyMs: Date.now() - started });
+    } catch (err) {
+      const failure = describeModelListFailure(err);
+      // The generic wording is about listing models; a failed reply is better told in the error's own words.
+      const specific = failure.code === 'provider_models_failed' || failure.code === 'provider_not_configured' || failure.code === 'provider_bad_request';
+      const message = specific && err instanceof Error ? `The model did not answer: ${err.message}` : failure.message;
+      reply.code(502).send({ ok: false, error: failure.code, message, retryable: failure.retryable });
     }
   });
 }

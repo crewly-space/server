@@ -70,4 +70,22 @@ describe('Crewly Gateway status', () => {
     const added = await addGateway();
     expect(added.statusCode, added.body).toBe(201);
   });
+
+  it('verifies the chosen model answers, and says why when it does not', async () => {
+    link(db, 'connected', ['inference', 'models:read']);
+    await addGateway();
+    cloud = (url) => url.endsWith('/inference')
+      ? new Response(JSON.stringify({ providerId: 'crewly-gateway', model: 'managed-small', content: ' ready ', stopReason: 'end_turn', usage: { inputTokens: 5, outputTokens: 1 } }), { status: 200 })
+      : new Response('{}', { status: 404 });
+    const verify = () => app.inject({ method: 'POST', url: '/api/v1/providers/crewly-gateway/verify', headers: { authorization: `Bearer ${token}` }, payload: { model: 'managed-small' } });
+    const ok = await verify();
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({ ok: true, model: 'managed-small', reply: 'ready' });
+
+    cloud = () => new Response(JSON.stringify({ error: 'gateway_not_configured' }), { status: 503 });
+    const failed = await verify();
+    expect(failed.statusCode).toBe(502);
+    expect(failed.json()).toMatchObject({ ok: false, error: 'provider_not_configured' });
+    expect(failed.json().message).toMatch(/does not offer Gateway models/);
+  });
 });
