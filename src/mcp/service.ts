@@ -138,7 +138,7 @@ export function publicMcpServer(server: McpServerRecord) {
     env: redactValues(server.env),
     // Whether it is signed in, never with what.
     oauth: oauth ? { signedIn: Boolean(oauth.accessToken), issuer: oauth.issuer ?? null, scope: oauth.scope ?? null, expiresAt: oauth.expiresAt ?? null } : null,
-    status: server.enabled ? server.health : 'disabled',
+    status: !server.enabled ? 'disabled' : server.health === 'unknown' ? 'pending' : server.health,
     availableTools: server.tools.filter((tool) => !server.disabledTools.includes(tool.name)).map((tool) => tool.name),
   };
 }
