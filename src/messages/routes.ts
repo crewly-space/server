@@ -9,12 +9,13 @@ import { runAgentTurn, runIdOfFailure, type RespondFn } from '../runtime/engine.
 import { enqueueJob } from '../jobs/repository.js';
 import { SUMMARIZE_CONVERSATION_JOB_TYPE } from '../memory/summary.js';
 import type { ConnectionHub } from '../ws/hub.js';
+import type { Agent } from '../protocol/index.js';
 import { emitNotification } from '../notifications/service.js';
 import { getUserById, type Role } from '../users/repository.js';
 import { blockedAgentIds, canReadChannel, getChannel } from '../channels/repository.js';
-import { createMessage, getMessageThread, listMessagesForConversation, listThreadMessages, markThreadRead, openMessageThread, ReplyNotInConversationError, searchMessages, setThreadStatus } from './repository.js';
+import { createMessage, getMessageThread, lastAgentInThread, messageContext, listMessagesForConversation, listThreadMessages, markThreadRead, openMessageThread, ReplyNotInConversationError, searchMessages, setThreadStatus } from './repository.js';
 import { AttachmentNotOwnedError, AttachmentValidationError, ATTACHMENT_MAX_COUNT_PER_MESSAGE } from '../attachments/service.js';
-import { decideAgentRouting } from './routing.js';
+import { decideAgentRouting, messageNamesAgent, type ConversationCues } from './routing.js';
 import { dispatchAutomationEvent } from '../automations/service.js';
 
 const CreateMessageBodySchema = z.object({
@@ -34,6 +35,41 @@ type MentionRef = { targetId: string; targetType: 'user' | 'agent' };
 
 function explicitlyMentioned(mentions: MentionRef[], agentId: string): boolean {
   return mentions.some((mention) => mention.targetType === 'agent' && mention.targetId === agentId);
+}
+
+/** How long after an agent speaks a plain follow-up still reaches it. */
+const FOLLOW_UP_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * What the surrounding conversation says about each candidate agent, so a
+ * message reaches the colleague it is meant for without an @.
+ */
+function conversationCues(
+  db: FastifyInstance['db'],
+  input: { messageId: string; body: string; mentions: MentionRef[]; candidates: Array<{ agentId: string; agent?: Agent }>; threadRootId?: string },
+): Map<string, ConversationCues> {
+  const context = messageContext(db, input.messageId);
+  const named = new Set(input.candidates.filter(({ agent }) => agent && messageNamesAgent(agent, input.body)).map(({ agentId }) => agentId));
+  const mentioned = new Set(input.mentions.filter((mention) => mention.targetType === 'agent').map((mention) => mention.targetId));
+  const addressed = new Set([...named, ...mentioned]);
+  // @-ing a person means the message is for them, not a follow-up for an agent.
+  const toPerson = input.mentions.some((mention) => mention.targetType === 'user');
+  const recent = context.previous?.authorType === 'agent'
+    && Date.now() - Date.parse(context.previous.createdAt) <= FOLLOW_UP_WINDOW_MS
+    ? context.previous.authorId
+    : undefined;
+  // In a thread, the agent working in it carries on. A thread no agent has
+  // joined yet goes to the room's only agent, if it has just one.
+  const threadAgent = input.threadRootId
+    ? lastAgentInThread(db, input.threadRootId) ?? (input.candidates.length === 1 ? input.candidates[0]!.agentId : undefined)
+    : undefined;
+  return new Map(input.candidates.map(({ agentId }) => [agentId, {
+    named: named.has(agentId),
+    repliedTo: context.repliedToAuthor?.authorType === 'agent' && context.repliedToAuthor.authorId === agentId,
+    followUp: !input.threadRootId && recent === agentId,
+    inThread: threadAgent === agentId,
+    addressedElsewhere: toPerson || [...addressed].some((id) => id !== agentId),
+  }]));
 }
 
 export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, respond: RespondFn): void {
@@ -159,14 +195,15 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
         .filter((participant) => participant.participantType === 'agent')
         .map((participant) => participant.participantId);
     const blocked = new Set(conversation.kind === 'channel' ? blockedAgentIds(app.db, id) : []);
-    const decisions = candidates.map((agentId) => {
-      const agent = getAgent(app.db, agentId);
+    const candidateAgents = candidates.map((agentId) => ({ agentId, agent: getAgent(app.db, agentId) }));
+    const cues = conversationCues(app.db, { messageId: message.id, body: body.body, mentions: body.mentions, candidates: candidateAgents });
+    const decisions = candidateAgents.map(({ agentId, agent }) => {
       const mode = dmAgentId ? 'always' as const : (effectiveAgentRoutingMode(app.db, agentId, id) ?? 'mention_only');
       return {
         agentId,
         agent,
         decision: agent
-          ? decideAgentRouting(agent, mode, body.body, explicitlyMentioned(body.mentions, agentId), blocked.has(agentId), Boolean(dmAgentId))
+          ? decideAgentRouting(agent, mode, body.body, explicitlyMentioned(body.mentions, agentId), blocked.has(agentId), Boolean(dmAgentId), cues.get(agentId))
           : { shouldRespond: false, mode, reason: 'blocked' as const },
       };
     });
@@ -253,11 +290,28 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
       body: body.body, mentions: body.mentions, replyToMessageId: rootId, threadRootId: rootId, attachmentIds: body.attachmentIds });
     markThreadRead(app.db, rootId, request.user!.id);
     hub.publish(`conversation:${thread.conversationId}`, 'thread.message.created', { rootMessageId: rootId, message });
-    for (const mention of body.mentions.filter((entry) => entry.targetType === 'agent')) {
-      const agent = getAgent(app.db, mention.targetId);
+    // The same routing as the main timeline, plus the thread itself: the agent
+    // working in it hears a follow-up without being @-mentioned again.
+    const conversation = getConversation(app.db, thread.conversationId);
+    const dmAgentId = conversation?.kind === 'dm'
+      ? conversation.participants.find((p) => p.participantType === 'agent')?.participantId
+      : undefined;
+    const blocked = new Set(conversation?.kind === 'channel' ? blockedAgentIds(app.db, thread.conversationId) : []);
+    const candidateAgents = (conversation?.participants ?? [])
+      .filter((participant) => participant.participantType === 'agent' && !blocked.has(participant.participantId))
+      .map((participant) => ({ agentId: participant.participantId, agent: getAgent(app.db, participant.participantId) }));
+    const cues = conversationCues(app.db, { messageId: message.id, body: body.body, mentions: body.mentions, candidates: candidateAgents, threadRootId: rootId });
+    for (const { agentId, agent } of candidateAgents) {
       if (!agent || !getProviderConfig(app.db, agent.modelPolicy.defaultProviderId)) continue;
+      // A thread is a focused conversation: "always" and "relevant" agents do
+      // not pile in; only the cues above (or an @) bring an agent in.
+      const channelMode = effectiveAgentRoutingMode(app.db, agentId, thread.conversationId) ?? 'mention_only';
+      const mode = agentId === dmAgentId ? 'always' as const : channelMode === 'disabled' ? 'disabled' as const : 'mention_only' as const;
+      const decision = decideAgentRouting(agent, mode, body.body, explicitlyMentioned(body.mentions, agentId), false, agentId === dmAgentId, cues.get(agentId));
+      if (!decision.shouldRespond) continue;
       void runAgentTurn({ db: app.db, hub, respond, queue: app.runQueue, onAgentChange: (changed) => app.agentStatus.refresh(changed) }, {
-        agentId: agent.id, conversationId: thread.conversationId, trigger: 'thread_message', triggerMessageId: message.id, threadRootId: rootId,
+        agentId, conversationId: thread.conversationId, trigger: 'thread_message', triggerMessageId: message.id, threadRootId: rootId,
+        routingDecision: { mode: decision.mode, reason: decision.reason },
       }).catch(() => undefined);
     }
     reply.code(201).send(message);

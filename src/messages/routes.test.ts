@@ -223,6 +223,59 @@ describe('message routes', () => {
     await app.close();
   });
 
+  it('treats agents as colleagues: a name, a follow-up or a thread reaches them without an @', async () => {
+    const asked: string[] = [];
+    const respond: RespondFn = async ({ agentId }) => {
+      asked.push(agentId);
+      return { body: 'on it' };
+    };
+    const app = await buildApp({ db, respond });
+    const { token, conversationId, alphaId, betaId } = await setupGroupWithAgents(app);
+    const post = (body: string) => app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { body },
+    });
+
+    // Said by name, the way a person addresses a colleague.
+    await post('alpha, can you take the release notes?');
+    await settle();
+    expect(asked).toEqual([alphaId]);
+
+    // Alpha spoke last, so a plain follow-up carries on with Alpha.
+    await post('and the changelog too please');
+    await settle();
+    expect(asked).toEqual([alphaId, alphaId]);
+
+    // Turning to someone else hands the conversation over.
+    await post('Beta, what do you think?');
+    await settle();
+    expect(asked).toEqual([alphaId, alphaId, betaId]);
+
+    // In a thread on Alpha's message, Alpha hears replies without an @.
+    const messages = await app.inject({
+      method: 'GET',
+      url: `/api/v1/conversations/${conversationId}/messages`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const alphaReply = (messages.json() as Array<{ id: string; authorId?: string; author?: string; authorType: string }>)
+      .find((message) => message.authorType === 'agent' && (message.authorId ?? message.author) === alphaId);
+    expect(alphaReply).toBeDefined();
+    await app.inject({ method: 'POST', url: `/api/v1/messages/${alphaReply!.id}/thread`, headers: { authorization: `Bearer ${token}` } });
+    const threadReply = await app.inject({
+      method: 'POST',
+      url: `/api/v1/threads/${alphaReply!.id}/messages`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { body: 'can you expand on that?' },
+    });
+    expect(threadReply.statusCode).toBe(201);
+    await settle();
+    expect(asked).toEqual([alphaId, alphaId, betaId, alphaId]);
+
+    await app.close();
+  });
+
   it('applies global routing modes once and records the decision in the run trace', async () => {
     const asked: string[] = [];
     const respond: RespondFn = async ({ agentId }) => {
@@ -296,20 +349,19 @@ describe('message routes', () => {
       method: 'POST',
       url: `/api/v1/conversations/${group.json().id}/messages`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { body: 'Please triage this deployment incident.' },
-    });
-    await settle();
-    expect(asked).toEqual([agent.id]);
-
-    asked.length = 0;
-    await app.inject({
-      method: 'POST',
-      url: `/api/v1/conversations/${group.json().id}/messages`,
-      headers: { authorization: `Bearer ${token}` },
       payload: { body: 'What should we order for lunch?' },
     });
     await settle();
     expect(asked).toEqual([]);
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${group.json().id}/messages`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { body: 'Please triage this deployment incident.' },
+    });
+    await settle();
+    expect(asked).toEqual([agent.id]);
 
     await app.close();
   });

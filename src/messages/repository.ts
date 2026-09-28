@@ -151,6 +151,38 @@ const threadView = (row: ThreadRow): MessageThread => ({ rootMessageId: row.root
   status: row.status, createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
   resolvedAt: row.resolved_at, archivedAt: row.archived_at });
 
+/**
+ * Who wrote what just before a message, for deciding who a follow-up is
+ * meant for: the previous message in the main timeline, and the author of the
+ * message it replies to.
+ */
+export function messageContext(db: Database, messageId: string): {
+  previous?: { authorId: string; authorType: ActorType; createdAt: string };
+  repliedToAuthor?: { authorId: string; authorType: ActorType };
+} {
+  const row = db.prepare('SELECT conversation_id, reply_to_message_id, rowid AS seq FROM messages WHERE id = ?').get(messageId) as
+    | { conversation_id: string; reply_to_message_id: string | null; seq: number } | undefined;
+  if (!row) return {};
+  const previous = db.prepare(`SELECT author_id, author_type, created_at FROM messages
+    WHERE conversation_id = ? AND thread_root_id IS NULL AND rowid < ? ORDER BY rowid DESC LIMIT 1`)
+    .get(row.conversation_id, row.seq) as { author_id: string; author_type: ActorType; created_at: string } | undefined;
+  const replied = row.reply_to_message_id
+    ? db.prepare('SELECT author_id, author_type FROM messages WHERE id = ?').get(row.reply_to_message_id) as { author_id: string; author_type: ActorType } | undefined
+    : undefined;
+  return {
+    previous: previous && { authorId: previous.author_id, authorType: previous.author_type, createdAt: previous.created_at },
+    repliedToAuthor: replied && { authorId: replied.author_id, authorType: replied.author_type },
+  };
+}
+
+/** The agent that spoke last in a thread, counting the root message. */
+export function lastAgentInThread(db: Database, rootMessageId: string): string | undefined {
+  const row = db.prepare(`SELECT author_id FROM messages
+    WHERE (id = ? OR thread_root_id = ?) AND author_type = 'agent' ORDER BY rowid DESC LIMIT 1`)
+    .get(rootMessageId, rootMessageId) as { author_id: string } | undefined;
+  return row?.author_id;
+}
+
 export function openMessageThread(db: Database, rootMessageId: string, actorId: string): MessageThread {
   const root = db.prepare('SELECT conversation_id, thread_root_id FROM messages WHERE id = ?').get(rootMessageId) as { conversation_id: string; thread_root_id: string | null } | undefined;
   if (!root || root.thread_root_id) throw new Error('thread_root_not_found');

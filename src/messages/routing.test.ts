@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideAgentRouting, messageIsRelevantToAgent } from './routing.js';
+import { decideAgentRouting, messageIsRelevantToAgent, messageNamesAgent } from './routing.js';
 
 const agent = { name: 'Release Helper', personality: 'You triage deployment incidents and release failures.', availability: 'auto' as const };
 
@@ -32,5 +32,19 @@ describe('message routing', () => {
       shouldRespond: false,
       reason: 'blocked',
     });
+  });
+
+  it('hears its name the way a colleague would', () => {
+    expect(messageNamesAgent(agent, 'release helper, can you check?')).toBe(true);
+    expect(messageNamesAgent(agent, 'thanks @Release Helper')).toBe(true);
+    expect(messageNamesAgent({ name: 'Ada' }, 'the adapter is broken')).toBe(false);
+  });
+
+  it('answers follow-ups and threads in mention-only mode, but not when someone else is addressed', () => {
+    expect(decideAgentRouting(agent, 'mention_only', 'and the tests?', false, false, false, { followUp: true })).toMatchObject({ shouldRespond: true, reason: 'follow_up' });
+    expect(decideAgentRouting(agent, 'mention_only', 'more?', false, false, false, { inThread: true })).toMatchObject({ shouldRespond: true, reason: 'thread' });
+    expect(decideAgentRouting(agent, 'mention_only', 'Beta?', false, false, false, { followUp: true, addressedElsewhere: true })).toMatchObject({ shouldRespond: false });
+    expect(decideAgentRouting(agent, 'mention_only', 'hi', false, false, false, { named: true })).toMatchObject({ shouldRespond: true, reason: 'named' });
+    expect(decideAgentRouting(agent, 'disabled', 'hi', false, false, false, { named: true, followUp: true })).toMatchObject({ shouldRespond: false, reason: 'disabled' });
   });
 });

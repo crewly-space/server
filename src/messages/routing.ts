@@ -23,10 +23,42 @@ export function messageIsRelevantToAgent(agent: Pick<Agent, 'name' | 'personalit
   return matches > 0;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Whether the message says the agent's name the way a person addresses a
+ * colleague ("Alpha, can you…", "thanks alpha"), without the @ picker.
+ */
+export function messageNamesAgent(agent: Pick<Agent, 'name'>, body: string): boolean {
+  const name = agent.name.trim();
+  if (name.length < 2) return false;
+  return new RegExp(`(^|[^\\p{L}\\p{N}_])@?${escapeRegExp(name)}(?![\\p{L}\\p{N}_])`, 'iu').test(body);
+}
+
+/**
+ * What the conversation around a message says about who it is meant for.
+ * Agents are colleagues: one who was just talking, whose message is being
+ * answered, or who is working in the thread, hears a follow-up without an @.
+ */
+export interface ConversationCues {
+  /** The message says the agent's name. */
+  named?: boolean;
+  /** The message replies to one of the agent's messages. */
+  repliedTo?: boolean;
+  /** The agent spoke last, recently, and the person is carrying on. */
+  followUp?: boolean;
+  /** The agent is the one working in this thread. */
+  inThread?: boolean;
+  /** The message addresses some other agent, by @ or by name. */
+  addressedElsewhere?: boolean;
+}
+
 export interface RoutingDecision {
   shouldRespond: boolean;
   mode: AgentRoutingMode;
-  reason: 'explicit_mention' | 'always' | 'relevant' | 'irrelevant' | 'mention_only' | 'disabled' | 'blocked' | 'dnd' | 'classifier_unavailable';
+  reason: 'explicit_mention' | 'named' | 'replied_to' | 'follow_up' | 'thread' | 'always' | 'relevant' | 'irrelevant' | 'mention_only' | 'disabled' | 'blocked' | 'dnd' | 'classifier_unavailable';
 }
 
 export function decideAgentRouting(
@@ -36,6 +68,7 @@ export function decideAgentRouting(
   explicitlyMentioned: boolean,
   blocked: boolean,
   directMessage = false,
+  cues: ConversationCues = {},
 ): RoutingDecision {
   // An explicit address is a direct request. Channel blocks are the permission
   // boundary and therefore win even over a mention.
@@ -43,6 +76,16 @@ export function decideAgentRouting(
   if (directMessage) return { shouldRespond: true, mode, reason: 'always' };
   if (explicitlyMentioned) return { shouldRespond: true, mode, reason: 'explicit_mention' };
   if (agent.availability === 'dnd') return { shouldRespond: false, mode, reason: 'dnd' };
+  if (mode === 'disabled') return { shouldRespond: false, mode, reason: 'disabled' };
+  // Being spoken to by name or answered directly is being addressed, @ or not.
+  if (cues.named) return { shouldRespond: true, mode, reason: 'named' };
+  if (cues.repliedTo) return { shouldRespond: true, mode, reason: 'replied_to' };
+  // Carrying on a conversation reaches whoever it is with, unless the person
+  // has just turned to someone else.
+  if (!cues.addressedElsewhere) {
+    if (cues.inThread) return { shouldRespond: true, mode, reason: 'thread' };
+    if (cues.followUp) return { shouldRespond: true, mode, reason: 'follow_up' };
+  }
   if (mode === 'always') return { shouldRespond: true, mode, reason: 'always' };
   if (mode === 'relevant') {
     try {
@@ -54,5 +97,5 @@ export function decideAgentRouting(
       return { shouldRespond: true, mode, reason: 'classifier_unavailable' };
     }
   }
-  return { shouldRespond: false, mode, reason: mode === 'disabled' ? 'disabled' : 'mention_only' };
+  return { shouldRespond: false, mode, reason: 'mention_only' };
 }
