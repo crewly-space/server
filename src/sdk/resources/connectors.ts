@@ -1,9 +1,9 @@
 import type { HttpClient } from '../http-client.js';
 import { encodePathSegment } from '../path.js';
 
-export type ConnectorProvider = 'github' | 'gitlab' | 'linear' | 'notion' | 'google-drive' | 'slack';
+export type ConnectorProvider = 'github' | 'gitlab' | 'linear' | 'asana' | 'notion' | 'google-drive' | 'google-calendar' | 'gmail' | 'dropbox' | 'slack';
 export type ConnectorStatus = 'pending' | 'connected' | 'action_required' | 'permission_revoked' | 'rate_limited' | 'provider_unavailable' | 'revoked';
-export type ConnectorCapability = 'read_profile' | 'read_repository' | 'read_issues' | 'create_issue' | 'comment_on_pull_request' | 'read_projects' | 'comment_on_issue' | 'read_channels' | 'read_messages' | 'post_messages' | 'read_pages' | 'search_pages' | 'create_page' | 'comment_on_page' | 'read_files' | 'search_files' | 'create_file';
+export type ConnectorCapability = 'read_profile' | 'read_repository' | 'read_issues' | 'create_issue' | 'comment_on_pull_request' | 'read_projects' | 'comment_on_issue' | 'read_channels' | 'read_messages' | 'post_messages' | 'read_pages' | 'search_pages' | 'create_page' | 'comment_on_page' | 'read_files' | 'search_files' | 'create_file' | 'read_calendar' | 'read_events' | 'create_event' | 'update_event' | 'delete_event' | 'read_email' | 'search_email' | 'send_email';
 export interface ConnectorProviderDefinition { provider: ConnectorProvider; label: string; description: string; capabilities: ConnectorCapability[]; scopes: string[]; }
 export interface SlackImportChannel { id: string; name: string; topic: string; isPrivate: boolean; }
 export interface SlackImportSummary { importId: string; status: string; createdChannels: number; matchedChannels: number; importedMessages: number; invitedMembers: number; skipped: number; failed: string[]; }

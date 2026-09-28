@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../db/driver.js';
 import { decryptDatabaseSecret, encryptDatabaseSecret } from '../db/secrets.js';
-import { githubRequest, gitlabRequest, googleRequest, linearRequest, notionRequest, slackRequest, PROVIDERS, type ConnectorCapability, type ConnectorProvider, type ConnectorStatus } from './providers.js';
+import { asanaRequest, dropboxRequest, githubRequest, gitlabRequest, googleRequest, linearRequest, notionRequest, slackRequest, PROVIDERS, type ConnectorCapability, type ConnectorProvider, type ConnectorStatus } from './providers.js';
 
 export type ConnectorActor = { type: 'user' | 'agent' | 'automation' | 'integration' | 'system'; id: string | null };
 export type ConnectorGranteeType = 'agent' | 'automation' | 'integration';
@@ -83,23 +83,31 @@ export function refreshConnector(db: Database, id: string, actor: ConnectorActor
     const result = current.provider === 'github' ? await githubRequest(token, '/user', fetchImpl)
       : current.provider === 'gitlab' ? await gitlabRequest(token, 'user', fetchImpl)
         : current.provider === 'linear' ? await linearRequest(token, 'query Viewer { viewer { id name email url } }', {}, fetchImpl)
-          : current.provider === 'notion' ? await notionRequest(token, 'users/me', fetchImpl)
-            : current.provider === 'google-drive' ? await googleRequest(token, 'https://www.googleapis.com/oauth2/v3/userinfo', fetchImpl)
-              : await slackRequest(token, 'auth.test', {}, fetchImpl);
+          : current.provider === 'asana' ? await asanaRequest(token, 'users/me', fetchImpl)
+            : current.provider === 'notion' ? await notionRequest(token, 'users/me', fetchImpl)
+              : current.provider === 'google-drive' || current.provider === 'google-calendar' || current.provider === 'gmail'
+                ? await googleRequest(token, 'https://www.googleapis.com/oauth2/v3/userinfo', fetchImpl)
+                : current.provider === 'dropbox' ? await dropboxRequest(token, 'users/get_current_account', fetchImpl, { method: 'POST', body: '{}' })
+                  : await slackRequest(token, 'auth.test', {}, fetchImpl);
     const label = PROVIDERS[current.provider].label;
     if (result.status === 401) return setConnectorStatus(db, id, 'permission_revoked', actor, `${label} rejected the connector credential`);
     if (result.status === 429 || (result.status === 403 && result.headers.get('x-ratelimit-remaining') === '0')) return setConnectorStatus(db, id, 'rate_limited', actor, `${label} rate limit reached`);
     if (result.status >= 500) return setConnectorStatus(db, id, 'provider_unavailable', actor, `${label} is unavailable`);
     const profile = current.provider === 'linear' ? (result.body.data as { viewer?: Record<string, unknown> } | undefined)?.viewer
+      : current.provider === 'asana' ? (() => { const user = result.body.data as Record<string, unknown> | undefined; return user ? { ...user, id: user.gid } : undefined; })()
       : current.provider === 'slack' ? { id: result.body.team_id, name: result.body.team, url: result.body.url }
         : current.provider === 'notion' ? { id: result.body.bot_id ?? result.body.id, name: current.account_name, url: current.account_url }
-          : current.provider === 'google-drive' ? { id: result.body.sub, name: result.body.name ?? result.body.email, url: current.account_url }
-            : result.body;
-    if (result.status !== 200 || (current.provider === 'slack' && result.body.ok !== true) || !profile?.id) return setConnectorStatus(db, id, 'action_required', actor, `${current.provider} returned an unexpected account response`);
+          : current.provider === 'google-drive' || current.provider === 'google-calendar' || current.provider === 'gmail'
+            ? { id: result.body.sub, name: result.body.name ?? result.body.email, url: current.account_url }
+            : current.provider === 'dropbox'
+              ? { id: result.body.account_id, name: (result.body.name as Record<string, unknown> | undefined)?.display_name ?? result.body.email, url: current.account_url }
+              : result.body;
+    const normalized = profile as Record<string, unknown> | undefined;
+    if (result.status !== 200 || (current.provider === 'slack' && result.body.ok !== true) || !normalized?.id) return setConnectorStatus(db, id, 'action_required', actor, `${current.provider} returned an unexpected account response`);
     const now = new Date().toISOString();
     db.prepare(`UPDATE connectors SET account_id = ?, account_name = ?, account_url = ?, status = 'connected', last_checked_at = ?, last_error = NULL, updated_at = ? WHERE id = ?`)
-      .run(String(profile.id), String(profile.login ?? profile.username ?? profile.name ?? ''), typeof (profile.html_url ?? profile.web_url ?? profile.url) === 'string' ? (profile.html_url ?? profile.web_url ?? profile.url) : current.account_url, now, now, id);
-    audit(db, current, 'refreshed', actor, { accountId: String(profile.id) });
+      .run(String(normalized.id), String(normalized.login ?? normalized.username ?? normalized.name ?? ''), typeof (normalized.html_url ?? normalized.web_url ?? normalized.url) === 'string' ? (normalized.html_url ?? normalized.web_url ?? normalized.url) : current.account_url, now, now, id);
+    audit(db, current, 'refreshed', actor, { accountId: String(normalized.id) });
     return getConnector(db, id)!;
   })();
 }
@@ -198,6 +206,21 @@ export async function connectorCall(
         : { first: Math.min(50, Math.max(1, Number(input.payload.first ?? 20))) };
     const response = await linearRequest(credential.token, query, variables, fetchImpl);
     result = { status: response.status, body: response.body };
+  } else if (credential.provider === 'asana') {
+    const workspaceId = encodeURIComponent(String(input.payload.workspaceId ?? ''));
+    const projectId = encodeURIComponent(String(input.payload.projectId ?? ''));
+    const taskId = encodeURIComponent(String(input.payload.taskId ?? input.payload.issueId ?? ''));
+    const path = input.capability === 'read_profile' ? 'users/me'
+      : input.capability === 'read_projects' ? `workspaces/${workspaceId}/projects?limit=${Math.min(100, Math.max(1, Number(input.payload.first ?? 20)))}`
+        : input.capability === 'read_issues' ? `projects/${projectId}/tasks?limit=${Math.min(100, Math.max(1, Number(input.payload.first ?? 20)))}&opt_fields=name,completed,permalink_url,due_on`
+          : input.capability === 'create_issue' ? 'tasks' : `tasks/${taskId}/stories`;
+    const body = input.capability === 'create_issue'
+      ? { data: { name: String(input.payload.title ?? ''), notes: String(input.payload.body ?? ''), projects: [String(input.payload.projectId ?? '')],
+        ...(input.payload.dueOn ? { due_on: String(input.payload.dueOn) } : {}), ...(input.payload.assignee ? { assignee: String(input.payload.assignee) } : {}) } }
+      : { data: { text: String(input.payload.body ?? input.payload.content ?? '') } };
+    const response = await asanaRequest(credential.token, path, fetchImpl,
+      input.operation === 'write' ? { method: 'POST', body: JSON.stringify(body) } : {});
+    result = { status: response.status, body: response.body };
   } else if (credential.provider === 'notion') {
     const pageId = encodeURIComponent(String(input.payload.pageId ?? ''));
     const text = String(input.payload.content ?? input.payload.body ?? '');
@@ -242,6 +265,88 @@ export async function connectorCall(
       const multipart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: ${String(input.payload.mimeType ?? 'text/plain')}\r\n\r\n${content}\r\n--${boundary}--`;
       const response = await googleRequest(credential.token, 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink', fetchImpl,
         { method: 'POST', headers: { 'content-type': `multipart/related; boundary=${boundary}` }, body: multipart });
+      result = { status: response.status, body: response.body };
+    }
+  } else if (credential.provider === 'google-calendar') {
+    const calendarId = encodeURIComponent(String(input.payload.calendarId ?? 'primary'));
+    const eventId = encodeURIComponent(String(input.payload.eventId ?? ''));
+    if (input.capability === 'read_profile') {
+      const response = await googleRequest(credential.token, 'https://www.googleapis.com/oauth2/v3/userinfo', fetchImpl);
+      result = { status: response.status, body: response.body };
+    } else if (input.capability === 'read_calendar') {
+      const url = new URL('https://www.googleapis.com/calendar/v3/users/me/calendarList');
+      url.searchParams.set('maxResults', String(Math.min(100, Math.max(1, Number(input.payload.first ?? 20)))));
+      const response = await googleRequest(credential.token, url, fetchImpl);
+      result = { status: response.status, body: response.body };
+    } else if (input.capability === 'read_events') {
+      const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events`);
+      url.searchParams.set('maxResults', String(Math.min(100, Math.max(1, Number(input.payload.first ?? 20)))));
+      url.searchParams.set('singleEvents', 'true'); url.searchParams.set('orderBy', 'startTime');
+      if (input.payload.timeMin) url.searchParams.set('timeMin', String(input.payload.timeMin));
+      if (input.payload.timeMax) url.searchParams.set('timeMax', String(input.payload.timeMax));
+      if (input.payload.query) url.searchParams.set('q', String(input.payload.query));
+      const response = await googleRequest(credential.token, url, fetchImpl);
+      result = { status: response.status, body: response.body };
+    } else {
+      const url = `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events${eventId ? `/${eventId}` : ''}`;
+      const event = { summary: String(input.payload.title ?? ''), description: String(input.payload.body ?? ''),
+        start: { dateTime: String(input.payload.start ?? ''), ...(input.payload.timeZone ? { timeZone: String(input.payload.timeZone) } : {}) },
+        end: { dateTime: String(input.payload.end ?? ''), ...(input.payload.timeZone ? { timeZone: String(input.payload.timeZone) } : {}) } };
+      const init: RequestInit = input.capability === 'delete_event' ? { method: 'DELETE' }
+        : { method: input.capability === 'update_event' ? 'PATCH' : 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(event) };
+      const response = await googleRequest(credential.token, url, fetchImpl, init);
+      result = { status: response.status, body: response.body };
+    }
+  } else if (credential.provider === 'gmail') {
+    if (input.capability === 'read_profile') {
+      const response = await googleRequest(credential.token, 'https://www.googleapis.com/oauth2/v3/userinfo', fetchImpl);
+      result = { status: response.status, body: response.body };
+    } else if (input.capability === 'search_email') {
+      const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
+      const query = String(input.payload.query ?? '');
+      if (query) url.searchParams.set('q', query);
+      url.searchParams.set('maxResults', String(Math.min(100, Math.max(1, Number(input.payload.first ?? 20)))));
+      const response = await googleRequest(credential.token, url, fetchImpl);
+      result = { status: response.status, body: response.body };
+    } else if (input.capability === 'read_email') {
+      const messageId = encodeURIComponent(String(input.payload.messageId ?? ''));
+      const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}`);
+      url.searchParams.set('format', String(input.payload.format ?? 'full'));
+      const response = await googleRequest(credential.token, url, fetchImpl);
+      result = { status: response.status, body: response.body };
+    } else {
+      const cleanHeader = (value: unknown) => String(value ?? '').replace(/[\r\n]+/g, ' ').trim();
+      const to = cleanHeader(input.payload.to);
+      const subject = cleanHeader(input.payload.subject ?? input.payload.title);
+      const cc = cleanHeader(input.payload.cc);
+      const bcc = cleanHeader(input.payload.bcc);
+      const body = String(input.payload.body ?? input.payload.content ?? '');
+      const mime = [`To: ${to}`, ...(cc ? [`Cc: ${cc}`] : []), ...(bcc ? [`Bcc: ${bcc}`] : []),
+        `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`, 'MIME-Version: 1.0',
+        'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: 8bit', '', body].join('\r\n');
+      const raw = Buffer.from(mime).toString('base64url');
+      const response = await googleRequest(credential.token, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', fetchImpl,
+        { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ raw }) });
+      result = { status: response.status, body: response.body };
+    }
+  } else if (credential.provider === 'dropbox') {
+    const path = String(input.payload.path ?? input.payload.fileId ?? '');
+    if (input.capability === 'read_profile') {
+      const response = await dropboxRequest(credential.token, 'users/get_current_account', fetchImpl, { method: 'POST', body: '{}' });
+      result = { status: response.status, body: response.body };
+    } else if (input.capability === 'search_files') {
+      const response = await dropboxRequest(credential.token, 'files/search_v2', fetchImpl, { method: 'POST', body: JSON.stringify({
+        query: String(input.payload.query ?? ''), options: { max_results: Math.min(100, Math.max(1, Number(input.payload.first ?? 20))), file_status: 'active' },
+      }) });
+      result = { status: response.status, body: response.body };
+    } else if (input.capability === 'read_files') {
+      const response = await dropboxRequest(credential.token, 'files/download', fetchImpl,
+        { method: 'POST', headers: { 'Dropbox-API-Arg': JSON.stringify({ path }) } }, true);
+      result = { status: response.status, body: response.body };
+    } else {
+      const response = await dropboxRequest(credential.token, 'files/upload', fetchImpl, { method: 'POST',
+        headers: { 'content-type': 'application/octet-stream', 'Dropbox-API-Arg': JSON.stringify({ path: path || `/${String(input.payload.filename ?? input.payload.title ?? 'crewly.txt')}`, mode: 'add', autorename: true }) },
+        body: String(input.payload.content ?? input.payload.body ?? '') }, true);
       result = { status: response.status, body: response.body };
     }
   } else {

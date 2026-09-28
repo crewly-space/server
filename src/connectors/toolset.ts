@@ -9,10 +9,13 @@ const inputSchema = { type: 'object', properties: {
   repo: { type: 'string', description: 'GitHub owner/repository.' }, project: { type: 'string', description: 'GitLab project path or numeric ID.' },
   first: { type: 'number' }, teamId: { type: 'string' }, issueId: { type: 'string' }, issueNumber: { type: 'number' },
   pageId: { type: 'string' }, parentPageId: { type: 'string' }, fileId: { type: 'string' }, query: { type: 'string' },
-  filename: { type: 'string' }, mimeType: { type: 'string' }, title: { type: 'string' }, body: { type: 'string' }, content: { type: 'string' },
+  filename: { type: 'string' }, mimeType: { type: 'string' }, path: { type: 'string' }, title: { type: 'string' }, body: { type: 'string' }, content: { type: 'string' },
+  workspaceId: { type: 'string' }, projectId: { type: 'string' }, taskId: { type: 'string' }, dueOn: { type: 'string' }, assignee: { type: 'string' },
+  calendarId: { type: 'string' }, eventId: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, timeMin: { type: 'string' }, timeMax: { type: 'string' }, timeZone: { type: 'string' },
+  messageId: { type: 'string' }, to: { type: 'string' }, cc: { type: 'string' }, bcc: { type: 'string' }, subject: { type: 'string' }, format: { type: 'string', enum: ['minimal', 'full', 'raw', 'metadata'] },
 }, additionalProperties: false };
 
-const WRITE_CAPABILITIES = new Set(['create_issue', 'comment_on_issue', 'comment_on_pull_request', 'create_page', 'comment_on_page', 'create_file']);
+const WRITE_CAPABILITIES = new Set(['create_issue', 'comment_on_issue', 'comment_on_pull_request', 'create_page', 'comment_on_page', 'create_file', 'create_event', 'update_event', 'delete_event', 'send_email']);
 
 export function connectorToolset(db: Database, fetchImpl: typeof fetch = fetch): ToolsetProvider {
   return (agent: Agent, input): AgentToolset | undefined => {

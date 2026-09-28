@@ -24,17 +24,25 @@ describe('first-class connectors', () => {
       githubOAuth: { clientId: 'client', clientSecret: 'secret' },
       gitlabOAuth: { clientId: 'gitlab-client', clientSecret: 'gitlab-secret' },
       linearOAuth: { clientId: 'linear-client', clientSecret: 'linear-secret' },
+      asanaOAuth: { clientId: 'asana-client', clientSecret: 'asana-secret' },
       notionOAuth: { clientId: 'notion-client', clientSecret: 'notion-secret' },
       googleDriveOAuth: { clientId: 'google-client', clientSecret: 'google-secret' },
+      googleCalendarOAuth: { clientId: 'calendar-client', clientSecret: 'calendar-secret' },
+      gmailOAuth: { clientId: 'gmail-client', clientSecret: 'gmail-secret' },
+      dropboxOAuth: { clientId: 'dropbox-client', clientSecret: 'dropbox-secret' },
       fetchImpl: async (input) => {
         const url = String(input);
         if (url.includes('gitlab.com/oauth/token')) return new Response(JSON.stringify({ access_token: 'gitlab-secret-token' }), { status: 200 });
         if (url.includes('gitlab.com/api/v4/user')) return new Response(JSON.stringify({ id: 77, username: 'fox', web_url: 'https://gitlab.com/fox' }), { status: 200 });
         if (url.includes('api.linear.app/oauth/token')) return new Response(JSON.stringify({ access_token: 'linear-secret-token' }), { status: 200 });
         if (url.includes('api.linear.app/graphql')) return new Response(JSON.stringify({ data: { viewer: { id: 'workspace-1', name: 'Crewly Space', url: 'https://linear.app/acme' } } }), { status: 200 });
+        if (url.includes('app.asana.com/-/oauth_token')) return new Response(JSON.stringify({ access_token: 'asana-secret-token' }), { status: 200 });
+        if (url.includes('app.asana.com/api/1.0/users/me')) return new Response(JSON.stringify({ data: { gid: 'asana-user', name: 'Crewly Tasks' } }), { status: 200 });
         if (url.includes('api.notion.com/v1/oauth/token')) return new Response(JSON.stringify({ access_token: 'notion-secret-token', workspace_id: 'notion-workspace', workspace_name: 'Crewly Notes', bot_id: 'notion-bot' }), { status: 200 });
-        if (url.includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'google-secret-token' }), { status: 200 });
+        if (url.includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: url.includes('calendar') ? 'calendar-secret-token' : 'google-secret-token' }), { status: 200 });
         if (url.includes('googleapis.com/oauth2/v3/userinfo')) return new Response(JSON.stringify({ sub: 'google-user', name: 'Crewly Drive' }), { status: 200 });
+        if (url.includes('api.dropboxapi.com/oauth2/token')) return new Response(JSON.stringify({ access_token: 'dropbox-secret-token' }), { status: 200 });
+        if (url.includes('api.dropboxapi.com/2/users/get_current_account')) return new Response(JSON.stringify({ account_id: 'dropbox-user', name: { display_name: 'Crewly Dropbox' } }), { status: 200 });
         return responses.shift()!;
       },
     });
@@ -91,12 +99,16 @@ describe('first-class connectors', () => {
 
   it('discovers and connects GitLab, Notion and Google Drive through the generic OAuth API', async () => {
     const listed = (await app.inject({ method: 'GET', url: '/api/v1/connectors/providers', headers: headers() })).json().providers;
-    expect(listed.map((entry: { provider: string }) => entry.provider)).toEqual(['github', 'gitlab', 'linear', 'notion', 'google-drive', 'slack']);
+    expect(listed.map((entry: { provider: string }) => entry.provider)).toEqual(['github', 'gitlab', 'linear', 'asana', 'notion', 'google-drive', 'google-calendar', 'gmail', 'dropbox', 'slack']);
 
     for (const expected of [
       { provider: 'gitlab', authorizeHost: 'gitlab.com', accountName: 'fox' },
+      { provider: 'asana', authorizeHost: 'app.asana.com', accountName: 'Crewly Tasks' },
       { provider: 'notion', authorizeHost: 'api.notion.com', accountName: 'Crewly Notes' },
       { provider: 'google-drive', authorizeHost: 'accounts.google.com', accountName: 'Crewly Drive' },
+      { provider: 'google-calendar', authorizeHost: 'accounts.google.com', accountName: 'Crewly Drive' },
+      { provider: 'gmail', authorizeHost: 'accounts.google.com', accountName: 'Crewly Drive' },
+      { provider: 'dropbox', authorizeHost: 'dropbox.com', accountName: 'Crewly Dropbox' },
     ]) {
       const callbackUrl = `https://crewly.test/?connector=${expected.provider}`;
       const started = await app.inject({ method: 'POST', url: `/api/v1/connectors/oauth/${expected.provider}/start`, headers: headers(), payload: { callbackUrl } });

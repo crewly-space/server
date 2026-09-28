@@ -12,8 +12,12 @@ to any agent.
 | GitHub | `CREWLY_GITHUB_CLIENT_ID`, `CREWLY_GITHUB_CLIENT_SECRET` | Repositories, issues, pull-request comments |
 | GitLab | `CREWLY_GITLAB_CLIENT_ID`, `CREWLY_GITLAB_CLIENT_SECRET` | Projects, issues, merge-request comments |
 | Linear | `CREWLY_LINEAR_CLIENT_ID`, `CREWLY_LINEAR_CLIENT_SECRET` | Issues, projects and comments |
+| Asana | `CREWLY_ASANA_CLIENT_ID`, `CREWLY_ASANA_CLIENT_SECRET` | Projects, tasks and comments |
 | Notion | `CREWLY_NOTION_CLIENT_ID`, `CREWLY_NOTION_CLIENT_SECRET` | Search, read, create and comment on pages |
 | Google Drive | `CREWLY_GOOGLE_DRIVE_CLIENT_ID`, `CREWLY_GOOGLE_DRIVE_CLIENT_SECRET` | Search, read and create files |
+| Google Calendar | `CREWLY_GOOGLE_CALENDAR_CLIENT_ID`, `CREWLY_GOOGLE_CALENDAR_CLIENT_SECRET` | Calendars; read, create, update and delete events |
+| Gmail | `CREWLY_GMAIL_CLIENT_ID`, `CREWLY_GMAIL_CLIENT_SECRET` | Search, read and send email |
+| Dropbox | `CREWLY_DROPBOX_CLIENT_ID`, `CREWLY_DROPBOX_CLIENT_SECRET` | Search, read and upload files |
 | Slack | `CREWLY_SLACK_CLIENT_ID`, `CREWLY_SLACK_CLIENT_SECRET` | Channels, messages and QuickStart import |
 
 Register the exact Crewly app callback URL with each provider. The web app sends its own

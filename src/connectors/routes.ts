@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
-import { CONNECTOR_CAPABILITIES, CONNECTOR_PROVIDERS, consumeConnectorState, exchangeGitHubCode, exchangeGitLabCode, exchangeGoogleDriveCode, exchangeLinearCode, exchangeNotionCode, exchangeSlackCode, githubRequest, gitlabRequest, googleRequest, linearRequest, PROVIDERS, startGitHubAuthorization, startGitLabAuthorization, startGoogleDriveAuthorization, startLinearAuthorization, startNotionAuthorization, startSlackAuthorization, ConnectorOAuthError, type ConnectorCapability, type ConnectorOAuthConfig, type ConnectorProvider } from './providers.js';
+import { CONNECTOR_CAPABILITIES, CONNECTOR_PROVIDERS, consumeConnectorState, exchangeAsanaCode, exchangeDropboxCode, exchangeGitHubCode, exchangeGitLabCode, exchangeGoogleCalendarCode, exchangeGoogleDriveCode, exchangeGmailCode, exchangeLinearCode, exchangeNotionCode, exchangeSlackCode, asanaRequest, dropboxRequest, githubRequest, gitlabRequest, googleRequest, linearRequest, PROVIDERS, startAsanaAuthorization, startDropboxAuthorization, startGitHubAuthorization, startGitLabAuthorization, startGoogleCalendarAuthorization, startGoogleDriveAuthorization, startGmailAuthorization, startLinearAuthorization, startNotionAuthorization, startSlackAuthorization, ConnectorOAuthError, type ConnectorCapability, type ConnectorOAuthConfig, type ConnectorProvider } from './providers.js';
 import { connectConnector, createPendingConnector, getConnector, listConnectorAudit, listConnectorGrants, listConnectors, refreshConnector, revokeConnector, setConnectorGrants } from './service.js';
 import { importSlackQuickStart, previewSlackChannels } from './slack-import.js';
 import { hasPermission } from '../permissions/roles.js';
@@ -18,15 +18,20 @@ function admin(app: FastifyInstance, request: FastifyRequest, reply: FastifyRepl
   reply.code(403).send({ error: 'forbidden' }); return false;
 }
 type ConnectorRouteOptions = { fetchImpl?: typeof fetch; githubOAuth?: ConnectorOAuthConfig; gitlabOAuth?: ConnectorOAuthConfig;
-  linearOAuth?: ConnectorOAuthConfig; notionOAuth?: ConnectorOAuthConfig; googleDriveOAuth?: ConnectorOAuthConfig;
+  linearOAuth?: ConnectorOAuthConfig; asanaOAuth?: ConnectorOAuthConfig; notionOAuth?: ConnectorOAuthConfig; googleDriveOAuth?: ConnectorOAuthConfig;
+  googleCalendarOAuth?: ConnectorOAuthConfig; gmailOAuth?: ConnectorOAuthConfig; dropboxOAuth?: ConnectorOAuthConfig;
   slackOAuth?: ConnectorOAuthConfig; callbackOrigins?: string[] };
 
 function oauthConfig(options: ConnectorRouteOptions, provider: ConnectorProvider): ConnectorOAuthConfig | undefined {
   const configured = provider === 'github' ? options.githubOAuth
     : provider === 'gitlab' ? options.gitlabOAuth
       : provider === 'linear' ? options.linearOAuth
-        : provider === 'notion' ? options.notionOAuth
-          : provider === 'google-drive' ? options.googleDriveOAuth : options.slackOAuth;
+        : provider === 'asana' ? options.asanaOAuth
+          : provider === 'notion' ? options.notionOAuth
+            : provider === 'google-drive' ? options.googleDriveOAuth
+              : provider === 'google-calendar' ? options.googleCalendarOAuth
+                : provider === 'gmail' ? options.gmailOAuth
+                  : provider === 'dropbox' ? options.dropboxOAuth : options.slackOAuth;
   if (configured) return configured;
   const prefix = provider.replace('-', '_').toUpperCase();
   const clientId = process.env[`CREWLY_${prefix}_CLIENT_ID`];
@@ -59,9 +64,13 @@ export function registerConnectorRoutes(app: FastifyInstance, options: Connector
     const pending = provider === 'github' ? startGitHubAuthorization(app.db, common, config)
       : provider === 'gitlab' ? startGitLabAuthorization(app.db, common, config)
         : provider === 'linear' ? startLinearAuthorization(app.db, common, config)
-          : provider === 'notion' ? startNotionAuthorization(app.db, common, config)
-            : provider === 'google-drive' ? startGoogleDriveAuthorization(app.db, common, config)
-              : startSlackAuthorization(app.db, common, config);
+          : provider === 'asana' ? startAsanaAuthorization(app.db, common, config)
+            : provider === 'notion' ? startNotionAuthorization(app.db, common, config)
+              : provider === 'google-drive' ? startGoogleDriveAuthorization(app.db, common, config)
+              : provider === 'google-calendar' ? startGoogleCalendarAuthorization(app.db, common, config)
+                : provider === 'gmail' ? startGmailAuthorization(app.db, common, config)
+                  : provider === 'dropbox' ? startDropboxAuthorization(app.db, common, config)
+                    : startSlackAuthorization(app.db, common, config);
     reply.send(pending);
   });
   app.post('/api/v1/connectors/oauth/:provider/complete', { preHandler: requireAuth }, async (request, reply) => {
@@ -89,6 +98,12 @@ export function registerConnectorRoutes(app: FastifyInstance, options: Connector
         const viewer = (profile.body.data as { viewer?: Record<string, unknown> } | undefined)?.viewer;
         if (profile.status !== 200 || !viewer?.id) throw new ConnectorOAuthError('Linear did not return a workspace account', 502);
         connection = { token, accountId: String(viewer.id), accountName: String(viewer.name ?? 'Linear'), accountUrl: typeof viewer.url === 'string' ? viewer.url : undefined, scopes: PROVIDERS.linear.scopes };
+      } else if (provider === 'asana') {
+        const token = await exchangeAsanaCode({ code: body.code, codeVerifier: pending.code_verifier, redirectUri: pending.callback_url }, config, fetchImpl);
+        const profile = await asanaRequest(token, 'users/me', fetchImpl);
+        const user = profile.body.data as Record<string, unknown> | undefined;
+        if (profile.status !== 200 || typeof user?.gid !== 'string') throw new ConnectorOAuthError('Asana did not return an account', 502);
+        connection = { token, accountId: user.gid, accountName: String(user.name ?? user.email ?? 'Asana'), accountUrl: 'https://app.asana.com', scopes: PROVIDERS.asana.scopes };
       } else if (provider === 'notion') {
         const notion = await exchangeNotionCode({ code: body.code, redirectUri: pending.callback_url }, config, fetchImpl);
         connection = { token: notion.token, accountId: notion.workspaceId, accountName: notion.workspaceName,
@@ -98,6 +113,22 @@ export function registerConnectorRoutes(app: FastifyInstance, options: Connector
         const profile = await googleRequest(token, 'https://www.googleapis.com/oauth2/v3/userinfo', fetchImpl);
         if (profile.status !== 200 || typeof profile.body.sub !== 'string') throw new ConnectorOAuthError('Google did not return an account', 502);
         connection = { token, accountId: profile.body.sub, accountName: String(profile.body.name ?? profile.body.email ?? 'Google Drive'), accountUrl: 'https://drive.google.com', scopes: PROVIDERS['google-drive'].scopes };
+      } else if (provider === 'google-calendar') {
+        const token = await exchangeGoogleCalendarCode({ code: body.code, codeVerifier: pending.code_verifier, redirectUri: pending.callback_url }, config, fetchImpl);
+        const profile = await googleRequest(token, 'https://www.googleapis.com/oauth2/v3/userinfo', fetchImpl);
+        if (profile.status !== 200 || typeof profile.body.sub !== 'string') throw new ConnectorOAuthError('Google did not return an account', 502);
+        connection = { token, accountId: profile.body.sub, accountName: String(profile.body.name ?? profile.body.email ?? 'Google Calendar'), accountUrl: 'https://calendar.google.com', scopes: PROVIDERS['google-calendar'].scopes };
+      } else if (provider === 'gmail') {
+        const token = await exchangeGmailCode({ code: body.code, codeVerifier: pending.code_verifier, redirectUri: pending.callback_url }, config, fetchImpl);
+        const profile = await googleRequest(token, 'https://www.googleapis.com/oauth2/v3/userinfo', fetchImpl);
+        if (profile.status !== 200 || typeof profile.body.sub !== 'string') throw new ConnectorOAuthError('Google did not return an account', 502);
+        connection = { token, accountId: profile.body.sub, accountName: String(profile.body.name ?? profile.body.email ?? 'Gmail'), accountUrl: 'https://mail.google.com', scopes: PROVIDERS.gmail.scopes };
+      } else if (provider === 'dropbox') {
+        const token = await exchangeDropboxCode({ code: body.code, codeVerifier: pending.code_verifier, redirectUri: pending.callback_url }, config, fetchImpl);
+        const profile = await dropboxRequest(token, 'users/get_current_account', fetchImpl, { method: 'POST', body: '{}' });
+        if (profile.status !== 200 || typeof profile.body.account_id !== 'string') throw new ConnectorOAuthError('Dropbox did not return an account', 502);
+        const name = profile.body.name as Record<string, unknown> | undefined;
+        connection = { token, accountId: profile.body.account_id, accountName: String(name?.display_name ?? profile.body.email ?? 'Dropbox'), accountUrl: 'https://www.dropbox.com/home', scopes: PROVIDERS.dropbox.scopes };
       } else {
         const slack = await exchangeSlackCode({ code: body.code, redirectUri: pending.callback_url }, config, fetchImpl);
         connection = { token: slack.token, accountId: slack.teamId, accountName: slack.teamName, accountUrl: `https://app.slack.com/client/${slack.teamId}`, scopes: slack.scopes };
