@@ -1,16 +1,15 @@
 import type { Database } from '../db/driver.js';
-import type { AgentToolset, ToolsetProvider } from '../providers/respond.js';
 import {
   findSecretReferences,
   registerGranteeNamer,
   registerSecretReferenceScanner,
-  resolveSecretReferences,
+  readSecretFor,
   SecretAccessError,
   type Grantee,
 } from '../secrets/vault.js';
-import { callMcpTool, discoverMcpTools, McpError, type McpClientOptions, type McpToolInfo, type McpTransportConfig } from './client.js';
-import { getMcpServer, listAgentTools, listMcpServers, recordDiscovery, type McpServerRecord } from './repository.js';
-import { authorizeCapabilityAction, type ExecutionCapability } from '../permissions/capabilities.js';
+import { callMcpTool, discoverMcpServer, McpError, type McpClientOptions, type McpToolInfo, type McpTransportConfig } from './client.js';
+import { getMcpServer, listMcpServers, recordCallOutcome, recordDiscovery, type McpServerRecord } from './repository.js';
+import { mcpAccessToken } from './oauth.js';
 
 /** What stands in for a literal credential when a server's config is shown. */
 export const REDACTED = '••••••';
@@ -21,38 +20,98 @@ function grantee(server: Pick<McpServerRecord, 'id'>): Grantee {
 
 /**
  * The server's connection settings with every {{secret:NAME}} filled in --
- * only secrets granted to this MCP server resolve, and each read is audited.
+ * only secrets granted to this MCP server resolve, and each read is audited --
+ * and, for a server signed in with OAuth, a current access token attached.
+ * Also returns the literal values it filled in, so an audit record can scrub them.
  */
-export function resolveTransport(db: Database, server: McpServerRecord): McpTransportConfig {
-  const fill = (value: string) => resolveSecretReferences(db, value, grantee(server));
+export async function resolveTransport(db: Database, server: McpServerRecord, fetchImpl?: typeof fetch): Promise<{ config: McpTransportConfig; secrets: string[] }> {
+  const secrets: string[] = [];
+  // Each secret is read once per call, and its value kept only to scrub it from the audit record.
+  const cache = new Map<string, string>();
+  const fill = (value: string) => value.replace(/\{\{\s*secret:([A-Z][A-Z0-9_]*)\s*\}\}/g, (_match, name: string) => {
+    if (!cache.has(name)) {
+      const secret = readSecretFor(db, name, grantee(server));
+      cache.set(name, secret);
+      secrets.push(secret);
+    }
+    return cache.get(name)!;
+  });
   const fillAll = (values: Record<string, string>) =>
     Object.fromEntries(Object.entries(values).map(([key, value]) => [key, fill(value)]));
   if (server.transport === 'http') {
-    return { transport: 'http', url: fill(server.url!), headers: fillAll(server.headers) };
+    const headers = fillAll(server.headers);
+    const token = await mcpAccessToken(db, server, fetchImpl);
+    if (token) {
+      headers.authorization = `Bearer ${token}`;
+      secrets.push(token);
+    }
+    return { config: { transport: 'http', url: fill(server.url!), headers }, secrets };
   }
-  return { transport: 'stdio', command: server.command!, args: server.args.map(fill), env: fillAll(server.env) };
+  return { config: { transport: 'stdio', command: server.command!, args: server.args.map(fill), env: fillAll(server.env) }, secrets };
 }
 
-function explain(error: unknown): { code: string; message: string } {
+export function explainMcpError(error: unknown): { code: string; message: string } {
   if (error instanceof McpError) return { code: error.code, message: error.message };
   if (error instanceof SecretAccessError) return { code: 'secret_unavailable', message: `${error.message}. Grant it to this MCP server in Secrets.` };
   return { code: 'mcp_failed', message: error instanceof Error ? error.message : String(error) };
 }
 
-/** Connects, discovers tools, and records what happened -- the "Test connection" button. */
+/** Connects, discovers tools, resources and prompts, and records what happened -- the "Test connection" button. */
 export async function testMcpServer(
   db: Database,
   server: McpServerRecord,
   options: McpClientOptions,
 ): Promise<{ ok: true; tools: McpToolInfo[] } | { ok: false; error: { code: string; message: string } }> {
   try {
-    const tools = await discoverMcpTools(resolveTransport(db, server), options);
-    recordDiscovery(db, server.id, { tools });
-    return { ok: true, tools };
+    const { config } = await resolveTransport(db, server, options.fetchImpl);
+    const discovery = await discoverMcpServer(config, options);
+    recordDiscovery(db, server.id, discovery);
+    return { ok: true, tools: discovery.tools };
   } catch (error) {
-    const failure = explain(error);
-    recordDiscovery(db, server.id, { error: failure.message });
+    const failure = explainMcpError(error);
+    recordDiscovery(db, server.id, { error: failure.message, code: failure.code });
     return { ok: false, error: failure };
+  }
+}
+
+const TRANSIENT = new Set(['timeout', 'unreachable', 'server_error']);
+/** After this many failures in a row, calls fail fast for a while instead of each waiting out a timeout. */
+const CIRCUIT_THRESHOLD = 5;
+const CIRCUIT_COOL_DOWN_MS = 30_000;
+
+/**
+ * One tool call with the connection's resilience rules: a server that keeps
+ * failing is not called again until it has had time to recover, a transient
+ * failure of a call that is safe to repeat is retried once, and every outcome
+ * moves the server's health.
+ */
+export async function callMcpServerTool(
+  db: Database,
+  server: McpServerRecord,
+  tool: string,
+  args: Record<string, unknown>,
+  options: McpClientOptions & { idempotent?: boolean },
+): Promise<{ text: string; isError: boolean; secrets: string[] }> {
+  if (server.consecutiveFailures >= CIRCUIT_THRESHOLD && server.lastErrorAt && Date.now() - Date.parse(server.lastErrorAt) < CIRCUIT_COOL_DOWN_MS) {
+    throw new McpError('circuit_open', `${server.name} failed ${server.consecutiveFailures} times in a row; Crewly will try it again shortly.`);
+  }
+  let secrets: string[] = [];
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const resolved = await resolveTransport(db, server, options.fetchImpl);
+      secrets = resolved.secrets;
+      const result = await callMcpTool(resolved.config, tool, args, options);
+      recordCallOutcome(db, server.id, { ok: true });
+      return { ...result, secrets };
+    } catch (error) {
+      const failure = explainMcpError(error);
+      if (attempt === 1 && options.idempotent && TRANSIENT.has(failure.code)) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        continue;
+      }
+      recordCallOutcome(db, server.id, { ok: false, error: failure.message, code: failure.code });
+      throw Object.assign(error instanceof Error ? error : new Error(failure.message), { secrets });
+    }
   }
 }
 
@@ -72,10 +131,14 @@ function redactValues(values: Record<string, string>): Record<string, string> {
 }
 
 export function publicMcpServer(server: McpServerRecord) {
+  const { oauth, ...rest } = server;
   return {
-    ...server,
+    ...rest,
     headers: redactValues(server.headers),
     env: redactValues(server.env),
+    // Whether it is signed in, never with what.
+    oauth: oauth ? { signedIn: Boolean(oauth.accessToken), issuer: oauth.issuer ?? null, scope: oauth.scope ?? null, expiresAt: oauth.expiresAt ?? null } : null,
+    status: server.enabled ? server.health : 'disabled',
     availableTools: server.tools.filter((tool) => !server.disabledTools.includes(tool.name)).map((tool) => tool.name),
   };
 }
@@ -84,71 +147,6 @@ export function publicMcpServer(server: McpServerRecord) {
 export function mergeRedacted(incoming: Record<string, string> | undefined, existing: Record<string, string>): Record<string, string> | undefined {
   if (!incoming) return undefined;
   return Object.fromEntries(Object.entries(incoming).map(([key, value]) => [key, value === REDACTED ? existing[key] ?? '' : value]));
-}
-
-/** How a tool appears to a model: unique across servers, within the 64 characters providers allow. */
-export function exposedToolName(server: Pick<McpServerRecord, 'name'>, tool: string): string {
-  const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
-  return `mcp_${slug(server.name).slice(0, 20)}_${slug(tool)}`.slice(0, 64);
-}
-
-/**
- * The MCP tools an agent was given, as a toolset for its turns. A tool is
- * offered only while its server is enabled, the tool was discovered and is
- * not switched off, and the assignment still covers every capability the
- * server declares -- so declaring a new capability withdraws the tool until
- * someone acknowledges it again.
- */
-export function mcpToolset(db: Database, options: McpClientOptions): ToolsetProvider {
-  return (agent, input): AgentToolset | undefined => {
-    const assignments = listAgentTools(db, agent.id);
-    if (assignments.length === 0) return undefined;
-    const servers = new Map<string, McpServerRecord | undefined>();
-    const byName = new Map<string, { server: McpServerRecord; tool: McpToolInfo }>();
-    for (const assignment of assignments) {
-      if (!servers.has(assignment.serverId)) servers.set(assignment.serverId, getMcpServer(db, assignment.serverId));
-      const server = servers.get(assignment.serverId);
-      if (!server?.enabled || server.disabledTools.includes(assignment.toolName)) continue;
-      if (!server.capabilities.every((capability) => assignment.grantedCapabilities.includes(capability))) continue;
-      const tool = server.tools.find((candidate) => candidate.name === assignment.toolName);
-      if (!tool) continue;
-      byName.set(exposedToolName(server, tool.name), { server, tool });
-    }
-    if (byName.size === 0) return undefined;
-
-    return {
-      definitions: [...byName].map(([name, { server, tool }]) => ({
-        name,
-        description: `${tool.description || tool.name} (from ${server.name})`.slice(0, 1024),
-        inputSchema: tool.inputSchema,
-      })),
-      async execute(call) {
-        const entry = byName.get(call.name);
-        if (!entry) return { content: `There is no tool called "${call.name}".`, isError: true };
-        if (input.run) {
-          const capabilityMap: Record<string, ExecutionCapability[]> = {
-            shell: ['process.execute'],
-            filesystem: ['filesystem.read', 'filesystem.write'],
-            network: ['network.access'],
-          };
-          const required = [...new Set(entry.server.capabilities.flatMap((capability) => capabilityMap[capability] ?? []))];
-          for (const capability of required) {
-            const authorization = authorizeCapabilityAction(db, { agentId: agent.id, runId: input.run.runId, capability,
-              action: `mcp.${entry.server.id}.${entry.tool.name}`, scope: { server: entry.server.id, tool: entry.tool.name }, target: call.input });
-            if (!authorization.allowed) return { content: authorization.reason === 'denied'
-              ? `${capability} is denied by this agent's policy.`
-              : `Approval required for ${entry.tool.name}. The exact call has been queued for an owner.`, isError: true };
-          }
-        }
-        try {
-          const result = await callMcpTool(resolveTransport(db, entry.server), entry.tool.name, call.input, options);
-          return { content: result.text || '(no output)', isError: result.isError };
-        } catch (error) {
-          return { content: explain(error).message, isError: true };
-        }
-      },
-    };
-  };
 }
 
 let registered = false;

@@ -9,7 +9,36 @@ export interface McpToolInfo {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  title?: string;
+  /** What the server says about the tool: hints, never trusted to make a tool look safer than its name. */
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean; title?: string };
 }
+
+export interface McpResourceInfo {
+  uri: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+
+export interface McpPromptInfo {
+  name: string;
+  description?: string;
+  arguments?: Array<{ name: string; description?: string; required?: boolean }>;
+}
+
+/** initialize's answer: who the server says it is and what it supports. */
+export interface McpServerInfo {
+  name?: string;
+  title?: string;
+  version?: string;
+  protocolVersion?: string;
+  capabilities?: Record<string, unknown>;
+  instructions?: string;
+}
+
+/** Largest response Crewly reads from one MCP call, over either transport. */
+export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 export interface McpCallResult {
   text: string;
@@ -56,7 +85,11 @@ function rpcResult(response: JsonRpcResponse, method: string): Record<string, un
 /** Reads the JSON-RPC answer to `id` out of a streamable-HTTP body, which may be JSON or an SSE stream. */
 async function readHttpAnswer(response: Response, id: number): Promise<JsonRpcResponse> {
   const type = response.headers.get('content-type') ?? '';
-  const body = await response.text();
+  const declared = Number(response.headers.get('content-length') ?? 0);
+  if (declared > MAX_RESPONSE_BYTES) throw new McpError('too_large', `The MCP server answered with ${declared} bytes; the limit is ${MAX_RESPONSE_BYTES}.`);
+  const raw = new Uint8Array(await response.arrayBuffer());
+  if (raw.byteLength > MAX_RESPONSE_BYTES) throw new McpError('too_large', `The MCP server answered with more than ${MAX_RESPONSE_BYTES} bytes.`);
+  const body = new TextDecoder().decode(raw);
   if (type.includes('text/event-stream')) {
     for (const event of body.split(/\r?\n\r?\n/)) {
       const data = event.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n');
@@ -182,8 +215,16 @@ async function connectStdio(config: Extract<McpTransportConfig, { transport: 'st
   const waiting = new Map<number, (message: JsonRpcResponse) => void>();
   let buffer = '';
   child.stdout.setEncoding('utf8');
+  let overflow: McpError | undefined;
   child.stdout.on('data', (chunk: string) => {
     buffer += chunk;
+    // A server that writes without end, or one line bigger than any answer should be, is stopped.
+    if (buffer.length > MAX_RESPONSE_BYTES) {
+      overflow = new McpError('too_large', `${config.command} wrote more than ${MAX_RESPONSE_BYTES} bytes without finishing a message.`);
+      buffer = '';
+      child.kill('SIGKILL');
+      return;
+    }
     let newline: number;
     while ((newline = buffer.indexOf('\n')) !== -1) {
       const line = buffer.slice(0, newline).trim();
@@ -198,6 +239,7 @@ async function connectStdio(config: Extract<McpTransportConfig, { transport: 'st
     }
   });
   const exited = once(child, 'exit').then(([code]) => {
+    if (overflow) throw overflow;
     throw new McpError('exited', `${config.command} exited (${code ?? 'signal'}) before answering.${stderr ? ` It said: ${stderr.trim().split('\n').slice(-3).join(' ')}` : ''}`);
   });
   exited.catch(() => undefined);
@@ -228,46 +270,105 @@ async function connectStdio(config: Extract<McpTransportConfig, { transport: 'st
     },
     async close() {
       child.stdin.end();
-      if (child.exitCode === null) child.kill();
+      if (child.exitCode !== null) return;
+      child.kill('SIGTERM');
+      // A server that ignores SIGTERM does not get to linger with the credentials it was given.
+      const killer = setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL'); }, 2000);
+      killer.unref();
     },
   };
 }
 
-async function withSession<T>(config: McpTransportConfig, options: McpClientOptions, work: (connection: Connection) => Promise<T>): Promise<T> {
+async function withSession<T>(config: McpTransportConfig, options: McpClientOptions, work: (connection: Connection, init: Record<string, unknown>) => Promise<T>): Promise<T> {
   const connection = config.transport === 'http' ? connectHttp(config, options) : await connectStdio(config, options);
   try {
-    await connection.request('initialize', {
+    const init = await connection.request('initialize', {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
       clientInfo: { name: 'crewly', version: options.clientVersion ?? '0.0.0' },
     });
     await connection.notify('notifications/initialized');
-    return await work(connection);
+    return await work(connection, init);
   } finally {
     await connection.close();
   }
 }
 
+async function listAll<T>(connection: Connection, method: string, key: string, map: (entry: Record<string, unknown>) => T | undefined): Promise<T[]> {
+  const found: T[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 20; page += 1) {
+    const result = await connection.request(method, cursor ? { cursor } : undefined);
+    for (const entry of (result[key] as Array<Record<string, unknown>> | undefined) ?? []) {
+      const mapped = map(entry);
+      if (mapped) found.push(mapped);
+    }
+    cursor = typeof result.nextCursor === 'string' ? result.nextCursor : undefined;
+    if (!cursor) break;
+  }
+  return found;
+}
+
+const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
+
+function toolInfo(tool: Record<string, unknown>): McpToolInfo | undefined {
+  if (typeof tool.name !== 'string') return undefined;
+  const annotations = tool.annotations && typeof tool.annotations === 'object' ? tool.annotations as Record<string, unknown> : undefined;
+  const hint = (key: string) => (typeof annotations?.[key] === 'boolean' ? annotations[key] as boolean : undefined);
+  return {
+    name: tool.name,
+    description: str(tool.description) ?? '',
+    inputSchema: (tool.inputSchema as Record<string, unknown> | undefined) ?? { type: 'object' },
+    ...(str(tool.title) ? { title: str(tool.title) } : {}),
+    ...(annotations ? { annotations: {
+      readOnlyHint: hint('readOnlyHint'), destructiveHint: hint('destructiveHint'), idempotentHint: hint('idempotentHint'),
+      openWorldHint: hint('openWorldHint'), title: str(annotations.title),
+    } } : {}),
+  };
+}
+
+export interface McpDiscoveryResult {
+  tools: McpToolInfo[];
+  resources: McpResourceInfo[];
+  prompts: McpPromptInfo[];
+  serverInfo: McpServerInfo;
+}
+
+/**
+ * Connects once and learns everything the server offers: tools, and -- when
+ * it says it has them -- resources and prompts, plus who it says it is.
+ * Resources and prompts are best-effort; tools are what must work.
+ */
+export async function discoverMcpServer(config: McpTransportConfig, options: McpClientOptions = {}): Promise<McpDiscoveryResult> {
+  return withSession(config, options, async (connection, init) => {
+    const capabilities = (init.capabilities as Record<string, unknown> | undefined) ?? {};
+    const info = (init.serverInfo as Record<string, unknown> | undefined) ?? {};
+    const tools = await listAll(connection, 'tools/list', 'tools', toolInfo);
+    const resources = capabilities.resources
+      ? await listAll(connection, 'resources/list', 'resources', (entry) => typeof entry.uri === 'string'
+        ? { uri: entry.uri, name: str(entry.name) ?? entry.uri, description: str(entry.description), mimeType: str(entry.mimeType) } : undefined).catch(() => [])
+      : [];
+    const prompts = capabilities.prompts
+      ? await listAll(connection, 'prompts/list', 'prompts', (entry) => typeof entry.name === 'string'
+        ? { name: entry.name, description: str(entry.description),
+          arguments: Array.isArray(entry.arguments) ? (entry.arguments as Array<Record<string, unknown>>).map((argument) => ({
+            name: String(argument.name), description: str(argument.description), required: argument.required === true })) : undefined } : undefined).catch(() => [])
+      : [];
+    return {
+      tools,
+      resources,
+      prompts,
+      serverInfo: {
+        name: str(info.name), title: str(info.title), version: str(info.version), protocolVersion: str(init.protocolVersion),
+        capabilities, instructions: str(init.instructions)?.slice(0, 4000),
+      },
+    };
+  });
+}
+
 /** Connects, lists every tool the server offers (following pagination), and disconnects. */
 export async function discoverMcpTools(config: McpTransportConfig, options: McpClientOptions = {}): Promise<McpToolInfo[]> {
-  return withSession(config, options, async (connection) => {
-    const tools: McpToolInfo[] = [];
-    let cursor: string | undefined;
-    for (let page = 0; page < 20; page += 1) {
-      const result = await connection.request('tools/list', cursor ? { cursor } : undefined);
-      for (const tool of (result.tools as Array<Record<string, unknown>> | undefined) ?? []) {
-        if (typeof tool.name !== 'string') continue;
-        tools.push({
-          name: tool.name,
-          description: typeof tool.description === 'string' ? tool.description : '',
-          inputSchema: (tool.inputSchema as Record<string, unknown> | undefined) ?? { type: 'object' },
-        });
-      }
-      cursor = typeof result.nextCursor === 'string' ? result.nextCursor : undefined;
-      if (!cursor) break;
-    }
-    return tools;
-  });
+  return (await discoverMcpServer(config, options)).tools;
 }
 
 /** Calls one tool and flattens its content to the text a model reads. */

@@ -138,7 +138,25 @@ export {
   type Skill,
   type SkillConfigField,
   type SkillInput,
+  type SkillPlan,
+  type SkillPlannedTool,
+  type SkillRequirement,
+  type SkillRequirements,
 } from './resources/skills.js';
+export {
+  ToolsResource,
+  type AgentToolAccess,
+  type Connection,
+  type ConnectionHealth,
+  type NormalizedTool,
+  type ProviderProfile,
+  type ToolExecution,
+  type ToolPolicy,
+  type ToolPolicyMode,
+  type ToolRisk,
+  type ToolSelectorType,
+  type TrustLevel,
+} from './resources/tools.js';
 export { CrewlyResource, type CrewlyAuditEntry, type CrewlyConnection } from './resources/crewly.js';
 export {
   MailResource,
@@ -189,6 +207,7 @@ export {
   type FederationSettings,
   type RegistryInstallation,
   type RegistryItem,
+  type RegistryListing,
   type RegistrySettings,
   type RegistryVersion,
 } from './resources/platform.js';

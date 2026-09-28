@@ -26,6 +26,7 @@ import { AttachmentsResource } from './resources/attachments.js';
 import { RolesResource } from './resources/roles.js';
 import { AutomationsResource } from './resources/automations.js';
 import { PlatformResource } from './resources/platform.js';
+import { ToolsResource } from './resources/tools.js';
 
 export class CrewlyClient {
   private readonly http: HttpClient;
@@ -57,6 +58,7 @@ export class CrewlyClient {
   readonly roles: RolesResource;
   readonly automations: AutomationsResource;
   readonly platform: PlatformResource;
+  readonly tools: ToolsResource;
 
   constructor(opts: { baseUrl: string; fetchImpl?: typeof fetch; clientVersion?: string }) {
     this.baseUrl = opts.baseUrl;
@@ -87,6 +89,7 @@ export class CrewlyClient {
     this.roles = new RolesResource(this.http);
     this.automations = new AutomationsResource(this.http);
     this.platform = new PlatformResource(this.http);
+    this.tools = new ToolsResource(this.http);
   }
 
   setToken(token: string | undefined): void {

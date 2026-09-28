@@ -11,6 +11,9 @@ interface ApprovalRow {
   status: ApprovalStatus;
   created_at: string;
   resolved_at: string | null;
+  resolved_by?: string | null;
+  expires_at?: string | null;
+  execution?: string | null;
 }
 
 function rowToApproval(row: ApprovalRow): ApprovalRequest {
@@ -23,6 +26,9 @@ function rowToApproval(row: ApprovalRow): ApprovalRequest {
     status: row.status,
     createdAt: row.created_at,
     resolvedAt: row.resolved_at,
+    resolvedBy: row.resolved_by ?? null,
+    expiresAt: row.expires_at ?? null,
+    execution: row.execution ? JSON.parse(row.execution) : null,
   });
 }
 
@@ -104,7 +110,8 @@ export function expireApprovals(db: Database, now = new Date()): number {
 export function resolveApproval(
   db: Database,
   id: string,
-  decision: 'approve' | 'deny'
+  decision: 'approve' | 'deny',
+  resolvedBy: string | null = null,
 ): ApprovalRequest {
   const existing = getApproval(db, id);
   if (!existing) {
@@ -114,10 +121,24 @@ export function resolveApproval(
     throw new ApprovalAlreadyResolvedError(`approval ${id} already resolved with status ${existing.status}`);
   }
   const status: ApprovalStatus = decision === 'approve' ? 'approved' : 'denied';
-  db.prepare('UPDATE approvals SET status = ?, resolved_at = ? WHERE id = ?').run(
+  // Only a still-pending row moves, so two people deciding at once cannot both win.
+  const changed = db.prepare("UPDATE approvals SET status = ?, resolved_at = ?, resolved_by = ? WHERE id = ? AND status = 'pending'").run(
     status,
     new Date().toISOString(),
+    resolvedBy,
     id
-  );
+  ).changes;
+  if (!changed) throw new ApprovalAlreadyResolvedError(`approval ${id} was resolved concurrently`);
   return getApproval(db, id)!;
+}
+
+/** Decided approvals, newest first: who approved or denied what, and when. */
+export function listResolvedApprovals(db: Database, input: { ownerUserId?: string; limit?: number } = {}): ApprovalRequest[] {
+  expireApprovals(db);
+  const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
+  const rows = input.ownerUserId
+    ? db.prepare(`SELECT approvals.* FROM approvals JOIN agents ON agents.id = approvals.agent_id
+        WHERE approvals.status <> 'pending' AND agents.owner_user_id = ? ORDER BY approvals.resolved_at DESC LIMIT ${limit}`).all(input.ownerUserId)
+    : db.prepare(`SELECT * FROM approvals WHERE status <> 'pending' ORDER BY resolved_at DESC LIMIT ${limit}`).all();
+  return (rows as ApprovalRow[]).map(rowToApproval);
 }

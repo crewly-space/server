@@ -2,7 +2,9 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
 import { getAgent } from '../agents/repository.js';
-import type { McpClientOptions } from './client.js';
+import { McpError, type McpClientOptions } from './client.js';
+import { completeMcpOAuth, signOutMcpOAuth, startMcpOAuth } from './oauth.js';
+import { allowedCallbackUrl } from '../auth/callback-url.js';
 import {
   createMcpServer,
   deleteMcpServer,
@@ -17,6 +19,7 @@ import {
 } from './repository.js';
 import { mergeRedacted, publicMcpServer, testMcpServer } from './service.js';
 import { parsePublicHttpsUrl } from '../security/outbound.js';
+import { TRUST_LEVELS } from '../tools/types.js';
 
 const CapabilitySchema = z.enum(MCP_CAPABILITIES as [McpCapability, ...McpCapability[]]);
 const ValuesSchema = z.record(z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), z.string().max(8192));
@@ -33,6 +36,10 @@ const ServerBodySchema = z.object({
   env: ValuesSchema.optional(),
   capabilities: z.array(CapabilitySchema).optional(),
   enabled: z.boolean().optional(),
+  /** Which provider it speaks for ('github'), so its tools share that namespace and risk profile. */
+  provider: z.string().regex(/^[a-z][a-z0-9-]{0,40}$/).nullable().optional(),
+  /** How far its publisher is trusted. Only unverified or community servers have their read-only claims ignored. */
+  trust: z.enum(TRUST_LEVELS).optional(),
 });
 
 const CreateServerSchema = ServerBodySchema.superRefine((body, ctx) => {
@@ -65,7 +72,45 @@ function requireAdmin(request: FastifyRequest, reply: FastifyReply): boolean {
  * one exception: an agent's owner may give it tools from a server that
  * declares no shell, filesystem or network capability.
  */
-export function registerMcpRoutes(app: FastifyInstance, clientOptions: McpClientOptions): void {
+export function registerMcpRoutes(app: FastifyInstance, clientOptions: McpClientOptions, routeOptions: { callbackOrigins?: string[] } = {}): void {
+  /**
+   * Signing an MCP server in with OAuth. The browser goes to the server's
+   * authorization page and comes back to the app, which hands the code here.
+   */
+  app.post('/api/v1/mcp-servers/:id/oauth/start', { preHandler: requireAuth }, async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
+    const server = getMcpServer(app.db, (request.params as { id: string }).id);
+    if (!server) { reply.code(404).send({ error: 'mcp_server_not_found' }); return; }
+    const body = z.object({ callbackUrl: z.string().url() }).parse(request.body);
+    if (!allowedCallbackUrl(request, body.callbackUrl, routeOptions.callbackOrigins ?? [])) { reply.code(400).send({ error: 'invalid_callback_url' }); return; }
+    try {
+      reply.send(await startMcpOAuth(app.db, server, { userId: request.user!.id, redirectUri: body.callbackUrl, fetchImpl: clientOptions.fetchImpl }));
+    } catch (error) {
+      reply.code(error instanceof McpError ? 400 : 502).send({ error: error instanceof McpError ? error.code : 'oauth_failed', message: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post('/api/v1/mcp-servers/oauth/complete', { preHandler: requireAuth }, async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
+    const body = z.object({ state: z.string().min(1).max(256), code: z.string().min(1).max(4096) }).parse(request.body);
+    try {
+      const server = await completeMcpOAuth(app.db, { ...body, userId: request.user!.id, fetchImpl: clientOptions.fetchImpl });
+      // Signed in: discover straight away, so the next screen shows its tools.
+      const outcome = await testMcpServer(app.db, server, clientOptions);
+      reply.send({ ...outcome, server: publicMcpServer(getMcpServer(app.db, server.id)!) });
+    } catch (error) {
+      reply.code(error instanceof McpError ? 400 : 502).send({ error: error instanceof McpError ? error.code : 'oauth_failed', message: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.delete('/api/v1/mcp-servers/:id/oauth', { preHandler: requireAuth }, async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
+    const server = getMcpServer(app.db, (request.params as { id: string }).id);
+    if (!server) { reply.code(404).send({ error: 'mcp_server_not_found' }); return; }
+    signOutMcpOAuth(app.db, server);
+    reply.send(publicMcpServer(getMcpServer(app.db, server.id)!));
+  });
+
   app.get('/api/v1/mcp-servers', { preHandler: requireAuth }, async (request, reply) => {
     if (!requireAdmin(request, reply)) return;
     reply.send({ servers: listMcpServers(app.db).map(publicMcpServer) });

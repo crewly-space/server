@@ -228,7 +228,8 @@ describe('MCP routes and agent tools', () => {
 
   it('puts an assigned tool in front of the model and runs it, with its secret filled in', async () => {
     const secret = createSecret(db, { name: 'ECHO_TOKEN', value: 'tok-from-vault' }, { type: 'system', id: null });
-    const id = (await addEcho({ env: { TOKEN: '{{secret:ECHO_TOKEN}}' } })).json().id;
+    // Verified, so its read tool runs without first asking (unverified servers' reads ask once).
+    const id = (await addEcho({ env: { TOKEN: '{{secret:ECHO_TOKEN}}' }, trust: 'verified' })).json().id;
     setSecretGrants(db, secret.id, [{ type: 'mcp_server', id }], { type: 'system', id: null });
     await app.inject({ method: 'POST', url: `/api/v1/mcp-servers/${id}/test`, headers: as(ownerToken) });
     await app.inject({
@@ -238,7 +239,7 @@ describe('MCP routes and agent tools', () => {
 
     replies.push(
       new Response(JSON.stringify({
-        content: [{ type: 'tool_use', id: 't1', name: 'mcp_echo_whoami', input: {} }],
+        content: [{ type: 'tool_use', id: 't1', name: 'echo__whoami', input: {} }],
         stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 },
       })),
       new Response(JSON.stringify({ content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } })),
@@ -255,7 +256,7 @@ describe('MCP routes and agent tools', () => {
     });
     for (let i = 0; i < 200 && sent.length < 2; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(sent[0]!.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['mcp_echo_whoami', 'create_artifact']));
+    expect(sent[0]!.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['echo__whoami', 'create_artifact']));
     expect(JSON.stringify(sent[1]!.messages.at(-1))).toContain('tok-from-vault');
     // The vault knows who read it.
     expect(db.prepare("SELECT actor_type FROM secret_audit WHERE action = 'accessed'").pluck().all()).toContain('mcp_server');

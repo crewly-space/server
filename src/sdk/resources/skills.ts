@@ -9,6 +9,46 @@ export interface SkillConfigField {
   required: boolean;
 }
 
+/** A capability a skill needs and the providers that can supply it; empty `oneOf` means any. */
+export interface SkillRequirement {
+  capability: string;
+  oneOf: string[];
+}
+
+export interface SkillRequirements {
+  requires: SkillRequirement[];
+  optional: SkillRequirement[];
+  /** Used routinely; authorizing the skill lets these run without asking. */
+  permissions: string[];
+  /** Always ask a person, every time. */
+  approvals: string[];
+  models?: Partial<Record<'preferred' | 'fallback' | 'cheap' | 'reasoning' | 'vision' | 'embedding', string>>;
+}
+
+export interface SkillPlannedTool {
+  ref: string;
+  connectionId: string;
+  connectionName: string;
+  connectionKind: 'connector' | 'mcp_server';
+  toolName: string;
+  risk: string;
+  serverCapabilities: string[];
+}
+
+/** What authorizing a skill would take and grant, before anyone agrees to it. */
+export interface SkillPlan {
+  skillId: string;
+  requirements: Array<SkillRequirement & {
+    required: boolean;
+    candidates: Array<{ id: string; name: string }>;
+    satisfiedBy: Array<{ connectionId: string; connectionName: string; provider: string }>;
+  }>;
+  permissions: Array<{ permission: string; approval: boolean; tools: SkillPlannedTool[] }>;
+  ready: boolean;
+  missing: string[];
+  unavailable: string[];
+}
+
 /** Reusable instructions and settings an agent can be given. Not a tool, not a runtime. */
 export interface Skill {
   id: string;
@@ -20,6 +60,8 @@ export interface Skill {
   source: 'custom' | 'installed';
   sourceRef: string | null;
   version: string;
+  /** Absent from servers older than the tool platform. */
+  requirements?: SkillRequirements;
   createdAt: string;
   updatedAt: string;
 }
@@ -30,6 +72,8 @@ export interface AgentSkill {
   name: string;
   enabled: boolean;
   config: Record<string, string>;
+  /** When its declared permissions were authorized for this agent. */
+  authorizedAt?: string | null;
 }
 
 export interface SkillInput {
@@ -39,6 +83,7 @@ export interface SkillInput {
   instructions: string;
   configFields?: SkillConfigField[];
   version?: string;
+  requirements?: SkillRequirements;
 }
 
 export class SkillsResource {
@@ -74,5 +119,19 @@ export class SkillsResource {
     skills: Array<{ skillId: string; enabled?: boolean; config?: Record<string, string> }>,
   ): Promise<{ skills: AgentSkill[] }> {
     return this.http.request('PUT', `/api/v1/agents/${encodePathSegment(agentId)}/skills`, { skills });
+  }
+
+  /** Which connections satisfy the skill and exactly which tools its permissions map to. */
+  plan(skillId: string): Promise<SkillPlan> {
+    return this.http.request('GET', `/api/v1/skills/${encodePathSegment(skillId)}/plan`);
+  }
+
+  /** Gives the agent the skill with the access its plan lists. Needs integrations.manage. */
+  authorize(
+    agentId: string,
+    skillId: string,
+    input: { acknowledgeCapabilities?: Array<'shell' | 'filesystem' | 'network'>; config?: Record<string, string> } = {},
+  ): Promise<{ plan: SkillPlan; skills: AgentSkill[] }> {
+    return this.http.request('POST', `/api/v1/agents/${encodePathSegment(agentId)}/skills/${encodePathSegment(skillId)}/authorize`, input);
   }
 }

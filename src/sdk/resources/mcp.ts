@@ -1,5 +1,6 @@
 import type { HttpClient } from '../http-client.js';
 import { encodePathSegment } from '../path.js';
+import type { ConnectionHealth, TrustLevel } from './tools.js';
 
 export type McpCapability = 'shell' | 'filesystem' | 'network';
 
@@ -7,6 +8,8 @@ export interface McpTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  title?: string;
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean; title?: string };
 }
 
 /**
@@ -31,6 +34,20 @@ export interface McpServer {
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
+  // The fields below come from servers with the tool platform; older servers omit them.
+  provider?: string | null;
+  trust?: TrustLevel;
+  registryId?: string | null;
+  serverInfo?: { name?: string; title?: string; version?: string; protocolVersion?: string; capabilities?: Record<string, unknown>; instructions?: string };
+  resources?: Array<{ uri: string; name: string; description?: string; mimeType?: string }>;
+  prompts?: Array<{ name: string; description?: string; arguments?: Array<{ name: string; description?: string; required?: boolean }> }>;
+  /** Whether it is signed in with OAuth; never the token. */
+  oauth?: { signedIn: boolean; issuer: string | null; scope: string | null; expiresAt: string | null } | null;
+  status?: ConnectionHealth;
+  health?: 'unknown' | 'connected' | 'degraded' | 'expired' | 'error';
+  lastSuccessAt?: string | null;
+  lastErrorAt?: string | null;
+  consecutiveFailures?: number;
 }
 
 export interface McpServerInput {
@@ -44,6 +61,9 @@ export interface McpServerInput {
   env?: Record<string, string>;
   capabilities?: McpCapability[];
   enabled?: boolean;
+  /** The provider it speaks for ('github'), when Crewly cannot tell from its URL. */
+  provider?: string | null;
+  trust?: TrustLevel;
 }
 
 export interface AgentToolAssignment {
@@ -96,5 +116,19 @@ export class McpResource {
     acknowledgeCapabilities: McpCapability[] = [],
   ): Promise<{ tools: AgentToolAssignment[] }> {
     return this.http.request('PUT', `/api/v1/agents/${encodePathSegment(agentId)}/tools`, { tools, acknowledgeCapabilities });
+  }
+
+  /** Starts signing the server in with OAuth; send the browser to `authorizationUrl`. */
+  startOAuth(id: string, callbackUrl: string): Promise<{ authorizationUrl: string; state: string }> {
+    return this.http.request('POST', `/api/v1/mcp-servers/${encodePathSegment(id)}/oauth/start`, { callbackUrl });
+  }
+
+  /** Finishes signing in with what the authorization server sent back, then discovers the server's tools. */
+  completeOAuth(state: string, code: string): Promise<McpTestResult> {
+    return this.http.request('POST', '/api/v1/mcp-servers/oauth/complete', { state, code });
+  }
+
+  signOut(id: string): Promise<McpServer> {
+    return this.http.request('DELETE', `/api/v1/mcp-servers/${encodePathSegment(id)}/oauth`);
   }
 }

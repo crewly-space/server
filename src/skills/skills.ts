@@ -12,6 +12,30 @@ export interface SkillConfigField {
   required: boolean;
 }
 
+/**
+ * What a skill needs, stated as capabilities rather than vendors: a bug
+ * fixer needs error tracking (Sentry, Datadog or New Relic) and a code host
+ * (GitHub or GitLab), not "Sentry". An empty `oneOf` accepts any provider
+ * with that capability.
+ */
+export interface SkillRequirement {
+  capability: string;
+  oneOf: string[];
+}
+
+export interface SkillRequirements {
+  requires: SkillRequirement[];
+  optional: SkillRequirement[];
+  /** Permissions the skill uses routinely; authorizing it lets them run without asking. */
+  permissions: string[];
+  /** Permissions it may use, but only with a person's approval every time. */
+  approvals: string[];
+  /** Model preferences, by role, for runtimes that honour them. */
+  models?: Partial<Record<'preferred' | 'fallback' | 'cheap' | 'reasoning' | 'vision' | 'embedding', string>>;
+}
+
+export const EMPTY_REQUIREMENTS: SkillRequirements = { requires: [], optional: [], permissions: [], approvals: [] };
+
 export interface Skill {
   id: string;
   slug: string;
@@ -22,6 +46,7 @@ export interface Skill {
   source: 'custom' | 'installed';
   sourceRef: string | null;
   version: string;
+  requirements: SkillRequirements;
   createdAt: string;
   updatedAt: string;
 }
@@ -32,6 +57,8 @@ export interface AgentSkill {
   name: string;
   enabled: boolean;
   config: Record<string, string>;
+  /** When someone authorized the permissions it declares for this agent, if they have. */
+  authorizedAt: string | null;
 }
 
 export class SkillValidationError extends Error {}
@@ -47,6 +74,7 @@ interface SkillRow {
   source: 'custom' | 'installed';
   source_ref: string | null;
   version: string;
+  requirements: string;
   created_at: string;
   updated_at: string;
 }
@@ -62,6 +90,7 @@ function rowToSkill(row: SkillRow): Skill {
     source: row.source,
     sourceRef: row.source_ref,
     version: row.version,
+    requirements: { ...EMPTY_REQUIREMENTS, ...(JSON.parse(row.requirements || '{}') as Partial<SkillRequirements>) },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -80,6 +109,7 @@ export interface SkillInput {
   source?: 'custom' | 'installed';
   sourceRef?: string | null;
   version?: string;
+  requirements?: SkillRequirements;
 }
 
 export function createSkill(db: Database, input: SkillInput, createdBy: string | null): Skill {
@@ -88,11 +118,11 @@ export function createSkill(db: Database, input: SkillInput, createdBy: string |
   const slug = input.slug ?? slugify(input.name);
   if (db.prepare('SELECT 1 FROM skills WHERE slug = ?').get(slug)) throw new SkillExistsError(`A skill called "${slug}" already exists`);
   db.prepare(
-    `INSERT INTO skills (id, slug, name, description, instructions, config_fields, source, source_ref, version, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO skills (id, slug, name, description, instructions, config_fields, source, source_ref, version, requirements, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id, slug, input.name, input.description ?? '', input.instructions, JSON.stringify(input.configFields ?? []),
-    input.source ?? 'custom', input.sourceRef ?? null, input.version ?? '1', createdBy, now, now,
+    input.source ?? 'custom', input.sourceRef ?? null, input.version ?? '1', JSON.stringify(input.requirements ?? EMPTY_REQUIREMENTS), createdBy, now, now,
   );
   return getSkill(db, id)!;
 }
@@ -110,13 +140,14 @@ export function updateSkill(db: Database, id: string, input: Partial<SkillInput>
   const existing = getSkill(db, id);
   if (!existing) return undefined;
   db.prepare(
-    `UPDATE skills SET name = ?, description = ?, instructions = ?, config_fields = ?, version = ?, updated_at = ? WHERE id = ?`,
+    `UPDATE skills SET name = ?, description = ?, instructions = ?, config_fields = ?, version = ?, requirements = ?, updated_at = ? WHERE id = ?`,
   ).run(
     input.name ?? existing.name,
     input.description ?? existing.description,
     input.instructions ?? existing.instructions,
     JSON.stringify(input.configFields ?? existing.configFields),
     input.version ?? existing.version,
+    JSON.stringify(input.requirements ?? existing.requirements),
     new Date().toISOString(),
     id,
   );
@@ -163,7 +194,58 @@ export function parseSkillManifest(text: string): SkillInput {
     version: meta.version ?? '1',
     instructions,
     configFields,
+    requirements: parseRequirements(meta),
     source: 'installed',
+  };
+}
+
+const CAPABILITY = /^[a-z][a-z0-9_]{0,40}$/;
+const PROVIDER = /^[a-z][a-z0-9-]{0,40}$/;
+const PERMISSION = /^[a-z][a-z0-9_.]*:[a-z][a-z0-9_]*$/;
+
+function jsonField(meta: Record<string, string>, key: string): unknown {
+  if (!meta[key]) return undefined;
+  try {
+    return JSON.parse(meta[key]!);
+  } catch {
+    throw new SkillValidationError(`${key} must be JSON on one line`);
+  }
+}
+
+/**
+ * `requires` and `optional` map a capability to the providers that can
+ * supply it: {"error_tracking": ["sentry", "datadog"], "code_host": []}.
+ * `permissions` and `approvals` are lists of `resource:action`.
+ */
+export function parseRequirements(meta: Record<string, string>): SkillRequirements {
+  const capabilityMap = (key: string): SkillRequirement[] => {
+    const value = jsonField(meta, key);
+    if (value === undefined) return [];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new SkillValidationError(`${key} maps each capability to a list of providers`);
+    return Object.entries(value as Record<string, unknown>).map(([capability, providers]) => {
+      if (!CAPABILITY.test(capability)) throw new SkillValidationError(`${key}: "${capability}" is not a capability name`);
+      const list = providers === true ? [] : providers;
+      if (!Array.isArray(list) || list.some((provider) => typeof provider !== 'string' || !PROVIDER.test(provider))) {
+        throw new SkillValidationError(`${key}.${capability} must list provider ids`);
+      }
+      return { capability, oneOf: list as string[] };
+    });
+  };
+  const permissionList = (key: string): string[] => {
+    const value = jsonField(meta, key);
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string' || !PERMISSION.test(entry))) {
+      throw new SkillValidationError(`${key} must be a list of resource:action permissions`);
+    }
+    return [...new Set(value as string[])];
+  };
+  const models = jsonField(meta, 'models');
+  return {
+    requires: capabilityMap('requires'),
+    optional: capabilityMap('optional'),
+    permissions: permissionList('permissions'),
+    approvals: permissionList('approvals'),
+    ...(models && typeof models === 'object' && !Array.isArray(models) ? { models: models as SkillRequirements['models'] } : {}),
   };
 }
 
@@ -187,26 +269,33 @@ export function validateSkillConfig(skill: Skill, config: Record<string, string>
 export function listAgentSkills(db: Database, agentId: string): AgentSkill[] {
   return (db
     .prepare(
-      `SELECT a.skill_id, s.slug, s.name, a.enabled, a.config FROM agent_skills a JOIN skills s ON s.id = a.skill_id
+      `SELECT a.skill_id, s.slug, s.name, a.enabled, a.config, a.authorized_at FROM agent_skills a JOIN skills s ON s.id = a.skill_id
        WHERE a.agent_id = ? ORDER BY s.name`,
     )
-    .all(agentId) as Array<{ skill_id: string; slug: string; name: string; enabled: number; config: string }>)
-    .map((row) => ({ skillId: row.skill_id, slug: row.slug, name: row.name, enabled: row.enabled === 1, config: JSON.parse(row.config) }));
+    .all(agentId) as Array<{ skill_id: string; slug: string; name: string; enabled: number; config: string; authorized_at: string | null }>)
+    .map((row) => ({ skillId: row.skill_id, slug: row.slug, name: row.name, enabled: row.enabled === 1, config: JSON.parse(row.config), authorizedAt: row.authorized_at }));
 }
 
+/** Replaces an agent's skills. A skill that stays keeps its authorization. */
 export function setAgentSkills(
   db: Database,
   agentId: string,
   skills: Array<{ skillId: string; enabled: boolean; config: Record<string, string> }>,
 ): void {
   db.transaction(() => {
-    db.prepare('DELETE FROM agent_skills WHERE agent_id = ?').run(agentId);
-    const insert = db.prepare(
-      'INSERT INTO agent_skills (agent_id, skill_id, config, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-    );
+    const keep = new Set(skills.map((skill) => skill.skillId));
+    for (const existing of db.prepare('SELECT skill_id FROM agent_skills WHERE agent_id = ?').pluck().all(agentId) as string[]) {
+      if (!keep.has(existing)) db.prepare('DELETE FROM agent_skills WHERE agent_id = ? AND skill_id = ?').run(agentId, existing);
+    }
     const now = new Date().toISOString();
-    for (const skill of skills) insert.run(agentId, skill.skillId, JSON.stringify(skill.config), skill.enabled ? 1 : 0, now, now);
+    for (const skill of skills) upsertAgentSkill(db, agentId, skill, now);
   })();
+}
+
+export function upsertAgentSkill(db: Database, agentId: string, skill: { skillId: string; enabled: boolean; config: Record<string, string> }, now = new Date().toISOString()): void {
+  db.prepare(`INSERT INTO agent_skills (agent_id, skill_id, config, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (agent_id, skill_id) DO UPDATE SET config = excluded.config, enabled = excluded.enabled, updated_at = excluded.updated_at`)
+    .run(agentId, skill.skillId, JSON.stringify(skill.config), skill.enabled ? 1 : 0, now, now);
 }
 
 /**
@@ -226,7 +315,13 @@ export function renderSkill(skill: Skill, config: Record<string, string>): strin
   const settings = skill.configFields
     .filter((field) => config[field.key])
     .map((field) => `- ${field.label}: ${field.secret ? 'configured (secret)' : config[field.key]}`);
-  return [`## Skill: ${skill.name}`, body, settings.length ? `Settings:\n${settings.join('\n')}` : ''].filter(Boolean).join('\n\n');
+  const needs = skill.requirements.requires.map((entry) => entry.capability.replaceAll('_', ' '));
+  const asks = skill.requirements.approvals;
+  const tools = [
+    needs.length ? `Uses: ${needs.join(', ')}. Find the tools with search_tools when they are not listed.` : '',
+    asks.length ? `Always needs a person's approval: ${asks.join(', ')}. Request it through the tool and wait; never work around it.` : '',
+  ].filter(Boolean).join('\n');
+  return [`## Skill: ${skill.name}`, body, tools, settings.length ? `Settings:\n${settings.join('\n')}` : ''].filter(Boolean).join('\n\n');
 }
 
 export function skillInstructions(db: Database): InstructionProvider {

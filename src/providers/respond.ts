@@ -64,22 +64,29 @@ export interface ProviderRespondOptions {
 
 function mergeToolsets(toolsets: AgentToolset[]): AgentToolset | undefined {
   if (toolsets.length === 0) return undefined;
-  const owners = new Map<string, AgentToolset>();
-  const definitions: ToolDefinition[] = [];
-  for (const toolset of toolsets) {
-    for (const definition of toolset.definitions) {
-      // First provider to claim a name keeps it; a model cannot be offered two
-      // tools with one name and be expected to mean the right one.
-      if (owners.has(definition.name)) continue;
-      owners.set(definition.name, toolset);
-      definitions.push(definition);
+  // Recomputed on every read: a toolset may add definitions during a turn
+  // (tool search), and the next round must offer them.
+  const resolve = () => {
+    const owners = new Map<string, AgentToolset>();
+    const definitions: ToolDefinition[] = [];
+    for (const toolset of toolsets) {
+      for (const definition of toolset.definitions) {
+        // First provider to claim a name keeps it; a model cannot be offered two
+        // tools with one name and be expected to mean the right one.
+        if (owners.has(definition.name)) continue;
+        owners.set(definition.name, toolset);
+        definitions.push(definition);
+      }
     }
-  }
+    return { owners, definitions };
+  };
   return {
-    definitions,
+    get definitions() {
+      return resolve().definitions;
+    },
     instructions: toolsets.map((t) => t.instructions).filter(Boolean).join('\n\n') || undefined,
     async execute(call) {
-      const owner = owners.get(call.name);
+      const owner = resolve().owners.get(call.name);
       if (!owner) return { content: `There is no tool called "${call.name}".`, isError: true };
       return owner.execute(call);
     },

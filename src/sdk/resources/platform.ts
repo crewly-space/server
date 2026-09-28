@@ -15,6 +15,25 @@ export interface CapabilityPolicy {
 export interface CapabilityPolicyInput { capability: ExecutionCapability; decision: CapabilityDecision; scope?: Record<string, string | string[]>; }
 
 export interface RegistryVersion { version: string; }
+/** What a marketplace listing shows before anything is installed. */
+export interface RegistryListing {
+  category: string;
+  provider: string | null;
+  /** Never taken on a third-party registry's word: only Crewly's catalog and verified domains are official. */
+  trust: 'official' | 'verified' | 'community' | 'unverified';
+  sourceRepository: string | null;
+  updatedAt: string | null;
+  transport: 'http' | 'stdio' | 'none';
+  auth: string;
+  toolsCount: number | null;
+  readPermissions: string[];
+  writePermissions: string[];
+  networkAccess: boolean;
+  filesystemAccess: boolean;
+  secretsRequired: string[];
+  risk: 'low' | 'medium' | 'high';
+  featured: boolean;
+}
 export interface RegistryItem {
   id: string;
   type: 'skill' | 'mcp_preset';
@@ -26,6 +45,8 @@ export interface RegistryItem {
   requiredCapabilities: string[];
   requiredSecrets: string[];
   versions: RegistryVersion[];
+  /** Absent from servers older than the tool platform. */
+  listing?: RegistryListing;
 }
 export interface RegistryInstallation {
   id: string;

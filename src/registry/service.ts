@@ -5,6 +5,12 @@ import { createSkill, getSkill, parseSkillManifest, updateSkill } from '../skill
 import { createMcpServer, getMcpServer, updateMcpServer, type McpCapability } from '../mcp/repository.js';
 import { fetchPublicHttps, parsePublicHttpsUrl } from '../security/outbound.js';
 import { CATALOG, isCatalogId } from './catalog.js';
+import { detectProvider } from '../tools/providers.js';
+import type { TrustLevel } from '../tools/types.js';
+import { mcpListing, RegistryListingSchema } from './listing.js';
+
+export { mcpListing, RegistryListingSchema, type RegistryListing } from './listing.js';
+
 
 const OFFICIAL_MCP_REGISTRY = 'https://registry.modelcontextprotocol.io';
 const OFFICIAL_MCP_PREFIX = 'mcp-registry/';
@@ -12,12 +18,14 @@ const OFFICIAL_MCP_PREFIX = 'mcp-registry/';
 // A preset value may hold only secret references, optionally after an auth scheme ("Bearer {{secret:X}}").
 const SecretReferences = /\{\{\s*secret:[A-Z][A-Z0-9_]*\s*\}\}/g;
 const RegistryVersionSchema = z.object({ version: z.string().min(1).max(40), manifest: z.unknown() });
+
 export const RegistryItemSchema = z.object({
   id: z.string().min(1).max(200), type: z.enum(['skill', 'mcp_preset']), name: z.string().min(1).max(100),
   description: z.string().max(1000).default(''), publisher: z.string().min(1).max(100), verified: z.boolean().default(false),
   compatibility: z.string().max(100).default('*'), requiredCapabilities: z.array(z.string().max(80)).max(50).default([]),
   requiredSecrets: z.array(z.string().regex(/^[A-Z][A-Z0-9_]*$/)).max(50).default([]),
   versions: z.array(RegistryVersionSchema).min(1).max(100),
+  listing: RegistryListingSchema.optional(),
 });
 export type RegistryItem = z.infer<typeof RegistryItemSchema>;
 
@@ -37,15 +45,37 @@ function officialMcpItem(value: unknown): RegistryItem | undefined {
   if (!remote) return undefined;
   try { parsePublicHttpsUrl(remote.url); } catch { return undefined; }
   const namespace = server.name.split('/')[0]!;
+  // The registry verifies ownership of a domain namespace (com.stripe/...), so its publisher is who it says.
+  // A GitHub namespace only proves a GitHub account: that is a community listing.
+  const trust: TrustLevel = /^io\.github\./.test(namespace) ? 'community' : 'official';
+  const meta = parsed.data._meta?.['io.modelcontextprotocol.registry/official'] as { updatedAt?: string } | undefined;
+  const repository = (value as { server?: { repository?: { url?: string } } }).server?.repository?.url ?? null;
   return {
     id: `${OFFICIAL_MCP_PREFIX}${server.name}`, type: 'mcp_preset', name: server.title ?? server.name.split('/').at(-1)!,
     description: server.description, publisher: `MCP Registry · ${namespace}`, verified: false, compatibility: '*',
     requiredCapabilities: ['network.access'], requiredSecrets: [], versions: [{ version: server.version,
       manifest: { name: server.title ?? server.name.split('/').at(-1)!, transport: 'http', url: remote.url, headers: {}, capabilities: ['network'] } }],
+    listing: mcpListing({ url: remote.url, transport: 'http', trust, secrets: [], repository, updatedAt: meta?.updatedAt ?? null }),
   };
 }
 
+/** The official registry is read at most every few minutes per query, not on every page view. */
+const OFFICIAL_CACHE_TTL_MS = 10 * 60_000;
+const officialCache = new Map<string, { at: number; items: RegistryItem[] }>();
+
 export async function fetchOfficialMcpItems(query = '', fetchImpl?: typeof fetch): Promise<RegistryItem[]> {
+  const key = query.trim().toLowerCase();
+  const cached = officialCache.get(key);
+  if (cached && Date.now() - cached.at < OFFICIAL_CACHE_TTL_MS && !fetchImpl) return cached.items;
+  const items = await fetchOfficialMcpItemsUncached(query, fetchImpl);
+  if (!fetchImpl) {
+    if (officialCache.size > 200) officialCache.clear();
+    officialCache.set(key, { at: Date.now(), items });
+  }
+  return items;
+}
+
+async function fetchOfficialMcpItemsUncached(query: string, fetchImpl?: typeof fetch): Promise<RegistryItem[]> {
   const url = new URL('/v0.1/servers', OFFICIAL_MCP_REGISTRY);
   url.searchParams.set('version', 'latest'); url.searchParams.set('limit', '100');
   if (query.trim()) url.searchParams.set('search', query.trim());
@@ -78,7 +108,12 @@ export async function fetchRegistryItems(db: Database, fetchImpl?: typeof fetch)
   const settings = getRegistrySettings(db); if (!settings.enabled || !settings.registryUrl) throw new Error('registry_disabled');
   const response = await fetchPublicHttps(settings.registryUrl, { headers: { accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(10_000) }, fetchImpl);
   if (!response.ok) throw new Error(`registry_unavailable_${response.status}`);
-  const body = await response.json() as { items?: unknown }; return z.array(RegistryItemSchema).max(10_000).parse(body.items ?? []);
+  const body = await response.json() as { items?: unknown };
+  return z.array(RegistryItemSchema).max(10_000).parse(body.items ?? []).map((item) => ({
+    ...item,
+    // A private registry the owner chose may vouch for its items, but it cannot make them official.
+    listing: item.listing ? { ...item.listing, trust: item.verified ? 'verified' as const : item.listing.trust === 'official' ? 'community' as const : item.listing.trust } : undefined,
+  }));
 }
 
 /**
@@ -132,7 +167,9 @@ export function installRegistryItem(db: Database, item: RegistryItem, version: s
       : createSkill(db, { ...parsed, source: 'installed', sourceRef: `registry:${item.id}`, version: selected.version }, userId).id;
   } else {
     const parsed = mcpManifest(selected.manifest); const server = existing?.installed_resource_id ? getMcpServer(db, existing.installed_resource_id) : undefined;
-    resourceId = server ? updateMcpServer(db, server.id, parsed)!.id : createMcpServer(db, parsed).id;
+    const trust: TrustLevel = isCatalogId(item.id) ? (item.listing?.trust ?? 'verified') : item.verified ? 'verified' : (item.listing?.trust === 'community' ? 'community' : 'unverified');
+    const connection = { ...parsed, trust, registryId: item.id, provider: item.listing?.provider ?? detectProvider(parsed.url) };
+    resourceId = server ? updateMcpServer(db, server.id, connection)!.id : createMcpServer(db, connection).id;
   }
   const now = new Date().toISOString(); const id = existing?.id ?? randomUUID();
   db.prepare(`INSERT INTO registry_installations (id, item_type, registry_id, name, publisher, version, verified, manifest, installed_resource_id, installed_by, installed_at, updated_at)

@@ -1,4 +1,7 @@
 import type { RegistryItem } from './service.js';
+import { mcpListing } from './listing.js';
+import { parseSkillManifest } from '../skills/skills.js';
+import { SKILL_LIBRARY } from './skill-library.js';
 
 /**
  * The Crewly catalog: skills and MCP presets that ship with the server, so an
@@ -19,10 +22,14 @@ interface PresetSpec {
   /** Additional vault secrets used by a URL or non-standard header. */
   secrets?: string[];
   headers?: Record<string, string>;
+  featured?: boolean;
 }
 
+/** Vendors' own endpoints, reviewed here: official publisher, listed by Crewly. */
 function preset(spec: PresetSpec): RegistryItem {
+  const secrets = [...new Set([...(spec.secret ? [spec.secret] : []), ...(spec.secrets ?? [])])];
   return {
+    listing: mcpListing({ url: spec.url, transport: 'http', trust: 'official', secrets, featured: spec.featured }),
     id: `${PREFIX}${spec.id}`, type: 'mcp_preset', name: spec.name, description: spec.description,
     publisher: PUBLISHER, verified: true, compatibility: '*', requiredCapabilities: ['network.access'],
     requiredSecrets: [...new Set([...(spec.secret ? [spec.secret] : []), ...(spec.secrets ?? [])])],
@@ -33,17 +40,28 @@ function preset(spec: PresetSpec): RegistryItem {
   };
 }
 
-function skill(id: string, manifest: string): RegistryItem {
-  const meta = (key: string) => new RegExp(`^${key}:\\s*(.*)$`, 'm').exec(manifest)?.[1]?.trim() ?? '';
+function skill(id: string, manifest: string, featured = false): RegistryItem {
+  const parsed = parseSkillManifest(manifest);
+  const { requirements } = parsed;
   return {
-    id: `${PREFIX}${id}`, type: 'skill', name: meta('name'), description: meta('description'),
-    publisher: PUBLISHER, verified: true, compatibility: '*', requiredCapabilities: [], requiredSecrets: [],
-    versions: [{ version: meta('version') || '1', manifest: manifest.trim() }],
+    id: `${PREFIX}${id}`, type: 'skill', name: parsed.name, description: parsed.description ?? '',
+    publisher: PUBLISHER, verified: true, compatibility: '*',
+    // What a skill needs, as the listing shows it: capabilities, not vendors.
+    requiredCapabilities: (requirements?.requires ?? []).map((entry) => entry.capability),
+    requiredSecrets: [],
+    versions: [{ version: parsed.version ?? '1', manifest: manifest.trim() }],
+    listing: {
+      category: 'skill', provider: null, trust: 'verified', sourceRepository: null, updatedAt: null, transport: 'none', auth: 'none', toolsCount: null,
+      readPermissions: (requirements?.permissions ?? []).filter((permission) => permission.endsWith(':read')),
+      writePermissions: [...(requirements?.permissions ?? []).filter((permission) => !permission.endsWith(':read')), ...(requirements?.approvals ?? [])],
+      networkAccess: false, filesystemAccess: false, secretsRequired: [],
+      risk: requirements?.approvals.length ? 'medium' : 'low', featured,
+    },
   };
 }
 
 const PRESETS: RegistryItem[] = [
-  preset({ id: 'github', name: 'GitHub', url: 'https://api.githubcopilot.com/mcp/', secret: 'GITHUB_TOKEN',
+  preset({ id: 'github', featured: true, name: 'GitHub', url: 'https://api.githubcopilot.com/mcp/', secret: 'GITHUB_TOKEN',
     description: "GitHub's official MCP server: repositories, code search, issues, pull requests and Actions. Uses a personal access token." }),
   preset({ id: 'linear', name: 'Linear', url: 'https://mcp.linear.app/mcp', secret: 'LINEAR_API_KEY',
     description: "Linear's official MCP server: find, create and update issues, projects and comments. Uses a Linear API key." }),
@@ -51,7 +69,7 @@ const PRESETS: RegistryItem[] = [
     description: 'Neon Postgres: list projects and branches, run SQL, and prepare migrations. Uses a Neon API key.' }),
   preset({ id: 'supabase', name: 'Supabase', url: 'https://mcp.supabase.com/mcp', secret: 'SUPABASE_ACCESS_TOKEN',
     description: 'Supabase projects: database, edge functions, logs and docs. Uses a personal access token.' }),
-  preset({ id: 'stripe', name: 'Stripe', url: 'https://mcp.stripe.com', secret: 'STRIPE_SECRET_KEY',
+  preset({ id: 'stripe', featured: true, name: 'Stripe', url: 'https://mcp.stripe.com', secret: 'STRIPE_SECRET_KEY',
     description: "Stripe's MCP server: customers, payments, invoices and docs search. Use a restricted key." }),
   preset({ id: 'paypal', name: 'PayPal', url: 'https://mcp.paypal.com', secret: 'PAYPAL_ACCESS_TOKEN',
     description: 'Finance · PayPal production: invoices, payments, disputes and merchant operations. Uses a short-lived PayPal access token.' }),
@@ -61,11 +79,11 @@ const PRESETS: RegistryItem[] = [
     description: 'Finance & commerce · Square customers, orders, catalog and payments through the official OAuth-enabled endpoint.' }),
   preset({ id: 'mercury', name: 'Mercury', url: 'https://mcp.mercury.com/mcp',
     description: 'Finance · Read-only access to Mercury balances, transactions, cards, recipients and statements through OAuth.' }),
-  preset({ id: 'vercel', name: 'Vercel', url: 'https://mcp.vercel.com',
+  preset({ id: 'vercel', featured: true, name: 'Vercel', url: 'https://mcp.vercel.com',
     description: 'Deploy & hosting · Search Vercel docs and, after OAuth, inspect projects, deployments, logs and analytics.' }),
   preset({ id: 'netlify', name: 'Netlify', url: 'https://netlify-mcp.netlify.app/mcp',
     description: 'Deploy & hosting · Create, deploy and manage Netlify projects with the official remote MCP server.' }),
-  preset({ id: 'cloudflare-api', name: 'Cloudflare API', url: 'https://mcp.cloudflare.com/mcp', secret: 'CLOUDFLARE_API_TOKEN',
+  preset({ id: 'cloudflare-api', featured: true, name: 'Cloudflare API', url: 'https://mcp.cloudflare.com/mcp', secret: 'CLOUDFLARE_API_TOKEN',
     description: 'Cloud & infrastructure · Search and execute across DNS, Workers, R2, Zero Trust and the full Cloudflare API. Use a scoped API token.' }),
   preset({ id: 'cloudflare-observability', name: 'Cloudflare Observability', url: 'https://observability.mcp.cloudflare.com/mcp', secret: 'CLOUDFLARE_API_TOKEN',
     description: 'Observability · Investigate Cloudflare application logs and analytics with a scoped API token.' }),
@@ -73,7 +91,7 @@ const PRESETS: RegistryItem[] = [
     description: 'Research · Global Internet traffic, trends, URL scans and other Cloudflare Radar utilities.' }),
   preset({ id: 'cloudflare-browser', name: 'Cloudflare Browser', url: 'https://browser.mcp.cloudflare.com/mcp',
     description: 'Browser · Fetch web pages, convert them to Markdown and capture screenshots in Cloudflare Browser Rendering.' }),
-  preset({ id: 'sentry', name: 'Sentry', url: 'https://mcp.sentry.dev/mcp',
+  preset({ id: 'sentry', featured: true, name: 'Sentry', url: 'https://mcp.sentry.dev/mcp',
     description: 'Observability · Search errors, analyze performance, triage issues and manage Sentry projects through OAuth.' }),
   preset({ id: 'atlassian', name: 'Atlassian', url: 'https://mcp.atlassian.com/v2/mcp',
     description: 'Project management · Jira and Confluence issues, pages, search and workflows through Atlassian OAuth.' }),
@@ -107,7 +125,10 @@ const PRESETS: RegistryItem[] = [
     description: 'Explore API relationships and workspace context through Postman Context Graph. Uses a Postman API key.' }),
 ];
 
+const FEATURED_SKILLS = new Set(['production-bug-fixer', 'incident-commander', 'release-manager', 'customer-issue-resolver', 'revenue-analyst', 'company-daily-brief']);
+
 const SKILLS: RegistryItem[] = [
+  ...SKILL_LIBRARY.map((entry) => skill(entry.id, entry.manifest, FEATURED_SKILLS.has(entry.id))),
   skill('pull-request-review', `---
 name: Pull request review
 slug: pull-request-review

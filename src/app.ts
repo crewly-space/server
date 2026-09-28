@@ -15,7 +15,8 @@ import { registerChannelRoutes } from './channels/routes.js';
 import { registerMessageRoutes } from './messages/routes.js';
 import { registerConversationSummaryRoutes, registerMemoryFactRoutes } from './memory/routes.js';
 import { registerProviderRoutes } from './providers/routes.js';
-import { type RespondFn } from './runtime/engine.js';
+import { runAgentTurn, type RespondFn } from './runtime/engine.js';
+import { createMessage } from './messages/repository.js';
 import { createProviderRespond } from './providers/respond.js';
 import { AiGateway } from './gateway/gateway.js';
 import { installBudgets } from './usage/budgets.js';
@@ -26,7 +27,7 @@ import { priceCall } from './usage/pricing.js';
 import { registerUsageRoutes } from './usage/routes.js';
 import { registerSecretRoutes } from './secrets/routes.js';
 import { registerMcpRoutes } from './mcp/routes.js';
-import { mcpToolset, registerMcpSecretHooks } from './mcp/service.js';
+import { registerMcpSecretHooks } from './mcp/service.js';
 import { registerSkillRoutes } from './skills/routes.js';
 import { registerSkillSecretHooks, skillInstructions } from './skills/skills.js';
 import { registerRuntimeRoutes } from './runtime/routes.js';
@@ -45,7 +46,8 @@ import { emailChannel, inAppChannel, NotificationService, registerNotificationSe
 import { registerNotificationRoutes } from './notifications/routes.js';
 import { negotiateProtocol, PROTOCOL_CAPABILITIES, PROTOCOL_VERSION } from './protocol/index.js';
 import { registerConnectorRoutes } from './connectors/routes.js';
-import { connectorToolset } from './connectors/toolset.js';
+import { toolRuntimeToolset } from './tools/runtime.js';
+import { registerToolRoutes } from './tools/routes.js';
 import type { ConnectorOAuthConfig } from './connectors/providers.js';
 import { registerWebhookRoutes } from './webhooks/routes.js';
 import { registerAttachmentRoutes } from './attachments/routes.js';
@@ -282,12 +284,14 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     allowStdio: opts.allowMcpStdio ?? false,
     clientVersion: opts.version,
   };
+  const toolRuntimeOptions = { mcp: mcpOptions, fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis) };
   const attachmentStore = new AttachmentStore(
     opts.attachmentDir ?? path.join(process.cwd(), '.crewly-attachments'),
     opts.attachmentMaxBytes ?? DEFAULT_ATTACHMENT_MAX_BYTES,
   );
   registerBrowserRoutes(app);
-  registerMcpRoutes(app, mcpOptions);
+  registerMcpRoutes(app, mcpOptions, { callbackOrigins: opts.trustedAppOrigins });
+  registerToolRoutes(app);
   registerSkillSecretHooks();
   registerSkillRoutes(app);
   registerRegistryRoutes(app, opts.fetchImpl);
@@ -296,8 +300,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     instructions: [skillInstructions(opts.db)],
     toolsets: [
       utilityToolset(),
-      mcpToolset(opts.db, mcpOptions),
-      connectorToolset(opts.db, opts.fetchImpl ?? globalThis.fetch.bind(globalThis)),
+      // Native connectors and MCP servers, as one normalized, policed and audited set.
+      toolRuntimeToolset(opts.db, toolRuntimeOptions),
       artifactToolset({ db: opts.db, store: attachmentStore }),
       browserToolset({ db: opts.db, adapter: opts.browserAdapter ?? new FetchBrowserAdapter(opts.fetchImpl), store: attachmentStore }),
       delegationToolset({
@@ -337,7 +341,27 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   });
   registerRuntimeRoutes(app, hub, respond);
   registerRunInspectorRoutes(app, hub);
-  registerApprovalRoutes(app);
+  registerApprovalRoutes(app, {
+    toolRuntime: toolRuntimeOptions,
+    // An approved action ran: say so where it was asked for, then let the agent carry on from the result.
+    onToolExecuted: (approval, execution) => {
+      if (!execution.conversationId) return;
+      const outcome = execution.status === 'success' ? 'ran' : execution.status === 'blocked' ? 'was not run' : 'failed';
+      const message = createMessage(opts.db, {
+        conversationId: execution.conversationId,
+        authorId: approval.agentId,
+        authorType: 'agent',
+        body: `Approved action ${outcome}: \`${execution.toolRef ?? approval.action}\`\n\n${execution.content.slice(0, 4000)}`,
+        mentions: [],
+        replyToMessageId: null,
+      });
+      hub.publish(`conversation:${execution.conversationId}`, 'message.created', { ...message });
+      if (execution.status !== 'success') return;
+      void runAgentTurn({ db: opts.db, hub, respond, queue: runQueue, onAgentChange: (agentId) => agentStatus.refresh(agentId) }, {
+        agentId: approval.agentId, conversationId: execution.conversationId, trigger: 'approval', triggerMessageId: message.id,
+      }).catch((error) => app.log.warn({ err: error }, 'agent turn after an approved action failed'));
+    },
+  });
   registerWsRoutes(app, hub, opts.trustedAppOrigins ?? []);
   registerDeviceSocket(app, deviceHub, hub, { version: serverVersion, serverIdentity: agentdServerIdentity });
 

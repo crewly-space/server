@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
 import { getAgent } from '../agents/repository.js';
+import { hasPermission } from '../permissions/roles.js';
+import { authorizeSkill, CapabilitiesNotAcknowledgedError, planSkill, SkillNotReadyError } from './plan.js';
 import {
   createSkill,
   deleteSkill,
@@ -23,6 +25,16 @@ const FieldSchema = z.object({
   required: z.boolean().default(false),
 });
 
+const RequirementSchema = z.object({ capability: z.string().regex(/^[a-z][a-z0-9_]{0,40}$/), oneOf: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,40}$/)).max(20) });
+const PermissionSchema = z.string().regex(/^[a-z][a-z0-9_.]*:[a-z][a-z0-9_]*$/);
+const RequirementsSchema = z.object({
+  requires: z.array(RequirementSchema).max(20).default([]),
+  optional: z.array(RequirementSchema).max(20).default([]),
+  permissions: z.array(PermissionSchema).max(100).default([]),
+  approvals: z.array(PermissionSchema).max(100).default([]),
+  models: z.record(z.enum(['preferred', 'fallback', 'cheap', 'reasoning', 'vision', 'embedding']), z.string().max(200)).optional(),
+});
+
 const SkillBodySchema = z.object({
   name: z.string().trim().min(1).max(80),
   slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional(),
@@ -30,6 +42,7 @@ const SkillBodySchema = z.object({
   instructions: z.string().min(1).max(20_000),
   configFields: z.array(FieldSchema).max(30).optional(),
   version: z.string().max(40).optional(),
+  requirements: RequirementsSchema.optional(),
 });
 
 const InstallBodySchema = z.object({
@@ -130,5 +143,38 @@ export function registerSkillRoutes(app: FastifyInstance): void {
     }
     setAgentSkills(app.db, id, body.skills);
     reply.send({ skills: listAgentSkills(app.db, id) });
+  });
+
+  /** What installing this skill would take: capabilities it needs, which connections supply them, and the exact tools. */
+  app.get('/api/v1/skills/:id/plan', { preHandler: requireAuth }, async (request, reply) => {
+    const skill = getSkill(app.db, (request.params as { id: string }).id);
+    if (!skill) return reply.code(404).send({ error: 'skill_not_found' });
+    reply.send(planSkill(app.db, skill));
+  });
+
+  /**
+   * Gives an agent the skill and authorizes what it declares. Because routine
+   * permissions then run without asking, this needs someone who manages integrations.
+   */
+  app.post('/api/v1/agents/:id/skills/:skillId/authorize', { preHandler: requireAuth }, async (request, reply) => {
+    const { id, skillId } = request.params as { id: string; skillId: string };
+    if (!getAgent(app.db, id)) return reply.code(404).send({ error: 'agent_not_found' });
+    const skill = getSkill(app.db, skillId);
+    if (!skill) return reply.code(404).send({ error: 'skill_not_found' });
+    if (!hasPermission(app.db, request.user!.id, 'integrations.manage')) return reply.code(403).send({ error: 'integrations_manage_required' });
+    const body = z.object({
+      acknowledgeCapabilities: z.array(z.enum(['shell', 'filesystem', 'network'])).default([]),
+      config: z.record(z.string(), z.string().max(4096)).optional(),
+    }).parse(request.body ?? {});
+    try {
+      if (body.config) validateSkillConfig(skill, body.config);
+      const plan = authorizeSkill(app.db, { skill, agentId: id, userId: request.user!.id, ...body });
+      reply.send({ plan, skills: listAgentSkills(app.db, id) });
+    } catch (error) {
+      if (error instanceof SkillNotReadyError) return reply.code(409).send({ error: 'skill_requirements_missing', missing: error.missing, message: error.message });
+      if (error instanceof CapabilitiesNotAcknowledgedError) return reply.code(400).send({ error: 'capabilities_not_acknowledged', capabilities: error.capabilities, message: error.message });
+      if (error instanceof SkillValidationError) return reply.code(400).send({ error: 'invalid_skill_config', message: error.message });
+      throw error;
+    }
   });
 }
