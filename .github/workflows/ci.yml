@@ -16,9 +16,7 @@ jobs:
         with: { node-version: '24', cache: npm }
       - run: npm ci
       - run: npm run typecheck
-      # Keep PostgreSQL below its connection ceiling while each test receives
-      # an isolated schema. This is intentionally slower and deterministic.
-      - run: npm test -- --maxWorkers=4
+      - run: npm test
 
   # The same suite on PostgreSQL, the database hosted servers run on. It also
   # holds the PostgreSQL baseline to SQLite's schema (src/db/postgres.test.ts).
@@ -41,4 +39,6 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '24', cache: npm }
       - run: npm ci
-      - run: npm test
+      # Keep PostgreSQL below its connection ceiling while each test receives
+      # an isolated schema. This is intentionally slower and deterministic.
+      - run: npm test -- --maxWorkers=4
