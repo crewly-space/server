@@ -49,6 +49,10 @@ export class ProviderInvalidResponseError extends ProviderError {
 export class ProviderModelsUnsupportedError extends ProviderError {
   override readonly code: string = 'provider_models_unsupported';
 }
+/** A plan's usage allowance is used up. Retrying will not help until it resets or the plan changes. */
+export class ProviderQuotaExceededError extends ProviderError {
+  override readonly code: string = 'provider_quota_exceeded';
+}
 /** Nothing to call: the agent points at a provider that does not exist here. */
 export class ProviderNotConfiguredError extends ProviderError {
   override readonly code: string = 'provider_not_configured';
