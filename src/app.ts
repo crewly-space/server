@@ -103,10 +103,18 @@ export interface BuildAppOptions {
   gitlabOAuth?: ConnectorOAuthConfig;
   /** Optional Linear OAuth app credentials for the first first-class connector. */
   linearOAuth?: ConnectorOAuthConfig;
+  /** Optional Asana OAuth app credentials. */
+  asanaOAuth?: ConnectorOAuthConfig;
   /** Optional Notion public integration OAuth credentials. */
   notionOAuth?: ConnectorOAuthConfig;
   /** Optional Google OAuth credentials used by the Drive connector. */
   googleDriveOAuth?: ConnectorOAuthConfig;
+  /** Optional Google OAuth credentials used by the Calendar connector. */
+  googleCalendarOAuth?: ConnectorOAuthConfig;
+  /** Optional Google OAuth credentials used by the Gmail connector. */
+  gmailOAuth?: ConnectorOAuthConfig;
+  /** Optional Dropbox OAuth app credentials. */
+  dropboxOAuth?: ConnectorOAuthConfig;
   /** Optional Slack OAuth app credentials for connector and QuickStart import. */
   slackOAuth?: ConnectorOAuthConfig;
   /** Private filesystem path for uploaded attachment bytes. */
@@ -319,8 +327,9 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerConversationSummaryRoutes(app);
   registerProviderRoutes(app, { fetchImpl: opts.fetchImpl, callbackOrigins: opts.trustedAppOrigins });
   registerConnectorRoutes(app, { fetchImpl: opts.fetchImpl, githubOAuth: opts.githubOAuth, gitlabOAuth: opts.gitlabOAuth,
-    linearOAuth: opts.linearOAuth, notionOAuth: opts.notionOAuth, googleDriveOAuth: opts.googleDriveOAuth,
-    slackOAuth: opts.slackOAuth, callbackOrigins: opts.trustedAppOrigins });
+    linearOAuth: opts.linearOAuth, asanaOAuth: opts.asanaOAuth, notionOAuth: opts.notionOAuth, googleDriveOAuth: opts.googleDriveOAuth,
+    googleCalendarOAuth: opts.googleCalendarOAuth, gmailOAuth: opts.gmailOAuth, dropboxOAuth: opts.dropboxOAuth, slackOAuth: opts.slackOAuth,
+    callbackOrigins: opts.trustedAppOrigins });
   registerAttachmentRoutes(app, {
     store: attachmentStore,
     directory: opts.attachmentDir ?? path.join(process.cwd(), '.crewly-attachments'),

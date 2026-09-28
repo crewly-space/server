@@ -4,6 +4,7 @@ import { runMigrations } from '../db/migrate.js';
 import { buildApp } from '../app.js';
 import { parseSkillManifest } from '../skills/skills.js';
 import { CATALOG } from './catalog.js';
+import { fetchOfficialMcpItems } from './service.js';
 
 describe('the built-in Crewly catalog', () => {
   let db: Database;
@@ -31,7 +32,13 @@ describe('the built-in Crewly catalog', () => {
       expect(item.verified).toBe(true);
       if (item.type === 'skill') expect(parseSkillManifest(item.versions[0]!.manifest as string).name).toBe(item.name);
     }
-    expect(CATALOG.filter((item) => item.type === 'mcp_preset').length).toBeGreaterThanOrEqual(18);
+    expect(CATALOG.filter((item) => item.type === 'mcp_preset').length).toBeGreaterThanOrEqual(31);
+    expect(CATALOG).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'crewly/vercel', name: 'Vercel' }),
+      expect.objectContaining({ id: 'crewly/cloudflare-api', requiredSecrets: ['CLOUDFLARE_API_TOKEN'] }),
+      expect.objectContaining({ id: 'crewly/paypal', requiredSecrets: ['PAYPAL_ACCESS_TOKEN'] }),
+      expect.objectContaining({ id: 'crewly/sentry', name: 'Sentry' }),
+    ]));
   });
 
   it('can be browsed and installed with the registry disabled', async () => {
@@ -68,5 +75,23 @@ describe('the built-in Crewly catalog', () => {
     const installed = await app.inject({ method: 'POST', url: '/api/v1/registry/install', headers: headers(), payload: { itemId: 'acme/leaky', type: 'mcp_preset' } });
     expect(installed.statusCode).toBe(400);
     expect(installed.json().error).toBe('registry_presets_may_only_reference_secrets');
+  });
+
+  it('adapts safe remote servers from the official MCP Registry without claiming they are verified', async () => {
+    let requested = '';
+    const items = await fetchOfficialMcpItems('calendar', async (input) => {
+      requested = String(input);
+      return new Response(JSON.stringify({ servers: [
+        { server: { name: 'com.example/calendar', title: 'Calendar', description: 'Calendar tools', version: '2.1.0',
+          remotes: [{ type: 'streamable-http', url: 'https://calendar.example/mcp' }] } },
+        { server: { name: 'com.example/local', description: 'No remote transport', version: '1.0.0', packages: [] } },
+        { server: { name: 'com.example/secret', description: 'Needs unresolved setup', version: '1.0.0',
+          remotes: [{ type: 'streamable-http', url: 'https://secret.example/mcp', headers: [{ name: 'Authorization', isSecret: true }] }] } },
+      ] }), { status: 200 });
+    });
+    expect(requested).toContain('search=calendar');
+    expect(requested).toContain('version=latest');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ id: 'mcp-registry/com.example/calendar', name: 'Calendar', verified: false, publisher: 'MCP Registry · com.example' });
   });
 });

@@ -21,7 +21,7 @@ export function registerRegistryRoutes(app: FastifyInstance, fetchImpl?: typeof 
   app.get('/api/v1/registry/items', { preHandler: requireAuth }, async (request, reply) => {
     if (!admin(app, request.user!.id)) { reply.code(403).send({ error: 'integrations_manage_required' }); return; }
     const query = z.object({ q: z.string().max(200).default(''), type: z.enum(['skill','mcp_preset']).optional() }).parse(request.query);
-    try { const needle = query.q.toLowerCase(); const items = (await listRegistryItems(app.db, fetchImpl)).filter((item) => (!query.type || item.type === query.type) && (!needle || `${item.name} ${item.description} ${item.publisher}`.toLowerCase().includes(needle))); reply.send({ items }); }
+    try { const needle = query.q.toLowerCase(); const items = (await listRegistryItems(app.db, fetchImpl, { query: query.q, type: query.type })).filter((item) => (!query.type || item.type === query.type) && (!needle || `${item.name} ${item.description} ${item.publisher}`.toLowerCase().includes(needle))); reply.send({ items }); }
     catch (error) { reply.code(503).send({ error: error instanceof Error ? error.message : 'registry_unavailable' }); }
   });
   app.get('/api/v1/registry/installations', { preHandler: requireAuth }, async (request, reply) => {

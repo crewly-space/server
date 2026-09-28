@@ -62,6 +62,11 @@ export function utilityToolset(now: () => Date = () => new Date()): ToolsetProvi
       { name: 'current_time', description: 'Get the exact current time in UTC and optionally in an IANA time zone.', inputSchema: { type: 'object', properties: { timeZone: { type: 'string', description: 'For example Europe/Warsaw.' } }, additionalProperties: false } },
       { name: 'generate_uuid', description: 'Generate one or more cryptographically random UUID v4 identifiers.', inputSchema: { type: 'object', properties: { count: { type: 'number', minimum: 1, maximum: 20 } }, additionalProperties: false } },
       { name: 'hash_text', description: 'Hash text with SHA-256 or SHA-512 and return a lowercase hexadecimal digest.', inputSchema: { type: 'object', properties: { text: { type: 'string' }, algorithm: { type: 'string', enum: ['sha256', 'sha512'] } }, required: ['text'], additionalProperties: false } },
+      { name: 'base64_text', description: 'Encode UTF-8 text as Base64 or decode Base64 back to UTF-8.', inputSchema: { type: 'object', properties: { value: { type: 'string' }, operation: { type: 'string', enum: ['encode', 'decode'] } }, required: ['value', 'operation'], additionalProperties: false } },
+      { name: 'format_json', description: 'Validate JSON and return it pretty-printed or minified without changing its data.', inputSchema: { type: 'object', properties: { json: { type: 'string' }, style: { type: 'string', enum: ['pretty', 'minified'] } }, required: ['json'], additionalProperties: false } },
+      { name: 'text_stats', description: 'Count Unicode characters, words, lines and UTF-8 bytes in text.', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false } },
+      { name: 'url_component', description: 'Encode or decode a URL component exactly.', inputSchema: { type: 'object', properties: { value: { type: 'string' }, operation: { type: 'string', enum: ['encode', 'decode'] } }, required: ['value', 'operation'], additionalProperties: false } },
+      { name: 'date_math', description: 'Add or subtract an exact number of seconds, minutes, hours or days from an ISO timestamp.', inputSchema: { type: 'object', properties: { timestamp: { type: 'string' }, amount: { type: 'number' }, unit: { type: 'string', enum: ['seconds', 'minutes', 'hours', 'days'] } }, required: ['timestamp', 'amount', 'unit'], additionalProperties: false } },
     ],
     async execute(call) {
       try {
@@ -78,6 +83,35 @@ export function utilityToolset(now: () => Date = () => new Date()): ToolsetProvi
         if (call.name === 'hash_text') {
           const algorithm = call.input.algorithm === 'sha512' ? 'sha512' : 'sha256';
           return { content: JSON.stringify({ algorithm, digest: createHash(algorithm).update(String(call.input.text ?? '')).digest('hex') }) };
+        }
+        if (call.name === 'base64_text') {
+          const value = String(call.input.value ?? ''); const operation = call.input.operation === 'decode' ? 'decode' : 'encode';
+          if (value.length > 100_000) throw new Error('input_too_large');
+          if (operation === 'decode' && (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value) || Buffer.from(value, 'base64').toString('base64') !== value)) throw new Error('invalid_base64');
+          return { content: JSON.stringify({ operation, result: operation === 'encode' ? Buffer.from(value, 'utf8').toString('base64') : Buffer.from(value, 'base64').toString('utf8') }) };
+        }
+        if (call.name === 'format_json') {
+          const value = String(call.input.json ?? ''); if (value.length > 100_000) throw new Error('input_too_large');
+          const parsed = JSON.parse(value) as unknown; const style = call.input.style === 'minified' ? 'minified' : 'pretty';
+          return { content: JSON.stringify({ style, result: JSON.stringify(parsed, null, style === 'pretty' ? 2 : 0) }) };
+        }
+        if (call.name === 'text_stats') {
+          const value = String(call.input.text ?? ''); if (value.length > 100_000) throw new Error('input_too_large');
+          const trimmed = value.trim();
+          return { content: JSON.stringify({ characters: Array.from(value).length, words: trimmed ? trimmed.split(/\s+/u).length : 0,
+            lines: value ? value.split(/\r\n|\r|\n/).length : 0, bytes: Buffer.byteLength(value, 'utf8') }) };
+        }
+        if (call.name === 'url_component') {
+          const value = String(call.input.value ?? ''); if (value.length > 100_000) throw new Error('input_too_large');
+          const operation = call.input.operation === 'decode' ? 'decode' : 'encode';
+          return { content: JSON.stringify({ operation, result: operation === 'encode' ? encodeURIComponent(value) : decodeURIComponent(value) }) };
+        }
+        if (call.name === 'date_math') {
+          const timestamp = new Date(String(call.input.timestamp ?? '')); if (!Number.isFinite(timestamp.getTime())) throw new Error('invalid_timestamp');
+          const amount = Number(call.input.amount); if (!Number.isFinite(amount)) throw new Error('invalid_amount');
+          const multiplier = call.input.unit === 'days' ? 86_400_000 : call.input.unit === 'hours' ? 3_600_000 : call.input.unit === 'minutes' ? 60_000 : 1_000;
+          const result = new Date(timestamp.getTime() + amount * multiplier); if (!Number.isFinite(result.getTime())) throw new Error('date_out_of_range');
+          return { content: JSON.stringify({ timestamp: timestamp.toISOString(), amount, unit: call.input.unit, result: result.toISOString() }) };
         }
         return { content: `There is no built-in utility called ${call.name}.`, isError: true };
       } catch (error) {

@@ -1,7 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Database } from '../db/driver.js';
 
-export const CONNECTOR_PROVIDERS = ['github', 'gitlab', 'linear', 'notion', 'google-drive', 'slack'] as const;
+export const CONNECTOR_PROVIDERS = [
+  'github', 'gitlab', 'linear', 'asana', 'notion', 'google-drive', 'google-calendar', 'gmail', 'dropbox', 'slack',
+] as const;
 export type ConnectorProvider = typeof CONNECTOR_PROVIDERS[number];
 export const CONNECTOR_CAPABILITIES = [
   'read_profile',
@@ -21,6 +23,14 @@ export const CONNECTOR_CAPABILITIES = [
   'read_files',
   'search_files',
   'create_file',
+  'read_calendar',
+  'read_events',
+  'create_event',
+  'update_event',
+  'delete_event',
+  'read_email',
+  'search_email',
+  'send_email',
 ] as const;
 export type ConnectorCapability = typeof CONNECTOR_CAPABILITIES[number];
 export const CONNECTOR_STATUSES = [
@@ -59,6 +69,13 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     capabilities: ['read_issues', 'read_projects', 'create_issue', 'comment_on_issue'],
     scopes: ['read', 'write'],
   },
+  asana: {
+    provider: 'asana',
+    label: 'Asana',
+    description: 'Projects, tasks and comments through an Asana OAuth application.',
+    capabilities: ['read_profile', 'read_projects', 'read_issues', 'create_issue', 'comment_on_issue'],
+    scopes: ['users:read', 'projects:read', 'tasks:read', 'tasks:write', 'stories:write'],
+  },
   notion: {
     provider: 'notion',
     label: 'Notion',
@@ -72,6 +89,27 @@ export const PROVIDERS: Record<ConnectorProvider, ConnectorProviderDefinition> =
     description: 'Search, read and create files through a Google OAuth application.',
     capabilities: ['read_profile', 'search_files', 'read_files', 'create_file'],
     scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/drive.file'],
+  },
+  'google-calendar': {
+    provider: 'google-calendar',
+    label: 'Google Calendar',
+    description: 'Calendars and events through a Google OAuth application.',
+    capabilities: ['read_profile', 'read_calendar', 'read_events', 'create_event', 'update_event', 'delete_event'],
+    scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/calendar.events'],
+  },
+  gmail: {
+    provider: 'gmail',
+    label: 'Gmail',
+    description: 'Search, read and send email through a Google OAuth application.',
+    capabilities: ['read_profile', 'read_email', 'search_email', 'send_email'],
+    scopes: ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.send'],
+  },
+  dropbox: {
+    provider: 'dropbox',
+    label: 'Dropbox',
+    description: 'Search, read and upload files through a Dropbox OAuth application.',
+    capabilities: ['read_profile', 'search_files', 'read_files', 'create_file'],
+    scopes: ['account_info.read', 'files.metadata.read', 'files.content.read', 'files.content.write'],
   },
   slack: {
     provider: 'slack',
@@ -145,6 +183,31 @@ export function startLinearAuthorization(
   url.searchParams.set('redirect_uri', input.callbackUrl);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', (input.scopes ?? PROVIDERS.linear.scopes).join(','));
+  url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  return { connectorId: input.connectorId, state, authorizeUrl: url.toString() };
+}
+
+export function startAsanaAuthorization(
+  db: Database,
+  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  config: ConnectorOAuthConfig,
+): PendingConnectorAuthorization {
+  const state = base64Url(randomBytes(32));
+  const codeVerifier = base64Url(randomBytes(48));
+  const challenge = base64Url(createHash('sha256').update(codeVerifier).digest());
+  const now = Date.now();
+  db.prepare('DELETE FROM connector_oauth_states WHERE expires_at <= ?').run(new Date(now).toISOString());
+  db.prepare(`INSERT INTO connector_oauth_states
+    (state, connector_id, provider, code_verifier, user_id, callback_url, created_at, expires_at)
+    VALUES (?, ?, 'asana', ?, ?, ?, ?, ?)`).run(state, input.connectorId, codeVerifier, input.userId, input.callbackUrl,
+      new Date(now).toISOString(), new Date(now + STATE_TTL_MS).toISOString());
+  const url = new URL('https://app.asana.com/-/oauth_authorize');
+  url.searchParams.set('client_id', config.clientId);
+  url.searchParams.set('redirect_uri', input.callbackUrl);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', (input.scopes ?? PROVIDERS.asana.scopes).join(' '));
   url.searchParams.set('state', state);
   url.searchParams.set('code_challenge', challenge);
   url.searchParams.set('code_challenge_method', 'S256');
@@ -249,6 +312,85 @@ export function startGoogleDriveAuthorization(
   return { connectorId: input.connectorId, state, authorizeUrl: url.toString() };
 }
 
+export function startGoogleCalendarAuthorization(
+  db: Database,
+  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  config: ConnectorOAuthConfig,
+): PendingConnectorAuthorization {
+  const state = base64Url(randomBytes(32));
+  const codeVerifier = base64Url(randomBytes(48));
+  const challenge = base64Url(createHash('sha256').update(codeVerifier).digest());
+  const now = Date.now();
+  db.prepare('DELETE FROM connector_oauth_states WHERE expires_at <= ?').run(new Date(now).toISOString());
+  db.prepare(`INSERT INTO connector_oauth_states
+    (state, connector_id, provider, code_verifier, user_id, callback_url, created_at, expires_at)
+    VALUES (?, ?, 'google-calendar', ?, ?, ?, ?, ?)`).run(state, input.connectorId, codeVerifier, input.userId, input.callbackUrl,
+      new Date(now).toISOString(), new Date(now + STATE_TTL_MS).toISOString());
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.searchParams.set('client_id', config.clientId);
+  url.searchParams.set('redirect_uri', input.callbackUrl);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', (input.scopes ?? PROVIDERS['google-calendar'].scopes).join(' '));
+  url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  url.searchParams.set('access_type', 'offline');
+  url.searchParams.set('prompt', 'consent');
+  return { connectorId: input.connectorId, state, authorizeUrl: url.toString() };
+}
+
+export function startGmailAuthorization(
+  db: Database,
+  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  config: ConnectorOAuthConfig,
+): PendingConnectorAuthorization {
+  const state = base64Url(randomBytes(32));
+  const codeVerifier = base64Url(randomBytes(48));
+  const challenge = base64Url(createHash('sha256').update(codeVerifier).digest());
+  const now = Date.now();
+  db.prepare('DELETE FROM connector_oauth_states WHERE expires_at <= ?').run(new Date(now).toISOString());
+  db.prepare(`INSERT INTO connector_oauth_states
+    (state, connector_id, provider, code_verifier, user_id, callback_url, created_at, expires_at)
+    VALUES (?, ?, 'gmail', ?, ?, ?, ?, ?)`).run(state, input.connectorId, codeVerifier, input.userId, input.callbackUrl,
+      new Date(now).toISOString(), new Date(now + STATE_TTL_MS).toISOString());
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.searchParams.set('client_id', config.clientId);
+  url.searchParams.set('redirect_uri', input.callbackUrl);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', (input.scopes ?? PROVIDERS.gmail.scopes).join(' '));
+  url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  url.searchParams.set('access_type', 'offline');
+  url.searchParams.set('prompt', 'consent');
+  return { connectorId: input.connectorId, state, authorizeUrl: url.toString() };
+}
+
+export function startDropboxAuthorization(
+  db: Database,
+  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  config: ConnectorOAuthConfig,
+): PendingConnectorAuthorization {
+  const state = base64Url(randomBytes(32));
+  const codeVerifier = base64Url(randomBytes(48));
+  const challenge = base64Url(createHash('sha256').update(codeVerifier).digest());
+  const now = Date.now();
+  db.prepare('DELETE FROM connector_oauth_states WHERE expires_at <= ?').run(new Date(now).toISOString());
+  db.prepare(`INSERT INTO connector_oauth_states
+    (state, connector_id, provider, code_verifier, user_id, callback_url, created_at, expires_at)
+    VALUES (?, ?, 'dropbox', ?, ?, ?, ?, ?)`).run(state, input.connectorId, codeVerifier, input.userId, input.callbackUrl,
+      new Date(now).toISOString(), new Date(now + STATE_TTL_MS).toISOString());
+  const url = new URL('https://www.dropbox.com/oauth2/authorize');
+  url.searchParams.set('client_id', config.clientId);
+  url.searchParams.set('redirect_uri', input.callbackUrl);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', (input.scopes ?? PROVIDERS.dropbox.scopes).join(' '));
+  url.searchParams.set('state', state);
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  return { connectorId: input.connectorId, state, authorizeUrl: url.toString() };
+}
+
 interface OAuthStateRow {
   state: string; connector_id: string; provider: string; code_verifier: string;
   user_id: string; callback_url: string; expires_at: string;
@@ -303,6 +445,25 @@ export async function exchangeLinearCode(
   } catch { throw new ConnectorOAuthError('Linear could not be reached', 502); }
   const body = await response.json().catch(() => ({})) as { access_token?: string; error_description?: string };
   if (!response.ok || !body.access_token) throw new ConnectorOAuthError(body.error_description ?? 'Linear rejected the authorization', 502);
+  return body.access_token;
+}
+
+export async function exchangeAsanaCode(
+  input: { code: string; codeVerifier: string; redirectUri: string },
+  config: ConnectorOAuthConfig,
+  fetchImpl: typeof fetch,
+): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetchImpl('https://app.asana.com/-/oauth_token', {
+      method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: input.redirectUri,
+        code: input.code, code_verifier: input.codeVerifier, grant_type: 'authorization_code' }),
+      redirect: 'error', signal: AbortSignal.timeout(10_000),
+    });
+  } catch { throw new ConnectorOAuthError('Asana could not be reached', 502); }
+  const body = await response.json().catch(() => ({})) as { access_token?: string; error_description?: string };
+  if (!response.ok || !body.access_token) throw new ConnectorOAuthError(body.error_description ?? 'Asana rejected the authorization', 502);
   return body.access_token;
 }
 
@@ -378,6 +539,28 @@ export async function exchangeGoogleDriveCode(
   } catch { throw new ConnectorOAuthError('Google could not be reached', 502); }
   const body = await response.json().catch(() => ({})) as { access_token?: string; error_description?: string };
   if (!response.ok || !body.access_token) throw new ConnectorOAuthError(body.error_description ?? 'Google rejected the authorization', 502);
+  return body.access_token;
+}
+
+export const exchangeGoogleCalendarCode = exchangeGoogleDriveCode;
+export const exchangeGmailCode = exchangeGoogleDriveCode;
+
+export async function exchangeDropboxCode(
+  input: { code: string; codeVerifier: string; redirectUri: string },
+  config: ConnectorOAuthConfig,
+  fetchImpl: typeof fetch,
+): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetchImpl('https://api.dropboxapi.com/oauth2/token', {
+      method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: input.redirectUri,
+        code: input.code, code_verifier: input.codeVerifier, grant_type: 'authorization_code' }),
+      redirect: 'error', signal: AbortSignal.timeout(10_000),
+    });
+  } catch { throw new ConnectorOAuthError('Dropbox could not be reached', 502); }
+  const body = await response.json().catch(() => ({})) as { access_token?: string; error_description?: string };
+  if (!response.ok || !body.access_token) throw new ConnectorOAuthError(body.error_description ?? 'Dropbox rejected the authorization', 502);
   return body.access_token;
 }
 
@@ -464,4 +647,15 @@ export function notionRequest(token: string, path: string, fetchImpl: typeof fet
 
 export function googleRequest(token: string, url: string | URL, fetchImpl: typeof fetch, init: RequestInit = {}) {
   return bearerJsonRequest('Google', token, url, fetchImpl, init);
+}
+
+export function asanaRequest(token: string, path: string, fetchImpl: typeof fetch, init: RequestInit = {}) {
+  return bearerJsonRequest('Asana', token, new URL(path.replace(/^\//, ''), 'https://app.asana.com/api/1.0/'), fetchImpl, init,
+    { 'content-type': 'application/json' });
+}
+
+export function dropboxRequest(token: string, path: string, fetchImpl: typeof fetch, init: RequestInit = {}, content = false) {
+  const base = content ? 'https://content.dropboxapi.com/2/' : 'https://api.dropboxapi.com/2/';
+  return bearerJsonRequest('Dropbox', token, new URL(path.replace(/^\//, ''), base), fetchImpl, init,
+    content ? {} : { 'content-type': 'application/json' });
 }

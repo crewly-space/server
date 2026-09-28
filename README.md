@@ -39,8 +39,8 @@ Without that step the image is still valid — the server just serves no UI.
 
 ## External connectors
 
-Crewly includes native OAuth connectors for GitHub, GitLab, Linear, Notion,
-Google Drive and Slack. Tokens are encrypted, access is granted per capability,
+Crewly includes native OAuth connectors for GitHub, GitLab, Linear, Asana,
+Notion, Google Drive, Google Calendar, Gmail, Dropbox and Slack. Tokens are encrypted, access is granted per capability,
 and calls are audited without recording credentials. See
 [connector setup and environment variables](docs/connectors.md).
 
