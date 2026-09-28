@@ -1,7 +1,7 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
-import { isIP } from 'node:net';
+import { isIP, type LookupFunction } from 'node:net';
 
 export interface ResolvedAddress { address: string; family: number }
 export type PublicLookup = (hostname: string) => Promise<ResolvedAddress[]>;
@@ -69,6 +69,19 @@ function bodyBytes(body: BodyInit | null | undefined): Uint8Array | undefined {
   throw new Error('unsupported_outbound_request_body');
 }
 
+/** A DNS resolver that preserves the shape requested by Node's HTTP client. */
+export function pinnedLookupFor(address: ResolvedAddress): LookupFunction {
+  return (_hostname, options, callback) => {
+    if (typeof options === 'object' && options.all) {
+      (callback as (error: NodeJS.ErrnoException | null, addresses: ResolvedAddress[]) => void)(null, [address]);
+      return;
+    }
+    (callback as (error: NodeJS.ErrnoException | null, value: string, family: number) => void)(
+      null, address.address, address.family,
+    );
+  };
+}
+
 /** Resolve once, reject every non-public answer, and pin the actual socket to that result. */
 export async function fetchPublicHttps(
   raw: string | URL,
@@ -85,12 +98,19 @@ export async function fetchPublicHttps(
   const body = bodyBytes(init.body);
   if (body && !headers.has('content-length')) headers.set('content-length', String(body.byteLength));
   const transport = resolved.url.protocol === 'https:' ? https : http;
+  // Node 24 enables the multi-address connection path for HTTP clients and
+  // asks custom DNS resolvers for `all` addresses. Returning the older
+  // `(address, family)` shape in that case makes Node read `address.address`
+  // from a string and fail with ERR_INVALID_IP_ADDRESS ("undefined"). Keep
+  // the socket pinned to the one address we already vetted, in the shape the
+  // caller requested.
+  const pinnedLookup = pinnedLookupFor(resolved.address);
   return new Promise<Response>((resolve, reject) => {
     const request = transport.request(resolved.url, {
       method: init.method ?? 'GET',
       headers: Object.fromEntries(headers.entries()),
       signal: init.signal ?? undefined,
-      lookup: (_hostname, _options, callback) => callback(null, resolved.address.address, resolved.address.family as 4 | 6),
+      lookup: pinnedLookup,
     }, (response) => {
       const chunks: Buffer[] = [];
       let size = 0;
