@@ -60,6 +60,8 @@ describe('Crewly Gateway status', () => {
     link(db, 'connected', ['inference', 'models:read']);
     cloud = () => new Response(JSON.stringify({ error: 'gateway_not_configured' }), { status: 503 });
     expect(await status()).toMatchObject({ state: 'not_offered' });
+    cloud = () => new Response(JSON.stringify({ error: 'gateway_subscription_required' }), { status: 402 });
+    expect(await status()).toMatchObject({ state: 'not_offered', message: expect.stringMatching(/no AI Gateway plan/) });
     cloud = () => { throw new Error('offline'); };
     expect(await status()).toMatchObject({ state: 'unavailable' });
   });
@@ -87,5 +89,10 @@ describe('Crewly Gateway status', () => {
     expect(failed.statusCode).toBe(502);
     expect(failed.json()).toMatchObject({ ok: false, error: 'provider_not_configured' });
     expect(failed.json().message).toMatch(/does not offer Gateway models/);
+
+    cloud = () => new Response(JSON.stringify({ error: 'gateway_usage_exhausted' }), { status: 402 });
+    const exhausted = await verify();
+    expect(exhausted.json()).toMatchObject({ ok: false, error: 'provider_quota_exceeded' });
+    expect(exhausted.json().message).toMatch(/Gateway usage is used up/);
   });
 });

@@ -5,6 +5,7 @@ import type { ProviderClient, ProviderChatResult } from './client.js';
 import {
   ProviderAuthError,
   ProviderNotConfiguredError,
+  ProviderQuotaExceededError,
   ProviderRateLimitError,
   ProviderRequestError,
   ProviderUnavailableError,
@@ -30,6 +31,9 @@ export interface GatewayStatus {
   /** Models the Gateway offers; only when `ready`. */
   models: ModelInfo[];
 }
+
+/** The Crewly account this server is linked through has no AI Gateway plan. */
+export class GatewayPlanRequiredError extends ProviderNotConfiguredError {}
 
 /** A provider credential that never leaves the connected server is enough: Cloud holds the upstream key. */
 export class CrewlyGatewayClient implements ProviderClient {
@@ -71,6 +75,10 @@ export class CrewlyGatewayClient implements ProviderClient {
 function gatewayError(status: number, code: unknown): Error {
   const label = typeof code === 'string' ? code : 'provider_unavailable';
   if (label === 'gateway_not_configured') return new ProviderNotConfiguredError('Crewly does not offer Gateway models yet; use a provider key for now');
+  // Cloud sells the Gateway as plans with a monthly usage allowance. Neither
+  // refusal clears on a retry, so neither is a transient failure.
+  if (label === 'gateway_subscription_required') return new GatewayPlanRequiredError('The Crewly account this server is connected through has no AI Gateway plan. Choose one in Crewly Cloud');
+  if (label === 'gateway_usage_exhausted' || status === 402) return new ProviderQuotaExceededError("This month's Crewly Gateway usage is used up. It resets on the 1st (UTC), or move to a bigger plan in Crewly Cloud");
   if (status === 401 || label === 'provider_auth_failed') return new ProviderAuthError('Crewly Gateway authentication failed');
   if (status === 403) return new ProviderNotConfiguredError('This server is not allowed to use Crewly Gateway; grant it the AI Gateway service in Crewly');
   if (status === 429 || label === 'provider_rate_limited') return new ProviderRateLimitError('Crewly Gateway is rate limiting requests');
@@ -104,6 +112,7 @@ export async function gatewayStatus(db: Database, fetchImpl: typeof fetch): Prom
     if (!models.length) return { ...base, state: 'not_offered', message: 'Crewly Gateway answered but offers no models yet.' };
     return { ...base, state: 'ready', models, message: `Crewly Gateway is ready with ${models.length} model${models.length === 1 ? '' : 's'}.` };
   } catch (error) {
+    if (error instanceof GatewayPlanRequiredError) return { ...base, state: 'not_offered', message: `${error.message}.` };
     if (error instanceof ProviderNotConfiguredError) return { ...base, state: error.message.startsWith('Crewly does not offer') ? 'not_offered' : 'missing_scope', message: `${error.message}.` };
     if (error instanceof ProviderAuthError) return { ...base, state: 'revoked', message: 'Crewly no longer accepts this server. Check the connection in Crewly Cloud settings.' };
     return { ...base, state: 'unavailable', message: `Crewly Gateway could not be reached: ${error instanceof Error ? error.message : 'unknown error'}.` };
