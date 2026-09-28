@@ -37,6 +37,20 @@ export interface RespondInput {
   onEvent?: (event: TurnEvent) => void;
   /** True once the run has been cancelled; a responder stops at its next step. */
   isCancelled?: () => boolean;
+  /**
+   * The message went to everyone and this agent was not addressed: it may
+   * answer with {@link NO_REPLY} to stay out of it.
+   */
+  optionalReply?: boolean;
+}
+
+/** What an agent says, on an optional turn, to post nothing at all. */
+export const NO_REPLY = 'NO_REPLY';
+
+/** Whether a body is the agent choosing not to reply (models add quotes and full stops). */
+export function isNoReply(body: string): boolean {
+  const bare = body.trim().replace(/^[`"'*_\s]+|[`"'*_.!\s]+$/g, '');
+  return bare === '' || bare.toUpperCase() === NO_REPLY;
 }
 
 /** One tool the model called during a turn. Sizes only: contents stay out of the trace. */
@@ -79,6 +93,8 @@ export interface RunAgentTurnInput {
   threadRootId?: string;
   /** Why this message woke the agent, retained in the run trace for debugging. */
   routingDecision?: { mode: string; reason: string };
+  /** Nobody asked this agent: it may decline, and then nothing is posted. */
+  optional?: boolean;
 }
 
 /** A run another agent asked for: it sees only the task, and its answer goes back, not into the chat. */
@@ -100,7 +116,8 @@ interface TurnResult {
 
 export interface RunAgentTurnOutcome {
   run: AgentRun;
-  message: Message;
+  /** Null when an optional turn chose not to reply. */
+  message: Message | null;
   handoff: { attempted: boolean; dispatched: boolean; blockedReason?: 'max_hop_count_exceeded' };
 }
 
@@ -127,7 +144,7 @@ function failureOf(error: unknown): { code: string; message: string } {
 
 export async function runAgentTurn(deps: RunAgentTurnDeps, input: RunAgentTurnInput): Promise<RunAgentTurnOutcome> {
   const result = await runTurn(deps, input, { kind: 'post' });
-  return { run: result.run, message: result.message!, handoff: result.handoff };
+  return { run: result.run, message: result.message, handoff: result.handoff };
 }
 
 /**
@@ -250,6 +267,7 @@ async function executeTurn(
       allowArtifacts: delivery.kind === 'post',
       onEvent: ({ type, ...data }) => trace(type, data),
       isCancelled: () => isRunCancelled(deps.db, runId),
+      ...(input.optional && delivery.kind === 'post' ? { optionalReply: true } : {}),
     });
     if (isRunCancelled(deps.db, runId)) throw new RunCancelledError('the run was cancelled before it answered');
   } catch (error) {
@@ -290,6 +308,14 @@ async function executeTurn(
       body: result.body,
       handoff: { attempted: false, dispatched: false },
     };
+  }
+
+  if (input.optional && isNoReply(result.body)) {
+    // It heard the message and had nothing to add: a colleague who stays quiet.
+    completeAgentRun(deps.db, runId, null);
+    trace('run.completed', { declined: true });
+    finish('completed', { declined: true });
+    return { run: getAgentRun(deps.db, runId)!, message: null, body: '', handoff: { attempted: false, dispatched: false } };
   }
 
   const message = createMessage(deps.db, {

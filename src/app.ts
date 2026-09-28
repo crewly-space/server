@@ -13,6 +13,7 @@ import type { CloudHandoffConfig } from './auth/cloud-handoff.js';
 import { registerConversationRoutes } from './conversations/routes.js';
 import { registerChannelRoutes } from './channels/routes.js';
 import { registerMessageRoutes } from './messages/routes.js';
+import { createModelReplyRouter, type ReplyRouter } from './messages/reply-router.js';
 import { registerConversationSummaryRoutes, registerMemoryFactRoutes } from './memory/routes.js';
 import { registerProviderRoutes } from './providers/routes.js';
 import { runAgentTurn, type RespondFn } from './runtime/engine.js';
@@ -67,6 +68,8 @@ import { utilityToolset } from './tools/utilities.js';
 export interface BuildAppOptions {
   db: Database;
   respond?: RespondFn;
+  /** Picks who answers in conversations set to let a model decide; a gateway call by default. */
+  replyRouter?: ReplyRouter;
   webDir?: string;
   logger?: boolean | { level: string };
   trustProxy?: boolean | string[];
@@ -326,7 +329,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   }, 60_000);
   automationTimer.unref?.();
   app.addHook('onClose', async () => clearInterval(automationTimer));
-  registerMessageRoutes(app, hub, respond);
+  registerMessageRoutes(app, hub, respond, opts.replyRouter ?? createModelReplyRouter(gateway));
   registerMemoryFactRoutes(app);
   registerConversationSummaryRoutes(app);
   registerProviderRoutes(app, { fetchImpl: opts.fetchImpl, callbackOrigins: opts.trustedAppOrigins });

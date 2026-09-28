@@ -176,7 +176,7 @@ describe('one run at a time per agent', () => {
     releases[1]!({ body: 'two' });
     const outcome = await second;
 
-    expect(outcome.message.body).toBe('two');
+    expect(outcome.message!.body).toBe('two');
     expect(statuses).toContain('queued');
     expect(statuses.at(-1)).toBe('ready');
     expect(owner).toBeDefined();

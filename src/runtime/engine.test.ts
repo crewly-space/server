@@ -69,9 +69,9 @@ describe('runAgentTurn (single turn, no handoff)', () => {
     expect(call.recentMessages).toHaveLength(1);
     expect(call.recentMessages[0].body).toBe('hello agent');
 
-    expect(outcome.message.authorType).toBe('agent');
-    expect(outcome.message.authorId).toBe(agent.id);
-    expect(outcome.message.body).toBe('hello human');
+    expect(outcome.message!.authorType).toBe('agent');
+    expect(outcome.message!.authorId).toBe(agent.id);
+    expect(outcome.message!.body).toBe('hello human');
     expect(outcome.run.hopCount).toBe(0);
     expect(outcome.handoff).toEqual({ attempted: false, dispatched: false });
 
@@ -97,12 +97,12 @@ describe('runAgentTurn (single turn, no handoff)', () => {
 
     const outcome = await runAgentTurn({ db, hub, respond }, { agentId: agent.id, conversationId: conversation.id });
 
-    expect(outcome.message.attachments).toHaveLength(1);
-    expect(outcome.message.attachments[0]).toMatchObject({
+    expect(outcome.message!.attachments).toHaveLength(1);
+    expect(outcome.message!.attachments[0]).toMatchObject({
       filename: 'report.txt',
       artifact: { runId: outcome.run.runId, agentId: agent.id },
     });
-    expect(db.prepare('SELECT message_id FROM attachments WHERE id = ?').get(outcome.message.attachments[0].id)).toMatchObject({ message_id: outcome.message.id });
+    expect(db.prepare('SELECT message_id FROM attachments WHERE id = ?').get(outcome.message!.attachments[0].id)).toMatchObject({ message_id: outcome.message!.id });
     db.close();
   });
 

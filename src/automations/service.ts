@@ -227,7 +227,7 @@ async function executeActions(deps: AutomationDeps, rule: Automation, event: Aut
       const promptMessage = createMessage(deps.db, { conversationId, authorId: `automation:${rule.id}`, authorType: 'integration', body: prompt, mentions: [], replyToMessageId: null });
       deps.hub.publish(`conversation:${conversationId}`, 'message.created', { ...promptMessage });
       const result = await runAgentTurn(deps, { agentId: action.agentId, conversationId, trigger: 'automation', triggerMessageId: promptMessage.id, hopCount: (event.hopCount ?? 0) + 1 });
-      outputs.push({ type: action.type, runId: result.run.runId, messageId: result.message.id });
+      outputs.push({ type: action.type, runId: result.run.runId, messageId: result.message?.id });
       continue;
     }
     const response = await fetchPublicHttps(action.url, {

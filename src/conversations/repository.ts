@@ -1,4 +1,4 @@
-import { ConversationSchema, type ActorType, type Conversation, type ParticipantRef, type ParticipantType } from '../protocol/index.js';
+import { ConversationSchema, type ActorType, type Conversation, type ConversationReplyMode, type ParticipantRef, type ParticipantType } from '../protocol/index.js';
 import type { Database } from '../db/driver.js';
 import { randomUUID } from 'node:crypto';
 
@@ -137,4 +137,13 @@ export function removeParticipant(db: Database, conversationId: string, particip
     participantId
   );
   db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(new Date().toISOString(), conversationId);
+}
+
+export function getConversationReplyMode(db: Database, conversationId: string): ConversationReplyMode {
+  const mode = db.prepare('SELECT reply_mode FROM conversations WHERE id = ?').pluck().get(conversationId) as ConversationReplyMode | undefined;
+  return mode ?? 'mentions';
+}
+
+export function setConversationReplyMode(db: Database, conversationId: string, mode: ConversationReplyMode): void {
+  db.prepare('UPDATE conversations SET reply_mode = ?, updated_at = ? WHERE id = ?').run(mode, new Date().toISOString(), conversationId);
 }

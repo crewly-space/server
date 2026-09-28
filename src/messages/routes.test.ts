@@ -324,6 +324,128 @@ describe('message routes', () => {
     await app.close();
   });
 
+  async function setupCrew(app: Awaited<ReturnType<typeof buildApp>>) {
+    const setup = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/setup',
+      payload: { email: 'owner@example.com', displayName: 'Owner', password: 'super-secret-1' },
+    });
+    const token = setup.json().token as string;
+    const ownerId = setup.json().user.id as string;
+    const qa = newAgent(ownerId, 'Quinn', 'anthropic', 'QA Engineer\nYou keep the test suite green.');
+    const writer = newAgent(ownerId, 'Wren', 'anthropic', 'Technical Writer\nYou write the docs.');
+    const group = await app.inject({
+      method: 'POST',
+      url: '/api/v1/conversations/group',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Crew', participants: [
+        { participantId: qa.id, participantType: 'agent' },
+        { participantId: writer.id, participantType: 'agent' },
+      ] },
+    });
+    const conversationId = group.json().id as string;
+    const headers = { authorization: `Bearer ${token}` };
+    return {
+      qa, writer, conversationId,
+      setMode: (replyMode: string) => app.inject({ method: 'PUT', url: `/api/v1/conversations/${conversationId}/reply-mode`, headers, payload: { replyMode } }),
+      post: (body: string, mentions: Array<{ targetId: string; targetType: 'agent' | 'user' }> = []) =>
+        app.inject({ method: 'POST', url: `/api/v1/conversations/${conversationId}/messages`, headers, payload: { body, mentions } }),
+      agentMessages: () => db.prepare("SELECT author_id, body FROM messages WHERE conversation_id = ? AND author_type = 'agent' ORDER BY created_at, rowid").all(conversationId) as Array<{ author_id: string; body: string }>,
+      headers,
+    };
+  }
+
+  it('lets a conversation choose who answers, and remembers it', async () => {
+    const app = await buildApp({ db, respond: async () => ({ body: 'ok' }) });
+    const crew = await setupCrew(app);
+    const url = `/api/v1/conversations/${crew.conversationId}/reply-mode`;
+    expect((await app.inject({ method: 'GET', url, headers: crew.headers })).json()).toEqual({ replyMode: 'mentions' });
+    expect((await crew.setMode('open')).json()).toEqual({ replyMode: 'open' });
+    expect((await app.inject({ method: 'GET', url, headers: crew.headers })).json()).toEqual({ replyMode: 'open' });
+    expect((await crew.setMode('everyone')).statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('lets a model pick who answers, and falls back to keywords when it cannot', async () => {
+    const asked: string[] = [];
+    const routed: Array<{ transcript: string[]; names: string[] }> = [];
+    let answer: string[] | Error = [];
+    const app = await buildApp({
+      db,
+      respond: async ({ agentId }) => { asked.push(agentId); return { body: 'on it' }; },
+      replyRouter: async ({ transcript, candidates }) => {
+        routed.push({ transcript, names: candidates.map((candidate) => candidate.name) });
+        if (answer instanceof Error) throw answer;
+        return answer;
+      },
+    });
+    const crew = await setupCrew(app);
+    await crew.setMode('model');
+
+    // Keywords would pick nobody here; the model reads it as the writer's.
+    answer = [crew.writer.id];
+    await crew.post('can someone make sense of the changelog for the customers?');
+    await settle();
+    expect(asked).toEqual([crew.writer.id]);
+    expect([...routed[0]!.names].sort()).toEqual(['Quinn', 'Wren']);
+    expect(routed[0]!.transcript.at(-1)).toBe('Owner: can someone make sense of the changelog for the customers?');
+
+    answer = [];
+    await crew.post('good morning everyone');
+    await settle();
+    expect(asked).toEqual([crew.writer.id]);
+
+    // Addressed by @: nobody needs to decide.
+    await crew.post('run the suite please', [{ targetId: crew.qa.id, targetType: 'agent' }]);
+    await settle();
+    expect(routed).toHaveLength(2);
+    expect(asked).toEqual([crew.writer.id, crew.qa.id]);
+
+    answer = new Error('provider down');
+    await crew.post('are the docs for the release written yet?');
+    await settle();
+    expect(asked).toEqual([crew.writer.id, crew.qa.id, crew.writer.id]);
+    await app.close();
+  });
+
+  it('in an open room every free agent hears it and only those with something to add reply', async () => {
+    const asked: Array<{ agentId: string; optional: boolean }> = [];
+    let finishLongRun: () => void = () => undefined;
+    const app = await buildApp({
+      db,
+      respond: async ({ agentId, optionalReply, recentMessages }) => {
+        asked.push({ agentId, optional: Boolean(optionalReply) });
+        if (recentMessages.at(-1)?.body === 'start the long regression run') {
+          await new Promise<void>((resolve) => { finishLongRun = resolve; });
+          return { body: 'regression run finished' };
+        }
+        return { body: agentId === crewIds.qa ? 'tests are green' : 'NO_REPLY' };
+      },
+    });
+    const crew = await setupCrew(app);
+    const crewIds = { qa: crew.qa.id };
+    await crew.setMode('open');
+
+    await crew.post('how is everything going?');
+    await settle();
+    expect(asked).toHaveLength(2);
+    expect(asked).toEqual(expect.arrayContaining([{ agentId: crew.qa.id, optional: true }, { agentId: crew.writer.id, optional: true }]));
+    // The writer heard it and chose to stay quiet: nothing posted for it.
+    expect(crew.agentMessages().map((row) => row.body)).toEqual(['tests are green']);
+
+    // An agent at work is left to it; the message still reaches the others.
+    await crew.post('start the long regression run', [{ targetId: crew.qa.id, targetType: 'agent' }]);
+    await settle();
+    asked.length = 0;
+    await crew.post('anyone free for a quick question?');
+    await settle();
+    expect(asked).toEqual([{ agentId: crew.writer.id, optional: true }]);
+    finishLongRun();
+    await settle();
+    expect(crew.agentMessages().map((row) => row.body)).toEqual(['tests are green', 'regression run finished']);
+    await app.close();
+  });
+
   it('applies global routing modes once and records the decision in the run trace', async () => {
     const asked: string[] = [];
     const respond: RespondFn = async ({ agentId }) => {

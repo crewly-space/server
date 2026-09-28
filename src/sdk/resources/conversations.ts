@@ -1,4 +1,4 @@
-import type { Conversation, ParticipantRef } from '../../protocol/index.js';
+import type { Conversation, ConversationReplySettings, ParticipantRef } from '../../protocol/index.js';
 import type { HttpClient } from '../http-client.js';
 import { encodePathSegment } from '../path.js';
 
@@ -27,6 +27,15 @@ export class ConversationsResource {
 
   list(): Promise<Conversation[]> {
     return this.http.request('GET', '/api/v1/conversations');
+  }
+
+  /** Who answers a message nobody addressed: mentions & keywords, a model, or every agent. */
+  replyMode(conversationId: string): Promise<ConversationReplySettings> {
+    return this.http.request('GET', `/api/v1/conversations/${encodePathSegment(conversationId)}/reply-mode`);
+  }
+
+  setReplyMode(conversationId: string, input: ConversationReplySettings): Promise<ConversationReplySettings> {
+    return this.http.request('PUT', `/api/v1/conversations/${encodePathSegment(conversationId)}/reply-mode`, input);
   }
 
   addMember(conversationId: string, input: AddConversationMemberInput): Promise<void> {

@@ -4,7 +4,7 @@ import type { Database } from '../db/driver.js';
 import { getAgent } from '../agents/repository.js';
 import { listMemoryFactsForAgent } from '../memory/repository.js';
 import { getConversationSummary } from '../memory/summary-repository.js';
-import { RunCancelledError, type RespondFn, type RespondInput, type TurnEvent } from '../runtime/engine.js';
+import { NO_REPLY, RunCancelledError, type RespondFn, type RespondInput, type TurnEvent } from '../runtime/engine.js';
 import { AiGateway } from '../gateway/gateway.js';
 import { ProviderError } from './errors.js';
 import type { DeviceConnectionHub } from '../devices/hub.js';
@@ -52,6 +52,14 @@ export type ToolsetProvider = (agent: Agent, input: RespondInput) => AgentToolse
 
 /** Contributes system-prompt text for a turn, such as the skills assigned to the agent. */
 export type InstructionProvider = (agent: Agent, input: RespondInput) => string | undefined;
+
+/**
+ * For a message that went to the whole room. A colleague answers what is
+ * theirs, or adds something only they know, and otherwise gets on with work.
+ */
+const OPTIONAL_REPLY_INSTRUCTIONS = `This latest message went to everyone in the conversation, not to you in particular. You do not have to answer it.
+Reply only if it is about your work, asks something you are best placed to answer, or you have something useful that nobody else is likely to add. Do not reply just to acknowledge, agree or repeat another agent.
+If you have nothing to add, answer with exactly ${NO_REPLY} and nothing else; nothing will be posted.`;
 
 /** A model that keeps calling tools gets this many rounds before it must answer. */
 export const MAX_TOOL_ROUNDS = 8;
@@ -125,7 +133,8 @@ export function createProviderRespond(
       // personality says it can do, this is what it can do on this run.
       capabilityInstructions(tools?.definitions ?? []),
       facts.length && `Memory facts:\n${facts.map((f) => `- ${f.content}`).join('\n')}`,
-      summary && `Conversation summary: ${summary.summary}`].filter(Boolean).join('\n\n');
+      summary && `Conversation summary: ${summary.summary}`,
+      input.optionalReply && OPTIONAL_REPLY_INSTRUCTIONS].filter(Boolean).join('\n\n');
     const messages: ChatMessage[] = context
       ? [{ role: 'system', content: context }, ...toChatMessages(agentId, recentMessages)]
       : toChatMessages(agentId, recentMessages);

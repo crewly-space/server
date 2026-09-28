@@ -9,10 +9,14 @@ import {
   createConversation,
   findDmConversation,
   getConversation,
+  getConversationReplyMode,
   isParticipant,
   listConversationsForParticipant,
   removeParticipant,
+  setConversationReplyMode,
 } from './repository.js';
+import { ConversationReplySettingsSchema } from '../protocol/index.js';
+import { getChannel } from '../channels/repository.js';
 
 const CreateDmBodySchema = z.object({
   participantId: z.string().min(1),
@@ -96,6 +100,28 @@ export function registerConversationRoutes(app: FastifyInstance): void {
 
   app.get('/api/v1/conversations', { preHandler: requireAuth }, async (request, reply) => {
     reply.send(listConversationsForParticipant(app.db, request.user!.id));
+  });
+
+  // Who answers a message nobody addressed. Anyone in the conversation may
+  // read it; changing it takes being able to post there.
+  app.get('/api/v1/conversations/:id/reply-mode', { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!getConversation(app.db, id)) { reply.code(404).send({ error: 'conversation_not_found' }); return; }
+    if (!isParticipant(app.db, id, request.user!.id, 'user')) { reply.code(403).send({ error: 'not_a_participant' }); return; }
+    reply.send({ replyMode: getConversationReplyMode(app.db, id) });
+  });
+
+  app.put('/api/v1/conversations/:id/reply-mode', { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const conversation = getConversation(app.db, id);
+    if (!conversation) { reply.code(404).send({ error: 'conversation_not_found' }); return; }
+    if (!isParticipant(app.db, id, request.user!.id, 'user')) { reply.code(403).send({ error: 'not_a_participant' }); return; }
+    if (conversation.kind === 'channel' && !getChannel(app.db, id, { id: request.user!.id, role: request.user!.role as Role })?.canPost) {
+      reply.code(403).send({ error: 'channel_post_restricted' }); return;
+    }
+    const body = ConversationReplySettingsSchema.parse(request.body);
+    setConversationReplyMode(app.db, id, body.replyMode);
+    reply.send({ replyMode: body.replyMode });
   });
 
   app.post('/api/v1/conversations/:id/members', { preHandler: requireAuth }, async (request, reply) => {

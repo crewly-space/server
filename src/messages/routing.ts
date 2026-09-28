@@ -127,6 +127,10 @@ export interface ConversationCues {
   inThread?: boolean;
   /** Nobody is addressed and the message is plainly about this agent's work. */
   owner?: boolean;
+  /** Nobody is addressed and the conversation's model picked this agent. */
+  picked?: boolean;
+  /** The conversation lets every agent hear it and decide whether to answer. */
+  open?: boolean;
   /** The message addresses some other agent, by @ or by name. */
   addressedElsewhere?: boolean;
 }
@@ -134,7 +138,9 @@ export interface ConversationCues {
 export interface RoutingDecision {
   shouldRespond: boolean;
   mode: AgentRoutingMode;
-  reason: 'explicit_mention' | 'named' | 'replied_to' | 'follow_up' | 'thread' | 'owner' | 'always' | 'relevant' | 'irrelevant' | 'mention_only' | 'disabled' | 'blocked' | 'dnd' | 'classifier_unavailable';
+  /** The agent may hear it and decline: nothing is posted if it has nothing to add. */
+  optional?: boolean;
+  reason: 'explicit_mention' | 'named' | 'replied_to' | 'follow_up' | 'thread' | 'owner' | 'picked' | 'open' | 'always' | 'relevant' | 'irrelevant' | 'mention_only' | 'disabled' | 'blocked' | 'dnd' | 'classifier_unavailable';
 }
 
 export function decideAgentRouting(
@@ -162,8 +168,11 @@ export function decideAgentRouting(
     if (cues.inThread) return { shouldRespond: true, mode, reason: 'thread' };
     if (cues.followUp) return { shouldRespond: true, mode, reason: 'follow_up' };
     if (cues.owner) return { shouldRespond: true, mode, reason: 'owner' };
+    if (cues.picked) return { shouldRespond: true, mode, reason: 'picked' };
   }
   if (mode === 'always') return { shouldRespond: true, mode, reason: 'always' };
+  // Everyone hears it; each agent answers only if it has something to add.
+  if (cues.open && !cues.addressedElsewhere) return { shouldRespond: true, mode, reason: 'open', optional: true };
   if (mode === 'relevant') {
     try {
       const relevant = messageIsRelevantToAgent(agent, body);

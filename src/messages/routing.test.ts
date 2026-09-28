@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decideAgentRouting, messageIsRelevantToAgent, messageNamesAgent, pickMessageOwner } from './routing.js';
+import { parseReplyRouterAnswer, replyRouterPrompt } from './reply-router.js';
 
 const agent = { name: 'Release Helper', personality: 'You triage deployment incidents and release failures.', availability: 'auto' as const };
 
@@ -59,5 +60,33 @@ describe('message routing', () => {
     expect(pickMessageOwner(crew, 'can someone fix the login bug in the api')).toBe('dev');
     expect(pickMessageOwner(crew, 'what should we order for lunch?')).toBeUndefined();
     expect(pickMessageOwner(crew, 'good morning everyone')).toBeUndefined();
+  });
+});
+
+describe('reply modes', () => {
+  const agent = { name: 'Quinn', personality: 'QA Engineer', availability: 'auto' as const };
+
+  it('lets a picked agent answer and makes an open room optional', () => {
+    expect(decideAgentRouting(agent, 'mention_only', 'status?', false, false, false, { picked: true })).toMatchObject({ shouldRespond: true, reason: 'picked' });
+    expect(decideAgentRouting(agent, 'mention_only', 'status?', false, false, false, { open: true })).toMatchObject({ shouldRespond: true, reason: 'open', optional: true });
+    expect(decideAgentRouting(agent, 'mention_only', 'Wren, status?', false, false, false, { open: true, addressedElsewhere: true })).toMatchObject({ shouldRespond: false });
+    expect(decideAgentRouting(agent, 'disabled', 'status?', false, false, false, { open: true })).toMatchObject({ shouldRespond: false, reason: 'disabled' });
+  });
+});
+
+describe('reply router answers', () => {
+  const candidates = [
+    { agentId: 'a', name: 'Quinn', role: 'QA', instructions: '', busy: false },
+    { agentId: 'b', name: 'Wren', role: 'Writer', instructions: '', busy: true },
+    { agentId: 'c', name: 'Ollie', role: 'DevOps', instructions: '', busy: false },
+  ];
+
+  it('reads numbers, NONE and noise, capped', () => {
+    expect(parseReplyRouterAnswer('2', candidates)).toEqual(['b']);
+    expect(parseReplyRouterAnswer('Agents 1, 3', candidates)).toEqual(['a', 'c']);
+    expect(parseReplyRouterAnswer('1,2,3', candidates)).toEqual(['a', 'b']);
+    expect(parseReplyRouterAnswer('NONE', candidates)).toEqual([]);
+    expect(parseReplyRouterAnswer('7', candidates)).toEqual([]);
+    expect(replyRouterPrompt({ transcript: ['Owner: hi'], candidates })).toContain('2. Wren — Writer (busy with other work)');
   });
 });

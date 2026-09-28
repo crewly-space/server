@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
-import { getConversation, isParticipant } from '../conversations/repository.js';
+import { getConversation, getConversationReplyMode, isParticipant } from '../conversations/repository.js';
 import { effectiveAgentRoutingMode, getAgent } from '../agents/repository.js';
 import { getProviderConfig } from '../providers/repository.js';
 import { describeAgentFailure } from '../providers/errors.js';
@@ -9,11 +9,12 @@ import { runAgentTurn, runIdOfFailure, type RespondFn } from '../runtime/engine.
 import { enqueueJob } from '../jobs/repository.js';
 import { SUMMARIZE_CONVERSATION_JOB_TYPE } from '../memory/summary.js';
 import type { ConnectionHub } from '../ws/hub.js';
-import type { Agent } from '../protocol/index.js';
+import type { Agent, ConversationReplyMode } from '../protocol/index.js';
+import type { ReplyRouter } from './reply-router.js';
 import { emitNotification } from '../notifications/service.js';
 import { getUserById, type Role } from '../users/repository.js';
 import { blockedAgentIds, canReadChannel, getChannel } from '../channels/repository.js';
-import { createMessage, getMessageThread, lastAgentInThread, messageContext, listMessagesForConversation, listThreadMessages, markThreadRead, openMessageThread, ReplyNotInConversationError, searchMessages, setThreadStatus } from './repository.js';
+import { createMessage, getMessageThread, lastAgentInThread, messageContext, listMessagesForConversation, listRecentMessagesForConversation, listThreadMessages, markThreadRead, openMessageThread, ReplyNotInConversationError, searchMessages, setThreadStatus } from './repository.js';
 import { AttachmentNotOwnedError, AttachmentValidationError, ATTACHMENT_MAX_COUNT_PER_MESSAGE } from '../attachments/service.js';
 import { decideAgentRouting, messageNamesAgent, pickMessageOwner, type ConversationCues } from './routing.js';
 import { dispatchAutomationEvent } from '../automations/service.js';
@@ -40,14 +41,26 @@ function explicitlyMentioned(mentions: MentionRef[], agentId: string): boolean {
 /** How long after an agent speaks a plain follow-up still reaches it. */
 const FOLLOW_UP_WINDOW_MS = 15 * 60 * 1000;
 
+type Candidate = { agentId: string; agent?: Agent };
+
+/** How the room picks who answers a message nobody addressed. */
+interface ReplyPicking {
+  mode: ConversationReplyMode;
+  /** Asks the model, for `model` mode; resolves to undefined when it could not. */
+  pickWithModel?: (eligible: Array<{ agentId: string; agent: Agent }>) => Promise<string[] | undefined>;
+  /** Agents already running something, left to their work in `open` mode. */
+  busy?: (agentId: string) => boolean;
+}
+
 /**
  * What the surrounding conversation says about each candidate agent, so a
  * message reaches the colleague it is meant for without an @.
  */
-function conversationCues(
+async function conversationCues(
   db: FastifyInstance['db'],
-  input: { messageId: string; body: string; mentions: MentionRef[]; candidates: Array<{ agentId: string; agent?: Agent }>; threadRootId?: string; unavailable?: Set<string> },
-): Map<string, ConversationCues> {
+  input: { messageId: string; body: string; mentions: MentionRef[]; candidates: Candidate[]; threadRootId?: string; unavailable?: Set<string> },
+  picking: ReplyPicking = { mode: 'mentions' },
+): Promise<Map<string, ConversationCues>> {
   const context = messageContext(db, input.messageId);
   const named = new Set(input.candidates.filter(({ agent }) => agent && messageNamesAgent(agent, input.body)).map(({ agentId }) => agentId));
   const mentioned = new Set(input.mentions.filter((mention) => mention.targetType === 'agent').map((mention) => mention.targetId));
@@ -63,25 +76,45 @@ function conversationCues(
   const threadAgent = input.threadRootId
     ? lastAgentInThread(db, input.threadRootId) ?? (input.candidates.length === 1 ? input.candidates[0]!.agentId : undefined)
     : undefined;
-  // Nobody addressed and no thread agent: the message goes to the colleague
-  // whose work it is about, among those who could answer at all.
   const repliedToAgent = context.repliedToAuthor?.authorType === 'agent' ? context.repliedToAuthor.authorId : undefined;
-  const owner = !addressed.size && !toPerson && !threadAgent && !repliedToAgent
-    ? pickMessageOwner(input.candidates.filter((entry): entry is { agentId: string; agent: Agent } =>
-      Boolean(entry.agent) && entry.agent!.availability !== 'dnd' && !input.unavailable?.has(entry.agentId)), input.body)
-    : undefined;
+  // Nobody addressed and no thread agent: the room's reply mode decides.
+  const unaddressed = !addressed.size && !toPerson && !threadAgent && !repliedToAgent;
+  const eligible = input.candidates.filter((entry): entry is { agentId: string; agent: Agent } =>
+    Boolean(entry.agent) && entry.agent!.availability !== 'dnd' && !input.unavailable?.has(entry.agentId));
+  // Keywords: the one colleague whose work the message is plainly about.
+  // Model: whoever it picks, having read the conversation; keywords if it cannot.
+  let owner: string | undefined;
+  let picked: string[] | undefined;
+  if (unaddressed && picking.mode === 'model' && picking.pickWithModel && eligible.length) {
+    picked = await picking.pickWithModel(eligible);
+  }
+  if (unaddressed && picking.mode !== 'open' && !picked) owner = pickMessageOwner(eligible, input.body);
+  const everyone = unaddressed && picking.mode === 'open' && !input.threadRootId;
   return new Map(input.candidates.map(({ agentId }) => [agentId, {
     named: named.has(agentId),
     repliedTo: repliedToAgent === agentId,
     // A new topic that is plainly someone else's hands the conversation over.
-    followUp: !input.threadRootId && recent === agentId && (!owner || owner === agentId),
+    // When the model picked, it already weighed who the person was talking to.
+    followUp: !input.threadRootId && !picked && recent === agentId && (!owner || owner === agentId),
     owner: owner === agentId,
+    picked: picked?.includes(agentId) ?? false,
     inThread: threadAgent === agentId,
+    open: everyone && !(picking.busy?.(agentId) ?? false),
     addressedElsewhere: toPerson || [...addressed].some((id) => id !== agentId),
   }]));
 }
 
-export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, respond: RespondFn): void {
+/** The last few messages as the router reads them: "Name: text". */
+function routingTranscript(db: FastifyInstance['db'], conversationId: string, agents: Map<string, string>): string[] {
+  return listRecentMessagesForConversation(db, conversationId, 8).map((message) => {
+    const who = message.authorType === 'agent'
+      ? agents.get(message.authorId) ?? 'An agent'
+      : message.authorType === 'user' ? getUserById(db, message.authorId)?.display_name ?? 'A person' : 'System';
+    return `${who}: ${message.body}`;
+  });
+}
+
+export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, respond: RespondFn, replyRouter?: ReplyRouter): void {
   const automationDispatch = (event: { type: 'message' | 'run'; eventId: string; dedupeKey: string; payload: Record<string, unknown>; conversationId?: string; hopCount?: number }) =>
     dispatchAutomationEvent({ db: app.db, hub, respond, queue: app.runQueue, automationDispatch }, event);
   app.post('/api/v1/conversations/:id/messages', { preHandler: requireAuth }, async (request, reply) => {
@@ -208,7 +241,31 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
     const unavailable = new Set(candidateAgents
       .filter(({ agentId }) => blocked.has(agentId) || effectiveAgentRoutingMode(app.db, agentId, id) === 'disabled')
       .map(({ agentId }) => agentId));
-    const cues = conversationCues(app.db, { messageId: message.id, body: body.body, mentions: body.mentions, candidates: candidateAgents, unavailable });
+    const replyMode = dmAgentId ? 'mentions' as const : getConversationReplyMode(app.db, id);
+    const cues = await conversationCues(app.db, { messageId: message.id, body: body.body, mentions: body.mentions, candidates: candidateAgents, unavailable }, {
+      mode: replyMode,
+      busy: (agentId) => app.runQueue.isBusy(agentId),
+      pickWithModel: replyRouter && (async (eligible) => {
+        // The call runs on the first eligible agent's model, metered to its owner.
+        const lead = eligible.find(({ agent }) => getProviderConfig(app.db, agent.modelPolicy.defaultProviderId));
+        if (!lead) return undefined;
+        try {
+          return await replyRouter({
+            conversationId: id,
+            transcript: routingTranscript(app.db, id, new Map(candidateAgents.map(({ agentId, agent }) => [agentId, agent?.name ?? 'An agent']))),
+            candidates: eligible.map(({ agentId, agent }) => {
+              const [role = '', ...rest] = agent.personality.split('\n');
+              return { agentId, name: agent.name, role: role.trim(), instructions: rest.join(' ').trim(), busy: app.runQueue.isBusy(agentId) };
+            }),
+            target: { providerId: lead.agent.modelPolicy.defaultProviderId, model: lead.agent.modelPolicy.defaultModel },
+            ownerUserId: lead.agent.ownerUserId,
+          });
+        } catch (error) {
+          request.log.warn({ err: error, conversationId: id }, 'reply routing model failed; falling back to keywords');
+          return undefined;
+        }
+      }),
+    });
     const decisions = candidateAgents.map(({ agentId, agent }) => {
       const mode = dmAgentId ? 'always' as const : (effectiveAgentRoutingMode(app.db, agentId, id) ?? 'mention_only');
       return {
@@ -245,6 +302,7 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
           trigger: 'message',
           triggerMessageId: message.id,
           routingDecision: decision ? { mode: decision.mode, reason: decision.reason } : undefined,
+          optional: decision?.optional,
         },
       ).catch((error: unknown) => {
         const failure = describeAgentFailure(error, agentName);
@@ -315,7 +373,7 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
     const unavailable = new Set(candidateAgents
       .filter(({ agentId }) => effectiveAgentRoutingMode(app.db, agentId, thread.conversationId) === 'disabled')
       .map(({ agentId }) => agentId));
-    const cues = conversationCues(app.db, { messageId: message.id, body: body.body, mentions: body.mentions, candidates: candidateAgents, threadRootId: rootId, unavailable });
+    const cues = await conversationCues(app.db, { messageId: message.id, body: body.body, mentions: body.mentions, candidates: candidateAgents, threadRootId: rootId, unavailable });
     for (const { agentId, agent } of candidateAgents) {
       if (!agent || !getProviderConfig(app.db, agent.modelPolicy.defaultProviderId)) continue;
       // A thread is a focused conversation: "always" and "relevant" agents do

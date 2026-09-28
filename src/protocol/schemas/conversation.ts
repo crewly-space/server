@@ -33,3 +33,19 @@ export const ConversationSchema = z
     path: ['participants'],
   });
 export type Conversation = z.infer<typeof ConversationSchema>;
+
+/**
+ * Who answers a message that addresses nobody in particular.
+ * - `mentions`: @, names, replies and follow-ups, plus the one agent whose
+ *   role plainly matches the topic (keywords). Cheap and predictable.
+ * - `model`: a small model call reads the message and picks who answers.
+ * - `open`: every agent hears it and decides for itself whether to reply;
+ *   an agent busy with other work is left to it.
+ */
+export const ConversationReplyModeSchema = z.enum(['mentions', 'model', 'open']);
+export type ConversationReplyMode = z.infer<typeof ConversationReplyModeSchema>;
+
+export const ConversationReplySettingsSchema = z.object({
+  replyMode: ConversationReplyModeSchema,
+});
+export type ConversationReplySettings = z.infer<typeof ConversationReplySettingsSchema>;
