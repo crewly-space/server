@@ -15,7 +15,7 @@ import { getUserById, type Role } from '../users/repository.js';
 import { blockedAgentIds, canReadChannel, getChannel } from '../channels/repository.js';
 import { createMessage, getMessageThread, lastAgentInThread, messageContext, listMessagesForConversation, listThreadMessages, markThreadRead, openMessageThread, ReplyNotInConversationError, searchMessages, setThreadStatus } from './repository.js';
 import { AttachmentNotOwnedError, AttachmentValidationError, ATTACHMENT_MAX_COUNT_PER_MESSAGE } from '../attachments/service.js';
-import { decideAgentRouting, messageNamesAgent, type ConversationCues } from './routing.js';
+import { decideAgentRouting, messageNamesAgent, pickMessageOwner, type ConversationCues } from './routing.js';
 import { dispatchAutomationEvent } from '../automations/service.js';
 
 const CreateMessageBodySchema = z.object({
@@ -46,7 +46,7 @@ const FOLLOW_UP_WINDOW_MS = 15 * 60 * 1000;
  */
 function conversationCues(
   db: FastifyInstance['db'],
-  input: { messageId: string; body: string; mentions: MentionRef[]; candidates: Array<{ agentId: string; agent?: Agent }>; threadRootId?: string },
+  input: { messageId: string; body: string; mentions: MentionRef[]; candidates: Array<{ agentId: string; agent?: Agent }>; threadRootId?: string; unavailable?: Set<string> },
 ): Map<string, ConversationCues> {
   const context = messageContext(db, input.messageId);
   const named = new Set(input.candidates.filter(({ agent }) => agent && messageNamesAgent(agent, input.body)).map(({ agentId }) => agentId));
@@ -63,10 +63,19 @@ function conversationCues(
   const threadAgent = input.threadRootId
     ? lastAgentInThread(db, input.threadRootId) ?? (input.candidates.length === 1 ? input.candidates[0]!.agentId : undefined)
     : undefined;
+  // Nobody addressed and no thread agent: the message goes to the colleague
+  // whose work it is about, among those who could answer at all.
+  const repliedToAgent = context.repliedToAuthor?.authorType === 'agent' ? context.repliedToAuthor.authorId : undefined;
+  const owner = !addressed.size && !toPerson && !threadAgent && !repliedToAgent
+    ? pickMessageOwner(input.candidates.filter((entry): entry is { agentId: string; agent: Agent } =>
+      Boolean(entry.agent) && entry.agent!.availability !== 'dnd' && !input.unavailable?.has(entry.agentId)), input.body)
+    : undefined;
   return new Map(input.candidates.map(({ agentId }) => [agentId, {
     named: named.has(agentId),
-    repliedTo: context.repliedToAuthor?.authorType === 'agent' && context.repliedToAuthor.authorId === agentId,
-    followUp: !input.threadRootId && recent === agentId,
+    repliedTo: repliedToAgent === agentId,
+    // A new topic that is plainly someone else's hands the conversation over.
+    followUp: !input.threadRootId && recent === agentId && (!owner || owner === agentId),
+    owner: owner === agentId,
     inThread: threadAgent === agentId,
     addressedElsewhere: toPerson || [...addressed].some((id) => id !== agentId),
   }]));
@@ -196,7 +205,10 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
         .map((participant) => participant.participantId);
     const blocked = new Set(conversation.kind === 'channel' ? blockedAgentIds(app.db, id) : []);
     const candidateAgents = candidates.map((agentId) => ({ agentId, agent: getAgent(app.db, agentId) }));
-    const cues = conversationCues(app.db, { messageId: message.id, body: body.body, mentions: body.mentions, candidates: candidateAgents });
+    const unavailable = new Set(candidateAgents
+      .filter(({ agentId }) => blocked.has(agentId) || effectiveAgentRoutingMode(app.db, agentId, id) === 'disabled')
+      .map(({ agentId }) => agentId));
+    const cues = conversationCues(app.db, { messageId: message.id, body: body.body, mentions: body.mentions, candidates: candidateAgents, unavailable });
     const decisions = candidateAgents.map(({ agentId, agent }) => {
       const mode = dmAgentId ? 'always' as const : (effectiveAgentRoutingMode(app.db, agentId, id) ?? 'mention_only');
       return {
@@ -300,7 +312,10 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
     const candidateAgents = (conversation?.participants ?? [])
       .filter((participant) => participant.participantType === 'agent' && !blocked.has(participant.participantId))
       .map((participant) => ({ agentId: participant.participantId, agent: getAgent(app.db, participant.participantId) }));
-    const cues = conversationCues(app.db, { messageId: message.id, body: body.body, mentions: body.mentions, candidates: candidateAgents, threadRootId: rootId });
+    const unavailable = new Set(candidateAgents
+      .filter(({ agentId }) => effectiveAgentRoutingMode(app.db, agentId, thread.conversationId) === 'disabled')
+      .map(({ agentId }) => agentId));
+    const cues = conversationCues(app.db, { messageId: message.id, body: body.body, mentions: body.mentions, candidates: candidateAgents, threadRootId: rootId, unavailable });
     for (const { agentId, agent } of candidateAgents) {
       if (!agent || !getProviderConfig(app.db, agent.modelPolicy.defaultProviderId)) continue;
       // A thread is a focused conversation: "always" and "relevant" agents do

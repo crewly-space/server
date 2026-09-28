@@ -276,6 +276,54 @@ describe('message routes', () => {
     await app.close();
   });
 
+  it('lets the agent whose work a message is about answer it, even among several', async () => {
+    const asked: string[] = [];
+    const respond: RespondFn = async ({ agentId }) => {
+      asked.push(agentId);
+      return { body: 'on it' };
+    };
+    const app = await buildApp({ db, respond });
+    const setup = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/setup',
+      payload: { email: 'owner@example.com', displayName: 'Owner', password: 'super-secret-1' },
+    });
+    const token = setup.json().token as string;
+    const ownerId = setup.json().user.id as string;
+    const qa = newAgent(ownerId, 'Quinn', 'anthropic', 'QA Engineer\nYou keep the test suite green.');
+    const writer = newAgent(ownerId, 'Wren', 'anthropic', 'Technical Writer\nYou write the docs.');
+    const group = await app.inject({
+      method: 'POST',
+      url: '/api/v1/conversations/group',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Crew', participants: [
+        { participantId: qa.id, participantType: 'agent' },
+        { participantId: writer.id, participantType: 'agent' },
+      ] },
+    });
+    const post = (body: string) => app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${group.json().id}/messages`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { body },
+    });
+
+    await post('good morning');
+    await settle();
+    expect(asked).toEqual([]);
+
+    await post('how are the tests going?');
+    await settle();
+    expect(asked).toEqual([qa.id]);
+
+    // A new topic that belongs to someone else hands it over, even right after Quinn spoke.
+    await post('is the documentation for the release written yet?');
+    await settle();
+    expect(asked).toEqual([qa.id, writer.id]);
+
+    await app.close();
+  });
+
   it('applies global routing modes once and records the decision in the run trace', async () => {
     const asked: string[] = [];
     const respond: RespondFn = async ({ agentId }) => {
