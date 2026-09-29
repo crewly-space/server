@@ -61,7 +61,27 @@ export function createAgent(
     `INSERT INTO agents (id, owner_user_id, name, personality, model_policy, permissions, avatar_mode, routing_mode, created_at, updated_at)
      VALUES (@id, @owner_user_id, @name, @personality, @model_policy, @permissions, @avatar_mode, @routing_mode, @created_at, @updated_at)`
   ).run(row);
+  linkOwnerAgents(db, row.id, input.ownerUserId, now);
   return rowToAgent(row);
+}
+
+/**
+ * Agents of one owner may hand each other subtasks by default, so a new agent
+ * can be asked to "check with the Engineer" without any setup. The list stays
+ * editable per agent; this only seeds it.
+ */
+function linkOwnerAgents(db: Database, agentId: string, ownerUserId: string, now: string): void {
+  const others = db
+    .prepare('SELECT id FROM agents WHERE owner_user_id = ? AND id <> ?')
+    .pluck()
+    .all(ownerUserId, agentId) as string[];
+  const link = db.prepare(
+    'INSERT INTO agent_delegates (agent_id, delegate_agent_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
+  );
+  for (const otherId of others) {
+    link.run(agentId, otherId, now);
+    link.run(otherId, agentId, now);
+  }
 }
 
 export function getAgent(db: Database, id: string): Agent | undefined {

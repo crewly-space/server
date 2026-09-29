@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../db/connection.js';
 import { runMigrations } from '../db/migrate.js';
 import { createUser } from '../users/repository.js';
+import { listDelegates } from '../runtime/delegation.js';
 import { createAgent, getAgent, listAgentsForOwner } from './repository.js';
 
 describe('agents repository', () => {
@@ -26,6 +27,21 @@ describe('agents repository', () => {
     });
     return { db, user };
   }
+
+  it('lets an owner\'s agents delegate to each other by default', () => {
+    const { db, user } = freshDbWithUser();
+    const make = (name: string) => createAgent(db, {
+      ownerUserId: user.id,
+      name,
+      personality: '',
+      modelPolicy: { defaultProviderId: 'anthropic', defaultModel: 'claude-sonnet-5' },
+      permissions: { tools: [], canMessageAgents: true, canApproveOwnActions: false },
+    });
+    const assistant = make('Assistant');
+    const engineer = make('Engineer');
+    expect(listDelegates(db, assistant.id).map((a) => a.name)).toEqual(['Engineer']);
+    expect(listDelegates(db, engineer.id).map((a) => a.name)).toEqual(['Assistant']);
+  });
 
   it('creates an agent that round-trips through the shared protocol schema', () => {
     const { db, user } = freshDbWithUser();

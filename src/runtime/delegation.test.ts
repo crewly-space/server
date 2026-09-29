@@ -137,6 +137,8 @@ describe('agent-to-agent delegation', () => {
 
   it('offers no delegation tool to an agent with nobody to delegate to', async () => {
     await boot();
+    // Agents of one owner delegate to each other by default; emptying the list withdraws the tool.
+    setDelegates(db, lead, []);
     replies.push(text('Hi.'));
     await ask('hello');
     expect(sent[0]!.tools?.map((tool) => tool.name)).toEqual([
