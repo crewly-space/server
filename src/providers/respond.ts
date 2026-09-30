@@ -10,6 +10,7 @@ import { ProviderError } from './errors.js';
 import type { DeviceConnectionHub } from '../devices/hub.js';
 import { getProviderConfig } from './repository.js';
 import { capabilityInstructions } from './capabilities.js';
+import { CONVERSATION_BEHAVIOR } from './behavior.js';
 
 /**
  * Whether the provider this agent answers with can be handed tool
@@ -127,6 +128,7 @@ export function createProviderRespond(
     const facts = listMemoryFactsForAgent(db, agentId).slice(-20);
     const summary = getConversationSummary(db, conversationId);
     const context = [agent.personality && `Agent instructions: ${agent.personality}`,
+      CONVERSATION_BEHAVIOR,
       ...instructionProviders.map((provide) => provide(agent, input)),
       tools?.instructions,
       // Always last among the instructions: whatever the agent's own

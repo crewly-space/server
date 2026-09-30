@@ -19,6 +19,7 @@ import { registerProviderRoutes } from './providers/routes.js';
 import { runAgentTurn, type RespondFn } from './runtime/engine.js';
 import { createMessage } from './messages/repository.js';
 import { createProviderRespond } from './providers/respond.js';
+import { automationToolset } from './automations/toolset.js';
 import { AiGateway } from './gateway/gateway.js';
 import { installBudgets } from './usage/budgets.js';
 import { AgentStatusBroadcaster } from './agents/status.js';
@@ -303,6 +304,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     instructions: [skillInstructions(opts.db)],
     toolsets: [
       utilityToolset(),
+      automationToolset(opts.db),
       // Native connectors and MCP servers, as one normalized, policed and audited set.
       toolRuntimeToolset(opts.db, toolRuntimeOptions),
       artifactToolset({ db: opts.db, store: attachmentStore }),

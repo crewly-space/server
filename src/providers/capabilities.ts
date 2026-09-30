@@ -34,7 +34,9 @@ export function capabilityInstructions(tools: ToolDefinition[], now: Date = new 
     'Capability grounding (authoritative).',
     `Your capabilities on this turn: exactly ${tools.length === 1 ? 'this tool' : `these ${tools.length} tools`}, and no others.`,
     listed,
-    'Anything these tools do not cover -- browsing, searching, live data, running code -- you cannot do here; say so instead of pretending to.',
+    tools.some((tool) => tool.name === 'search_tools')
+      ? 'search_tools can discover additional granted tools during this turn. Search before declaring an external capability unavailable; tools it returns become callable.'
+      : 'Anything these tools do not cover -- browsing, searching, live data, running code -- you cannot do here; say so instead of pretending to.',
     clock,
     ...rules,
   ].join('\n');
