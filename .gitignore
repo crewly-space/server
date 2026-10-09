@@ -8,3 +8,5 @@ dist-binary/
 web/*
 !web/.gitkeep
 app-dist.tar.gz
+
+data/
