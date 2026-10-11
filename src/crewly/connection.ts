@@ -216,6 +216,31 @@ export async function pollCrewlyLink(db: Database, fetchImpl: typeof fetch, acto
   return getCrewlyConnection(db);
 }
 
+/**
+ * The connection Cloud gives a server it hosts, replacing whatever was there.
+ *
+ * Nobody links a hosted server by hand: Cloud is where it lives, so Cloud is
+ * also the one place that decides what it may use.
+ */
+export function adoptManagedConnection(
+  db: Database,
+  input: { cloudUrl: string; instanceId: string; credential: string; credentialVersion: number; scopes: string[] },
+): CrewlyConnectionView {
+  const now = new Date().toISOString();
+  const cloudUrl = new URL(input.cloudUrl).origin;
+  const scopes = [...new Set(input.scopes.filter((scope) => SCOPE.test(scope)))].sort();
+  db.transaction(() => {
+    db.prepare('DELETE FROM crewly_connection').run();
+    db.prepare(
+      `INSERT INTO crewly_connection
+         (id, cloud_url, status, instance_id, credential_ciphertext, credential_version, scopes, connected_at, last_checked_at, updated_at)
+       VALUES (1, ?, 'connected', ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(cloudUrl, input.instanceId, encryptDatabaseSecret(db, input.credential), input.credentialVersion, JSON.stringify(scopes), now, now, now);
+    audit(db, 'managed_by_crewly', { type: 'system', id: null }, { instanceId: input.instanceId, scopes });
+  })();
+  return getCrewlyConnection(db);
+}
+
 function connected(db: Database): ConnectionRow & { credential: string } {
   const current = row(db);
   if (!current || current.status !== 'connected' || !current.credential_ciphertext) {

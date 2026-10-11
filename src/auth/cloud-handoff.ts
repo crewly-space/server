@@ -14,6 +14,12 @@ export interface HandoffClaims {
   nonce: string;
   iat: number;
   exp: number;
+  /**
+   * Somebody outside the workspace that pays for this server, arriving with an
+   * invite (`g1` tokens). Cloud vouches for who they are, not for access: a
+   * guest gets in only with a usable invite or an account here already.
+   */
+  guest?: boolean;
 }
 
 export interface CloudHandoffConfig {
@@ -52,7 +58,9 @@ function decodeKey(base64: string): KeyObject {
  */
 export function verifyHandoffToken(token: string, config: CloudHandoffConfig, now = new Date()): HandoffClaims {
   const parts = token.split('.');
-  if (parts.length !== 3 || parts[0] !== 'v1') throw new HandoffRejected('malformed token');
+  // `g1` is a guest's token. A separate prefix, inside the signed bytes, so a
+  // server that predates guests refuses one instead of admitting a member.
+  if (parts.length !== 3 || (parts[0] !== 'v1' && parts[0] !== 'g1')) throw new HandoffRejected('malformed token');
   const [version, payload, signature] = parts;
 
   let valid = false;
@@ -74,6 +82,7 @@ export function verifyHandoffToken(token: string, config: CloudHandoffConfig, no
   } catch {
     throw new HandoffRejected('unreadable claims');
   }
+  claims.guest = version === 'g1';
 
   const expected = Buffer.from(config.deploymentId);
   const received = Buffer.from(String(claims.deploymentId ?? ''));
@@ -90,6 +99,64 @@ export function verifyHandoffToken(token: string, config: CloudHandoffConfig, no
   if (claims.iat > seconds + CLOCK_SKEW_SECONDS) throw new HandoffRejected('issued in the future');
   if (claims.exp - claims.iat > MAX_LIFETIME_SECONDS) throw new HandoffRejected('lifetime is too long');
 
+  return claims;
+}
+
+/** What Cloud gives a server it hosts: its own connection to Crewly-managed services. */
+export interface ManagedConnectionClaims {
+  deploymentId: string;
+  cloudUrl: string;
+  instanceId: string;
+  credential: string;
+  credentialVersion: number;
+  scopes: string[];
+  nonce: string;
+  iat: number;
+  exp: number;
+}
+
+/**
+ * Checks a `c1` token: Cloud handing a hosted server its instance credential.
+ *
+ * Signed with the same key as sign-in handoffs, under its own prefix, so one
+ * can never be presented as the other.
+ */
+export function verifyManagedConnectionToken(token: string, config: CloudHandoffConfig, now = new Date()): ManagedConnectionClaims {
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts[0] !== 'c1') throw new HandoffRejected('malformed token');
+  const [version, payload, signature] = parts;
+  let valid = false;
+  try {
+    valid = verifySignature(null, Buffer.from(`${version}.${payload}`), decodeKey(config.publicKey), Buffer.from(signature, 'base64url'));
+  } catch {
+    throw new HandoffRejected('unverifiable token');
+  }
+  if (!valid) throw new HandoffRejected('bad signature');
+  let claims: ManagedConnectionClaims;
+  try {
+    claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as ManagedConnectionClaims;
+  } catch {
+    throw new HandoffRejected('unreadable claims');
+  }
+  const expected = Buffer.from(config.deploymentId);
+  const received = Buffer.from(String(claims.deploymentId ?? ''));
+  if (expected.length !== received.length || !timingSafeEqual(expected, received)) {
+    throw new HandoffRejected('token belongs to another server');
+  }
+  if (typeof claims.credential !== 'string' || !claims.credential) throw new HandoffRejected('no credential');
+  if (typeof claims.instanceId !== 'string' || !claims.instanceId) throw new HandoffRejected('no instance');
+  if (!Array.isArray(claims.scopes) || claims.scopes.some((scope) => typeof scope !== 'string')) throw new HandoffRejected('no scopes');
+  try {
+    if (!/^https?:$/.test(new URL(claims.cloudUrl).protocol)) throw new Error();
+  } catch {
+    throw new HandoffRejected('no cloud address');
+  }
+  if (typeof claims.nonce !== 'string' || claims.nonce.length < 16) throw new HandoffRejected('no nonce');
+  if (!Number.isInteger(claims.iat) || !Number.isInteger(claims.exp)) throw new HandoffRejected('no lifetime');
+  const seconds = Math.floor(now.getTime() / 1000);
+  if (claims.exp <= seconds) throw new HandoffRejected('expired');
+  if (claims.iat > seconds + CLOCK_SKEW_SECONDS) throw new HandoffRejected('issued in the future');
+  if (claims.exp - claims.iat > MAX_LIFETIME_SECONDS) throw new HandoffRejected('lifetime is too long');
   return claims;
 }
 

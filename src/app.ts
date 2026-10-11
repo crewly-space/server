@@ -238,7 +238,11 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     crewlyCloudUrl: opts.crewlyCloudUrl ?? DEFAULT_CREWLY_CLOUD_URL,
     fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
   });
-  registerUserRoutes(app);
+  registerUserRoutes(app, {
+    inviteUrl: opts.cloudHandoff
+      ? (_request, code) => `${(opts.crewlyCloudUrl ?? DEFAULT_CREWLY_CLOUD_URL).replace(/\/+$/, '')}/join?server=${encodeURIComponent(opts.cloudHandoff!.deploymentId)}#invite=${code}`
+      : opts.publicUrl ? (_request, code) => `${opts.publicUrl!.replace(/\/+$/, '')}/join#invite=${code}` : undefined,
+  });
   registerPermissionRoutes(app);
   registerCapabilityPolicyRoutes(app);
   registerServerAdminRoutes(app, { version: serverVersion });
@@ -246,6 +250,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     cloudUrl: opts.crewlyCloudUrl ?? DEFAULT_CREWLY_CLOUD_URL,
     fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
     version: serverVersion,
+    cloudHandoff: opts.cloudHandoff,
   });
   const mail = opts.mail ?? new MailService(opts.db, {
     fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
@@ -368,7 +373,20 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerWsRoutes(app, hub, opts.trustedAppOrigins ?? []);
   registerDeviceSocket(app, deviceHub, hub, { version: serverVersion, serverIdentity: agentdServerIdentity });
 
-  if (opts.webDir && fs.existsSync(path.join(opts.webDir, 'index.html'))) {
+  if (opts.cloudHandoff) {
+    // A hosted server is used through the Crewly app, never from its own
+    // address: a page asked for here goes to the app, opened on this server.
+    // The browser carries the fragment (an invite code) across the redirect.
+    const appUrl = (opts.crewlyCloudUrl ?? DEFAULT_CREWLY_CLOUD_URL).replace(/\/+$/, '');
+    const server = encodeURIComponent(opts.cloudHandoff.deploymentId);
+    const toApp = (url: string) => (url.split('?')[0].replace(/\/+$/, '') === '/join'
+      ? `${appUrl}/join?server=${server}` : `${appUrl}/?server=${server}`);
+    app.get('/', async (request, reply) => reply.redirect(toApp(request.url), 302));
+    app.setNotFoundHandler(async (request, reply) => {
+      if (request.method === 'GET' && !request.url.startsWith('/api/')) return reply.redirect(toApp(request.url), 302);
+      return reply.code(404).send({ error: 'not_found' });
+    });
+  } else if (opts.webDir && fs.existsSync(path.join(opts.webDir, 'index.html'))) {
     await app.register(fastifyStatic, { root: opts.webDir, prefix: '/', index: false });
     app.get('/', async (_request, reply) => reply.sendFile('index.html'));
     app.setNotFoundHandler(async (request, reply) => {

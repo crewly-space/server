@@ -121,7 +121,10 @@ export function registerAuthRoutes(
       let invite;
       const existingLink = app.db.prepare('SELECT user_id FROM external_identities WHERE provider = ? AND subject = ?')
         .get('crewly-cloud', claims.cloudUserId);
-      if (dynamic && countUsers(app.db) > 0 && !existingLink) {
+      // A guest is in the Cloud account, not the workspace: never more than a
+      // member on Cloud's word alone, and new here only with an invite.
+      if (claims.guest) claims = { ...claims, orgRole: 'member' as const };
+      if (claims.guest ? !existingLink : dynamic && countUsers(app.db) > 0 && !existingLink) {
         invite = body.inviteToken ? findUsableInvite(app.db, body.inviteToken) : undefined;
         if (!invite || (invite.email && normaliseEmail(invite.email) !== normaliseEmail(claims.email))) {
           reply.code(403).send({ error: 'invite_required' }); return;

@@ -9,6 +9,8 @@ export interface ConnectorProviderDefinition {
   provider: ConnectorProvider; label: string; description: string; capabilities: ConnectorCapability[]; scopes: string[];
   /** False until the server has OAuth credentials; older servers omit it. */
   configured?: boolean;
+  /** Signs in through Crewly's own OAuth app, so there is nothing to set up here. */
+  managed?: boolean;
   /** What an admin sets to make `configured` true. */
   setup?: { clientIdEnv: string; clientSecretEnv: string; setupUrl: string };
 }

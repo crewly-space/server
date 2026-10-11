@@ -1,7 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
+import { consumeNonce, HandoffRejected, verifyManagedConnectionToken, type CloudHandoffConfig } from '../auth/cloud-handoff.js';
 import {
+  adoptManagedConnection,
   CrewlyConnectionError,
   disconnectCrewly,
   getCrewlyConnection,
@@ -44,8 +46,41 @@ async function guarded(reply: FastifyReply, action: () => Promise<unknown>): Pro
  * from settings, without editing configuration. Nothing here returns a
  * credential; it stays on the server.
  */
-export function registerCrewlyRoutes(app: FastifyInstance, options: { cloudUrl: string; fetchImpl: typeof fetch; version: string }): void {
+export function registerCrewlyRoutes(
+  app: FastifyInstance,
+  options: { cloudUrl: string; fetchImpl: typeof fetch; version: string; cloudHandoff?: CloudHandoffConfig },
+): void {
   const { cloudUrl, fetchImpl } = options;
+
+  /*
+   * Cloud handing a server it hosts that server's own instance credential, so
+   * Crewly Mail, connector sign-in and the rest work without anybody linking
+   * it by hand. Only a hosted server has this door: the token is signed with
+   * the key it already trusts for sign-ins, and names this deployment.
+   */
+  if (options.cloudHandoff) {
+    const handoff = options.cloudHandoff;
+    app.post('/api/v1/crewly/managed-connection', async (request, reply) => {
+      const body = z.object({ token: z.string().min(1).max(8192) }).parse(request.body);
+      let claims;
+      try {
+        claims = verifyManagedConnectionToken(body.token, handoff);
+      } catch (error) {
+        if (error instanceof HandoffRejected) {
+          request.log.warn({ reason: error.message }, 'managed Crewly connection refused');
+          reply.code(401).send({ error: 'invalid_token' });
+          return;
+        }
+        throw error;
+      }
+      if (!consumeNonce(app.db, claims.nonce, new Date(claims.exp * 1000))) {
+        reply.code(401).send({ error: 'invalid_token' });
+        return;
+      }
+      const connection = adoptManagedConnection(app.db, claims);
+      reply.code(200).send({ status: connection.status, instanceId: connection.instanceId, scopes: connection.scopes });
+    });
+  }
 
   app.get('/api/v1/server/crewly', { preHandler: requireAuth }, async (request, reply) => {
     if (!asAdmin(request, reply)) return;

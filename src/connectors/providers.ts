@@ -158,10 +158,10 @@ export class ConnectorOAuthError extends Error {
 
 export function startGitHubAuthorization(
   db: Database,
-  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  input: { connectorId: string; userId: string; callbackUrl: string; state?: string; scopes?: string[] },
   config: ConnectorOAuthConfig,
 ): PendingConnectorAuthorization {
-  const state = base64Url(randomBytes(32));
+  const state = input.state ?? base64Url(randomBytes(32));
   const codeVerifier = base64Url(randomBytes(32));
   const challenge = base64Url(createHash('sha256').update(codeVerifier).digest());
   const now = Date.now();
@@ -183,10 +183,10 @@ export function startGitHubAuthorization(
 
 export function startLinearAuthorization(
   db: Database,
-  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  input: { connectorId: string; userId: string; callbackUrl: string; state?: string; scopes?: string[] },
   config: ConnectorOAuthConfig,
 ): PendingConnectorAuthorization {
-  const state = base64Url(randomBytes(32));
+  const state = input.state ?? base64Url(randomBytes(32));
   const codeVerifier = base64Url(randomBytes(32));
   const challenge = base64Url(createHash('sha256').update(codeVerifier).digest());
   const now = Date.now();
@@ -209,10 +209,10 @@ export function startLinearAuthorization(
 
 export function startAsanaAuthorization(
   db: Database,
-  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  input: { connectorId: string; userId: string; callbackUrl: string; state?: string; scopes?: string[] },
   config: ConnectorOAuthConfig,
 ): PendingConnectorAuthorization {
-  const state = base64Url(randomBytes(32));
+  const state = input.state ?? base64Url(randomBytes(32));
   const codeVerifier = base64Url(randomBytes(48));
   const challenge = base64Url(createHash('sha256').update(codeVerifier).digest());
   const now = Date.now();
@@ -234,10 +234,10 @@ export function startAsanaAuthorization(
 
 export function startSlackAuthorization(
   db: Database,
-  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  input: { connectorId: string; userId: string; callbackUrl: string; state?: string; scopes?: string[] },
   config: ConnectorOAuthConfig,
 ): PendingConnectorAuthorization {
-  const state = base64Url(randomBytes(32));
+  const state = input.state ?? base64Url(randomBytes(32));
   const codeVerifier = base64Url(randomBytes(32));
   const now = Date.now();
   db.prepare('DELETE FROM connector_oauth_states WHERE expires_at <= ?').run(new Date(now).toISOString());
@@ -256,10 +256,10 @@ export function startSlackAuthorization(
 
 export function startGitLabAuthorization(
   db: Database,
-  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  input: { connectorId: string; userId: string; callbackUrl: string; state?: string; scopes?: string[] },
   config: ConnectorOAuthConfig,
 ): PendingConnectorAuthorization {
-  const state = base64Url(randomBytes(32));
+  const state = input.state ?? base64Url(randomBytes(32));
   const codeVerifier = base64Url(randomBytes(48));
   const challenge = base64Url(createHash('sha256').update(codeVerifier).digest());
   const now = Date.now();
@@ -282,10 +282,10 @@ export function startGitLabAuthorization(
 
 export function startNotionAuthorization(
   db: Database,
-  input: { connectorId: string; userId: string; callbackUrl: string },
+  input: { connectorId: string; userId: string; callbackUrl: string; state?: string },
   config: ConnectorOAuthConfig,
 ): PendingConnectorAuthorization {
-  const state = base64Url(randomBytes(32));
+  const state = input.state ?? base64Url(randomBytes(32));
   const now = Date.now();
   db.prepare('DELETE FROM connector_oauth_states WHERE expires_at <= ?').run(new Date(now).toISOString());
   db.prepare(`INSERT INTO connector_oauth_states
@@ -304,10 +304,10 @@ export function startNotionAuthorization(
 
 export function startGoogleDriveAuthorization(
   db: Database,
-  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  input: { connectorId: string; userId: string; callbackUrl: string; state?: string; scopes?: string[] },
   config: ConnectorOAuthConfig,
 ): PendingConnectorAuthorization {
-  const state = base64Url(randomBytes(32));
+  const state = input.state ?? base64Url(randomBytes(32));
   const codeVerifier = base64Url(randomBytes(48));
   const challenge = base64Url(createHash('sha256').update(codeVerifier).digest());
   const now = Date.now();
@@ -332,10 +332,10 @@ export function startGoogleDriveAuthorization(
 
 export function startGoogleCalendarAuthorization(
   db: Database,
-  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  input: { connectorId: string; userId: string; callbackUrl: string; state?: string; scopes?: string[] },
   config: ConnectorOAuthConfig,
 ): PendingConnectorAuthorization {
-  const state = base64Url(randomBytes(32));
+  const state = input.state ?? base64Url(randomBytes(32));
   const codeVerifier = base64Url(randomBytes(48));
   const challenge = base64Url(createHash('sha256').update(codeVerifier).digest());
   const now = Date.now();
@@ -359,10 +359,10 @@ export function startGoogleCalendarAuthorization(
 
 export function startGmailAuthorization(
   db: Database,
-  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  input: { connectorId: string; userId: string; callbackUrl: string; state?: string; scopes?: string[] },
   config: ConnectorOAuthConfig,
 ): PendingConnectorAuthorization {
-  const state = base64Url(randomBytes(32));
+  const state = input.state ?? base64Url(randomBytes(32));
   const codeVerifier = base64Url(randomBytes(48));
   const challenge = base64Url(createHash('sha256').update(codeVerifier).digest());
   const now = Date.now();
@@ -386,10 +386,10 @@ export function startGmailAuthorization(
 
 export function startDropboxAuthorization(
   db: Database,
-  input: { connectorId: string; userId: string; callbackUrl: string; scopes?: string[] },
+  input: { connectorId: string; userId: string; callbackUrl: string; state?: string; scopes?: string[] },
   config: ConnectorOAuthConfig,
 ): PendingConnectorAuthorization {
-  const state = base64Url(randomBytes(32));
+  const state = input.state ?? base64Url(randomBytes(32));
   const codeVerifier = base64Url(randomBytes(48));
   const challenge = base64Url(createHash('sha256').update(codeVerifier).digest());
   const now = Date.now();

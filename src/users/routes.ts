@@ -93,7 +93,20 @@ function sessionUserFrom(app: FastifyInstance, header: string | undefined): User
   return user && !user.suspended_at ? user : undefined;
 }
 
-export function registerUserRoutes(app: FastifyInstance): void {
+export interface UserRouteOptions {
+  /**
+   * Where an emailed invite opens. A hosted server is used through the Crewly
+   * app, so its invites open there; otherwise the server's own address.
+   */
+  inviteUrl?: (request: { protocol: string; headers: { host?: string } }, code: string) => string;
+}
+
+/** An invite link to the page this server serves itself, at the address it was asked at. */
+const ownInviteUrl = (request: { protocol: string; headers: { host?: string } }, code: string) =>
+  `${request.protocol}://${request.headers.host}/join#invite=${code}`;
+
+export function registerUserRoutes(app: FastifyInstance, options: UserRouteOptions = {}): void {
+  const inviteUrl = options.inviteUrl ?? ownInviteUrl;
   const sessionUser = (header: string | undefined) => sessionUserFrom(app, header);
   app.get('/api/v1/users', { preHandler: requireAuth }, async (request, reply) => {
     if (!hasPermission(app.db, request.user!.id, 'members.view')) {
@@ -212,7 +225,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
       body: 'You have been invited to a Crewly server.',
       template: {
         id: 'member.invited',
-        variables: { inviteUrl: `${request.protocol}://${request.headers.host}/join#invite=${code}`, role: invite.role },
+        variables: { inviteUrl: inviteUrl(request, code), role: invite.role },
       },
     });
     const mailDeliveryId = delivered.find((entry) => entry.channel === 'email')?.mailDeliveryId;
