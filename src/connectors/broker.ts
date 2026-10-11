@@ -82,17 +82,26 @@ export function brokeredTokenFetch(
   provider: ConnectorProvider,
   input: { state: string; code: string; codeVerifier: string },
 ): typeof fetch {
+  return relayedFetch(db, fetchImpl, `/api/v1/instance/connectors/${provider}/token`, input);
+}
+
+/** The same for renewing a token that Crewly's OAuth app issued. */
+export function brokeredRefreshFetch(db: Database, fetchImpl: typeof fetch, provider: ConnectorProvider, refreshToken: string): typeof fetch {
+  return relayedFetch(db, fetchImpl, `/api/v1/instance/connectors/${provider}/refresh`, { refreshToken });
+}
+
+function relayedFetch(db: Database, fetchImpl: typeof fetch, path: string, input: Record<string, unknown>): typeof fetch {
   return (async () => {
     let result;
     try {
-      result = await crewlyServiceRequest(db, fetchImpl, BROKER_SCOPE, 'POST', `/api/v1/instance/connectors/${provider}/token`, input);
+      result = await crewlyServiceRequest(db, fetchImpl, BROKER_SCOPE, 'POST', path, input);
     } catch (error) {
       if (error instanceof CrewlyConnectionError) throw new ConnectorOAuthError(error.message, error.statusCode);
       throw error;
     }
     const { status, body } = result;
     if (status !== 200 || typeof body.status !== 'number' || typeof body.body !== 'object' || body.body === null) {
-      throw brokerError(status, body, 'Crewly could not finish this sign-in');
+      throw brokerError(status, body, 'Crewly could not reach the provider for this connection');
     }
     return new Response(JSON.stringify(body.body), { status: body.status, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;

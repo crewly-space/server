@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../db/driver.js';
 import { decryptDatabaseSecret, encryptDatabaseSecret } from '../db/secrets.js';
-import { asanaRequest, dropboxRequest, githubRequest, gitlabRequest, googleRequest, linearRequest, notionRequest, slackRequest, PROVIDERS, type ConnectorCapability, type ConnectorProvider, type ConnectorStatus } from './providers.js';
+import { asanaRequest, dropboxRequest, githubRequest, gitlabRequest, googleRequest, linearRequest, notionRequest, slackRequest, oauthEnvVars, refreshOAuthTokens, ConnectorOAuthError, PROVIDERS, type ConnectorCapability, type ConnectorOAuthConfig, type ConnectorProvider, type ConnectorStatus, type OAuthTokens } from './providers.js';
+import { brokeredRefreshFetch } from './broker.js';
 
 export type ConnectorActor = { type: 'user' | 'agent' | 'automation' | 'integration' | 'system'; id: string | null };
 export type ConnectorGranteeType = 'agent' | 'automation' | 'integration';
@@ -11,6 +12,7 @@ interface ConnectorRow {
   scopes: string; status: ConnectorStatus; owner_user_id: string; token_type: string | null; credential_ciphertext: string | null;
   metadata: string; created_at: string; updated_at: string; last_used_at: string | null; last_checked_at: string | null;
   revoked_at: string | null; last_error: string | null;
+  refresh_ciphertext: string | null; token_expires_at: string | null; oauth_app: 'local' | 'crewly';
 }
 
 export interface ConnectorView {
@@ -63,14 +65,16 @@ export function restartConnector(db: Database, input: { id: string; provider: Co
   audit(db, current, 'reconnection_started', actor);
   return view(current);
 }
-export function connectConnector(db: Database, id: string, input: { token: string; accountId: string; accountName: string; accountUrl?: string; scopes: string[]; metadata?: Record<string, unknown> }, actor: ConnectorActor): ConnectorView {
+export function connectConnector(db: Database, id: string, input: OAuthTokens & { accountId: string; accountName: string; accountUrl?: string; scopes: string[]; metadata?: Record<string, unknown>; oauthApp?: 'local' | 'crewly' }, actor: ConnectorActor): ConnectorView {
   const current = getConnectorRow(db, id);
   if (!current) throw new Error('connector_not_found');
   const now = new Date().toISOString();
   db.prepare(`UPDATE connectors SET account_id = ?, account_name = ?, account_url = ?, scopes = ?, status = 'connected',
-    token_type = 'bearer', credential_ciphertext = ?, metadata = ?, updated_at = ?, last_checked_at = ?, revoked_at = NULL, last_error = NULL
+    token_type = 'bearer', credential_ciphertext = ?, refresh_ciphertext = ?, token_expires_at = ?, oauth_app = ?, metadata = ?,
+    updated_at = ?, last_checked_at = ?, revoked_at = NULL, last_error = NULL
     WHERE id = ?`).run(input.accountId, input.accountName, input.accountUrl ?? null, JSON.stringify([...new Set(input.scopes)].sort()),
-    encryptDatabaseSecret(db, input.token), JSON.stringify(input.metadata ?? {}), now, now, id);
+    encryptDatabaseSecret(db, input.token), input.refreshToken ? encryptDatabaseSecret(db, input.refreshToken) : null,
+    input.expiresAt ?? null, input.oauthApp ?? 'local', JSON.stringify(input.metadata ?? {}), now, now, id);
   audit(db, current, 'connected', actor, { accountId: input.accountId, scopes: input.scopes });
   return getConnector(db, id)!;
 }
@@ -84,14 +88,20 @@ export function setConnectorStatus(db: Database, id: string, status: ConnectorSt
 export function revokeConnector(db: Database, id: string, actor: ConnectorActor): ConnectorView | undefined {
   const current = getConnectorRow(db, id); if (!current) return undefined;
   const now = new Date().toISOString();
-  db.prepare(`UPDATE connectors SET status = 'revoked', credential_ciphertext = NULL, scopes = '[]', revoked_at = ?, updated_at = ?, last_error = NULL WHERE id = ?`).run(now, now, id);
+  db.prepare(`UPDATE connectors SET status = 'revoked', credential_ciphertext = NULL, refresh_ciphertext = NULL, token_expires_at = NULL, scopes = '[]', revoked_at = ?, updated_at = ?, last_error = NULL WHERE id = ?`).run(now, now, id);
   audit(db, current, 'revoked', actor);
   return getConnector(db, id);
 }
-export function refreshConnector(db: Database, id: string, actor: ConnectorActor, fetchImpl: typeof fetch): Promise<ConnectorView> {
+export function refreshConnector(db: Database, id: string, actor: ConnectorActor, fetchImpl: typeof fetch, localOAuth: LocalOAuth = envOAuthConfig): Promise<ConnectorView> {
   const current = getConnectorRow(db, id); if (!current || !current.credential_ciphertext) throw new Error('connector_not_connected');
-  const token = decryptDatabaseSecret(db, current.credential_ciphertext);
   return (async () => {
+    let token: string;
+    try { token = await currentToken(db, id, fetchImpl, localOAuth); }
+    catch (error) {
+      // Renewal already recorded why; the check reports the connector as it now is.
+      if (error instanceof Error && (error.message === 'connector_permission_revoked' || error.message === 'connector_action_required')) return getConnector(db, id)!;
+      throw error;
+    }
     const result = current.provider === 'github' ? await githubRequest(token, '/user', fetchImpl)
       : current.provider === 'gitlab' ? await gitlabRequest(token, 'user', fetchImpl)
         : current.provider === 'linear' ? await linearRequest(token, 'query Viewer { viewer { id name email url } }', {}, fetchImpl)
@@ -128,6 +138,67 @@ export function refreshConnector(db: Database, id: string, actor: ConnectorActor
     audit(db, current, 'refreshed', actor, { accountId: String(normalized.id) });
     return getConnector(db, id)!;
   })();
+}
+
+/** This server's own OAuth app for a provider, if it has one. */
+export type LocalOAuth = (provider: ConnectorProvider) => ConnectorOAuthConfig | undefined;
+export function envOAuthConfig(provider: ConnectorProvider): ConnectorOAuthConfig | undefined {
+  const env = oauthEnvVars(provider);
+  const clientId = process.env[env.clientId];
+  const clientSecret = process.env[env.clientSecret];
+  return clientId && clientSecret ? { clientId, clientSecret } : undefined;
+}
+
+/** Renew this long before the provider's expiry, so a call never starts with a token about to die. */
+const RENEW_EARLY_MS = 2 * 60 * 1000;
+/** One renewal per connector at a time: a rotated refresh token works only once. */
+const renewing = new Map<string, Promise<string>>();
+
+/** The connector's access token, renewed first when it is about to expire. */
+export async function currentToken(db: Database, id: string, fetchImpl: typeof fetch, localOAuth: LocalOAuth = envOAuthConfig): Promise<string> {
+  const row = getConnectorRow(db, id);
+  if (!row?.credential_ciphertext) throw new Error('connector_not_connected');
+  if (!row.refresh_ciphertext || !row.token_expires_at || Date.parse(row.token_expires_at) - Date.now() > RENEW_EARLY_MS) {
+    return decryptDatabaseSecret(db, row.credential_ciphertext);
+  }
+  let pending = renewing.get(id);
+  if (!pending) {
+    pending = renewToken(db, row, fetchImpl, localOAuth).finally(() => renewing.delete(id));
+    renewing.set(id, pending);
+  }
+  return pending;
+}
+
+async function renewToken(db: Database, row: ConnectorRow, fetchImpl: typeof fetch, localOAuth: LocalOAuth): Promise<string> {
+  const label = PROVIDERS[row.provider].label;
+  const system: ConnectorActor = { type: 'system', id: null };
+  const refreshToken = decryptDatabaseSecret(db, row.refresh_ciphertext!);
+  let tokens: OAuthTokens;
+  try {
+    if (row.oauth_app === 'crewly') {
+      // Signed in with Crewly's OAuth app, so only Crewly's secret renews it.
+      tokens = await refreshOAuthTokens(row.provider, refreshToken, { clientId: '', clientSecret: '' }, brokeredRefreshFetch(db, fetchImpl, row.provider, refreshToken));
+    } else {
+      const config = localOAuth(row.provider);
+      if (!config) {
+        setConnectorStatus(db, row.id, 'action_required', system, `${label} sign-in is no longer set up on this server, so the connection cannot be renewed.`);
+        throw new Error('connector_action_required');
+      }
+      tokens = await refreshOAuthTokens(row.provider, refreshToken, config, fetchImpl);
+    }
+  } catch (error) {
+    if (error instanceof ConnectorOAuthError && error.statusCode === 401) {
+      setConnectorStatus(db, row.id, 'permission_revoked', system, `${label} no longer accepts this connection. Reconnect to sign in again.`);
+      throw new Error('connector_permission_revoked');
+    }
+    throw error;
+  }
+  const now = new Date().toISOString();
+  db.prepare('UPDATE connectors SET credential_ciphertext = ?, refresh_ciphertext = ?, token_expires_at = ?, updated_at = ? WHERE id = ?')
+    .run(encryptDatabaseSecret(db, tokens.token), tokens.refreshToken ? encryptDatabaseSecret(db, tokens.refreshToken) : row.refresh_ciphertext,
+      tokens.expiresAt ?? null, now, row.id);
+  audit(db, row, 'token_renewed', system, { expiresAt: tokens.expiresAt ?? null });
+  return tokens.token;
 }
 
 export function listConnectorGrants(db: Database, connectorId: string): ConnectorGrant[] {
@@ -181,7 +252,8 @@ export async function connectorCall(
   input: { connectorId: string; agentId: string; capability: ConnectorCapability; operation: 'read' | 'write'; payload: Record<string, unknown> },
   fetchImpl: typeof fetch = fetch,
 ): Promise<Record<string, unknown>> {
-  const credential = connectorCredential(db, { connectorId: input.connectorId, granteeType: 'agent', granteeId: input.agentId, capability: input.capability }, { type: 'agent', id: input.agentId });
+  const granted = connectorCredential(db, { connectorId: input.connectorId, granteeType: 'agent', granteeId: input.agentId, capability: input.capability }, { type: 'agent', id: input.agentId });
+  const credential = { ...granted, token: await currentToken(db, input.connectorId, fetchImpl) };
   const current = getConnectorRow(db, input.connectorId);
   if (!current) throw new Error('connector_not_found');
   let result: { status: number; body: Record<string, unknown> };

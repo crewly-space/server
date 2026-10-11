@@ -152,6 +152,67 @@ export function oauthEnvVars(provider: ConnectorProvider): { clientId: string; c
   return { clientId: `CREWLY_${prefix}_CLIENT_ID`, clientSecret: `CREWLY_${prefix}_CLIENT_SECRET` };
 }
 
+/** An access token, and what renews it when the provider makes it expire. */
+export interface OAuthTokens {
+  token: string;
+  refreshToken?: string;
+  /** When the access token stops working, if the provider said. */
+  expiresAt?: string;
+}
+type TokenResponse = { access_token?: string; refresh_token?: string; expires_in?: number | string; error?: string; error_description?: string };
+
+function oauthTokens(body: TokenResponse): OAuthTokens {
+  const seconds = Number(body.expires_in);
+  return { token: body.access_token!,
+    ...(typeof body.refresh_token === 'string' && body.refresh_token ? { refreshToken: body.refresh_token } : {}),
+    ...(Number.isFinite(seconds) && seconds > 0 ? { expiresAt: new Date(Date.now() + seconds * 1000).toISOString() } : {}) };
+}
+
+/** Where each provider renews a token. Notion and Slack tokens do not expire. */
+export const TOKEN_URLS: Partial<Record<ConnectorProvider, string>> = {
+  github: 'https://github.com/login/oauth/access_token',
+  gitlab: 'https://gitlab.com/oauth/token',
+  linear: 'https://api.linear.app/oauth/token',
+  asana: 'https://app.asana.com/-/oauth_token',
+  'google-drive': 'https://oauth2.googleapis.com/token',
+  'google-calendar': 'https://oauth2.googleapis.com/token',
+  gmail: 'https://oauth2.googleapis.com/token',
+  dropbox: 'https://api.dropboxapi.com/oauth2/token',
+};
+
+/**
+ * Trades a refresh token for a new access token. A provider that rotates
+ * refresh tokens sends a new one; one that does not (Google) leaves the old
+ * one in force, so it is kept. A 400 or 401 means the grant is gone and only
+ * signing in again helps.
+ */
+export async function refreshOAuthTokens(
+  provider: ConnectorProvider,
+  refreshToken: string,
+  config: ConnectorOAuthConfig,
+  fetchImpl: typeof fetch,
+): Promise<OAuthTokens> {
+  const url = TOKEN_URLS[provider];
+  const label = PROVIDERS[provider].label;
+  if (!url) throw new ConnectorOAuthError(`${label} connections do not expire`, 400);
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, grant_type: 'refresh_token', refresh_token: refreshToken }),
+      redirect: 'error', signal: AbortSignal.timeout(10_000),
+    });
+  } catch { throw new ConnectorOAuthError(`${label} could not be reached`, 502); }
+  const body = await response.json().catch(() => ({})) as TokenResponse;
+  if (!response.ok || !body.access_token) {
+    // GitHub answers 200 with an error body; the rest answer 400 or 401.
+    const gone = response.status === 400 || response.status === 401 || body.error === 'bad_refresh_token' || body.error === 'invalid_grant';
+    throw new ConnectorOAuthError(body.error_description ?? body.error ?? `${label} did not renew the connection`, gone ? 401 : 502);
+  }
+  const tokens = oauthTokens(body);
+  return { ...tokens, refreshToken: tokens.refreshToken ?? refreshToken };
+}
+
 export class ConnectorOAuthError extends Error {
   constructor(message: string, readonly statusCode: number) { super(message); }
 }
@@ -400,6 +461,7 @@ export function startDropboxAuthorization(
       new Date(now).toISOString(), new Date(now + STATE_TTL_MS).toISOString());
   const url = new URL('https://www.dropbox.com/oauth2/authorize');
   url.searchParams.set('client_id', config.clientId);
+  url.searchParams.set('token_access_type', 'offline');
   url.searchParams.set('redirect_uri', input.callbackUrl);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', (input.scopes ?? PROVIDERS.dropbox.scopes).join(' '));
@@ -432,7 +494,7 @@ export async function exchangeGitHubCode(
   input: { code: string; codeVerifier: string; redirectUri: string },
   config: ConnectorOAuthConfig,
   fetchImpl: typeof fetch,
-): Promise<string> {
+): Promise<OAuthTokens> {
   let response: Response;
   try {
     response = await fetchImpl('https://github.com/login/oauth/access_token', {
@@ -443,16 +505,16 @@ export async function exchangeGitHubCode(
       redirect: 'error', signal: AbortSignal.timeout(10_000),
     });
   } catch { throw new ConnectorOAuthError('GitHub could not be reached', 502); }
-  const body = await response.json().catch(() => ({})) as { access_token?: string; error_description?: string };
+  const body = await response.json().catch(() => ({})) as TokenResponse;
   if (!response.ok || !body.access_token) throw new ConnectorOAuthError(body.error_description ?? 'GitHub rejected the authorization', 502);
-  return body.access_token;
+  return oauthTokens(body);
 }
 
 export async function exchangeLinearCode(
   input: { code: string; codeVerifier: string; redirectUri: string },
   config: ConnectorOAuthConfig,
   fetchImpl: typeof fetch,
-): Promise<string> {
+): Promise<OAuthTokens> {
   let response: Response;
   try {
     response = await fetchImpl('https://api.linear.app/oauth/token', {
@@ -461,16 +523,16 @@ export async function exchangeLinearCode(
       redirect: 'error', signal: AbortSignal.timeout(10_000),
     });
   } catch { throw new ConnectorOAuthError('Linear could not be reached', 502); }
-  const body = await response.json().catch(() => ({})) as { access_token?: string; error_description?: string };
+  const body = await response.json().catch(() => ({})) as TokenResponse;
   if (!response.ok || !body.access_token) throw new ConnectorOAuthError(body.error_description ?? 'Linear rejected the authorization', 502);
-  return body.access_token;
+  return oauthTokens(body);
 }
 
 export async function exchangeAsanaCode(
   input: { code: string; codeVerifier: string; redirectUri: string },
   config: ConnectorOAuthConfig,
   fetchImpl: typeof fetch,
-): Promise<string> {
+): Promise<OAuthTokens> {
   let response: Response;
   try {
     response = await fetchImpl('https://app.asana.com/-/oauth_token', {
@@ -480,9 +542,9 @@ export async function exchangeAsanaCode(
       redirect: 'error', signal: AbortSignal.timeout(10_000),
     });
   } catch { throw new ConnectorOAuthError('Asana could not be reached', 502); }
-  const body = await response.json().catch(() => ({})) as { access_token?: string; error_description?: string };
+  const body = await response.json().catch(() => ({})) as TokenResponse;
   if (!response.ok || !body.access_token) throw new ConnectorOAuthError(body.error_description ?? 'Asana rejected the authorization', 502);
-  return body.access_token;
+  return oauthTokens(body);
 }
 
 export async function exchangeSlackCode(
@@ -507,7 +569,7 @@ export async function exchangeGitLabCode(
   input: { code: string; codeVerifier: string; redirectUri: string },
   config: ConnectorOAuthConfig,
   fetchImpl: typeof fetch,
-): Promise<string> {
+): Promise<OAuthTokens> {
   let response: Response;
   try {
     response = await fetchImpl('https://gitlab.com/oauth/token', {
@@ -517,9 +579,9 @@ export async function exchangeGitLabCode(
       redirect: 'error', signal: AbortSignal.timeout(10_000),
     });
   } catch { throw new ConnectorOAuthError('GitLab could not be reached', 502); }
-  const body = await response.json().catch(() => ({})) as { access_token?: string; error_description?: string };
+  const body = await response.json().catch(() => ({})) as TokenResponse;
   if (!response.ok || !body.access_token) throw new ConnectorOAuthError(body.error_description ?? 'GitLab rejected the authorization', 502);
-  return body.access_token;
+  return oauthTokens(body);
 }
 
 export async function exchangeNotionCode(
@@ -545,7 +607,7 @@ export async function exchangeGoogleDriveCode(
   input: { code: string; codeVerifier: string; redirectUri: string },
   config: ConnectorOAuthConfig,
   fetchImpl: typeof fetch,
-): Promise<string> {
+): Promise<OAuthTokens> {
   let response: Response;
   try {
     response = await fetchImpl('https://oauth2.googleapis.com/token', {
@@ -555,9 +617,9 @@ export async function exchangeGoogleDriveCode(
       redirect: 'error', signal: AbortSignal.timeout(10_000),
     });
   } catch { throw new ConnectorOAuthError('Google could not be reached', 502); }
-  const body = await response.json().catch(() => ({})) as { access_token?: string; error_description?: string };
+  const body = await response.json().catch(() => ({})) as TokenResponse;
   if (!response.ok || !body.access_token) throw new ConnectorOAuthError(body.error_description ?? 'Google rejected the authorization', 502);
-  return body.access_token;
+  return oauthTokens(body);
 }
 
 export const exchangeGoogleCalendarCode = exchangeGoogleDriveCode;
@@ -567,7 +629,7 @@ export async function exchangeDropboxCode(
   input: { code: string; codeVerifier: string; redirectUri: string },
   config: ConnectorOAuthConfig,
   fetchImpl: typeof fetch,
-): Promise<string> {
+): Promise<OAuthTokens> {
   let response: Response;
   try {
     response = await fetchImpl('https://api.dropboxapi.com/oauth2/token', {
@@ -577,9 +639,9 @@ export async function exchangeDropboxCode(
       redirect: 'error', signal: AbortSignal.timeout(10_000),
     });
   } catch { throw new ConnectorOAuthError('Dropbox could not be reached', 502); }
-  const body = await response.json().catch(() => ({})) as { access_token?: string; error_description?: string };
+  const body = await response.json().catch(() => ({})) as TokenResponse;
   if (!response.ok || !body.access_token) throw new ConnectorOAuthError(body.error_description ?? 'Dropbox rejected the authorization', 502);
-  return body.access_token;
+  return oauthTokens(body);
 }
 
 export async function slackRequest(

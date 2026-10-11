@@ -39,6 +39,7 @@ describe('a hosted server', () => {
   let db: Database;
   let app: Awaited<ReturnType<typeof buildApp>>;
   let cloudCalls: Array<{ url: string; body: unknown; authorization: string | null }>;
+  let githubTokens: string[];
   let sentMail: string[];
 
   beforeEach(async () => {
@@ -47,6 +48,7 @@ describe('a hosted server', () => {
     runMigrations(db);
     resetBrokerCache();
     cloudCalls = [];
+    githubTokens = [];
     sentMail = [];
     app = await buildApp({
       mailDefault: { provider: 'resend', apiKey: 're_test', fromAddress: 'Crewly <hi@example.com>' },
@@ -64,8 +66,16 @@ describe('a hosted server', () => {
         if (url === `${CLOUD}/api/v1/instance/connectors/github/authorize`) {
           return Response.json({ state: 'state-from-crewly-0123456789', clientId: 'crewly-github', redirectUri: `${CLOUD}/api/v1/connectors/oauth/callback` }, { status: 201 });
         }
-        if (url === `${CLOUD}/api/v1/instance/connectors/github/token`) return Response.json({ status: 200, body: { access_token: 'gh-token-via-crewly' } });
-        if (url === 'https://api.github.com/user') return Response.json({ id: 7, login: 'octocat' });
+        if (url === `${CLOUD}/api/v1/instance/connectors/github/token`) {
+          return Response.json({ status: 200, body: { access_token: 'gh-token-via-crewly', refresh_token: 'ghr-1', expires_in: 60 } });
+        }
+        if (url === `${CLOUD}/api/v1/instance/connectors/github/refresh`) {
+          return Response.json({ status: 200, body: { access_token: 'gh-token-renewed', refresh_token: 'ghr-2', expires_in: 28800 } });
+        }
+        if (url === 'https://api.github.com/user') {
+          githubTokens.push(String(new Headers(init?.headers).get('authorization')));
+          return Response.json({ id: 7, login: 'octocat' });
+        }
         if (url.startsWith('https://api.resend.com')) { sentMail.push(String(init?.body)); return Response.json({ id: 'email-1' }); }
         throw new Error(`unexpected request to ${url}`);
       },
@@ -160,5 +170,11 @@ describe('a hosted server', () => {
     const exchange = cloudCalls.find((call) => call.url.endsWith('/token'));
     expect(exchange?.body).toMatchObject({ state: 'state-from-crewly-0123456789', code: 'code-from-github' });
     expect((exchange?.body as { codeVerifier: string }).codeVerifier.length).toBeGreaterThan(40);
+
+    // GitHub's token expires within a minute; checking the connection renews it through Crewly.
+    const checked = await app.inject({ method: 'POST', url: `/api/v1/connectors/${done.json().id}/refresh`, headers });
+    expect(checked.json()).toMatchObject({ status: 'connected' });
+    expect(cloudCalls.find((call) => call.url.endsWith('/github/refresh'))?.body).toEqual({ refreshToken: 'ghr-1' });
+    expect(githubTokens.at(-1)).toBe('Bearer gh-token-renewed');
   });
 });
