@@ -91,9 +91,37 @@ try {
         -Path $InstallDir |
         Out-Null
 
+    $CliPath = Join-Path $InstallDir 'crewly.exe'
+
+    # Earlier upgrades may have left renamed copies behind; drop the ones no
+    # process holds any more.
+    Get-ChildItem -LiteralPath $InstallDir -Filter 'crewly.exe.old-*' -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+        }
+
+    # A running crewly (the device daemon or a server it started) holds its
+    # .exe open, and Windows refuses to overwrite it -- but it does allow a
+    # rename. Move the old binary aside so the new one can take its name; the
+    # running process keeps working until it is restarted.
+    $ReplacedRunning = $false
+    if (Test-Path -LiteralPath $CliPath) {
+        try {
+            Remove-Item -LiteralPath $CliPath -Force
+        } catch {
+            $Aside = "$CliPath.old-" + [Guid]::NewGuid().ToString('N')
+            try {
+                Rename-Item -LiteralPath $CliPath -NewName (Split-Path $Aside -Leaf)
+                $ReplacedRunning = $true
+            } catch {
+                throw "Could not replace $CliPath. Stop Crewly (crewly stop, crewly down) or close the program using it, then run the installer again."
+            }
+        }
+    }
+
     Copy-Item `
         (Join-Path $TempDir 'crewly.exe') `
-        (Join-Path $InstallDir 'crewly.exe') `
+        $CliPath `
         -Force
 
     # Older installers put the server and app next to the CLI, where the CLI
@@ -140,6 +168,12 @@ try {
     Write-Host `
         '  [ok] Installed the Crewly CLI' `
         -ForegroundColor Green
+
+    if ($ReplacedRunning) {
+        Write-Host `
+            '  [!] Crewly was running and still uses the old version; run "crewly restart" to switch' `
+            -ForegroundColor Yellow
+    }
 
     if (
         !$env:CREWLY_SKIP_INIT -and
