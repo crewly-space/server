@@ -22,7 +22,8 @@ export function verifySessionToken(db: Database, token: string): string | undefi
     | { user_id: string; expires_at: string }
     | undefined;
   if (!row) return undefined;
-  if (new Date(row.expires_at).getTime() < Date.now()) {
+  const expiresAt = new Date(row.expires_at).getTime();
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
     db.prepare('DELETE FROM sessions WHERE token = ?').run(digest);
     return undefined;
   }

@@ -20,11 +20,15 @@ export function isPrivateOrReservedAddress(address: string): boolean {
       (a === 203 && b === 0 && c === 113);
   }
   if (version === 6) {
-    const value = address.toLowerCase();
+    let value: string;
+    try { value = new URL(`https://[${address}]/`).hostname.slice(1, -1); } catch { return true; }
     if (value === '::' || value === '::1' || /^f[cd]/.test(value) || /^fe[89ab]/.test(value) ||
       value.startsWith('ff') || value.startsWith('2001:db8:')) return true;
-    const mapped = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    return mapped ? isPrivateOrReservedAddress(mapped[1]!) : false;
+    const mapped = value.match(/^::ffff:([\da-f]{1,4}):([\da-f]{1,4})$/);
+    if (!mapped) return false;
+    const high = parseInt(mapped[1]!, 16);
+    const low = parseInt(mapped[2]!, 16);
+    return isPrivateOrReservedAddress(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
   }
   return true;
 }

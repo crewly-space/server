@@ -15,6 +15,7 @@ import {
   removeParticipant,
   setConversationReplyMode,
 } from './repository.js';
+import type { Conversation } from '../protocol/index.js';
 import { ConversationReplySettingsSchema } from '../protocol/index.js';
 import { getChannel } from '../channels/repository.js';
 
@@ -40,11 +41,21 @@ function participantExists(
   participantId: string,
   participantType: 'user' | 'agent'
 ): boolean {
-  if (participantType === 'user') return getUserById(app.db, participantId) !== undefined;
+  if (participantType === 'user') {
+    const user = getUserById(app.db, participantId);
+    return Boolean(user && !user.suspended_at);
+  }
   return getAgent(app.db, participantId) !== undefined;
 }
 
 export function registerConversationRoutes(app: FastifyInstance): void {
+  const announce = (conversation: Pick<Conversation, 'id' | 'participants'>) => {
+    for (const participant of conversation.participants) {
+      if (participant.participantType !== 'user') continue;
+      app.hub.addUserTopic(participant.participantId, `conversation:${conversation.id}`);
+      app.hub.publish(`user:${participant.participantId}`, 'conversations.changed', { conversationId: conversation.id });
+    }
+  };
   app.post('/api/v1/conversations', { preHandler: requireAuth }, async (request, reply) => {
     const body = CreateDmBodySchema.parse(request.body);
     if (body.participantId === request.user!.id) {
@@ -68,6 +79,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
         { participantId: body.participantId, participantType: body.participantType },
       ],
     });
+    announce(conversation);
     reply.code(201).send(conversation);
   });
 
@@ -84,6 +96,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
           .map((p) => [`${p.participantId}:${p.participantType}`, p])
       ).values()
     );
+    if (!uniqueOthers.length) { reply.code(400).send({ error: 'group_participants_required' }); return; }
     for (const p of uniqueOthers) {
       if (!participantExists(app, p.participantId, p.participantType)) {
         reply.code(404).send({ error: 'participant_not_found' });
@@ -95,6 +108,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
       name: body.name,
       participants: [{ participantId: request.user!.id, participantType: 'user' }, ...uniqueOthers],
     });
+    announce(conversation);
     reply.code(201).send(conversation);
   });
 
@@ -151,6 +165,7 @@ export function registerConversationRoutes(app: FastifyInstance): void {
       return;
     }
     addParticipant(app.db, id, { participantId: body.participantId, participantType: body.participantType });
+    announce(getConversation(app.db, id)!);
     reply.code(204).send();
   });
 
@@ -172,6 +187,9 @@ export function registerConversationRoutes(app: FastifyInstance): void {
       return;
     }
     removeParticipant(app.db, id, participantId);
+    app.hub.removeUserTopic(participantId, `conversation:${id}`);
+    app.hub.publish(`user:${participantId}`, 'conversations.changed', { conversationId: id });
+    announce({ id, participants: conversation.participants.filter((participant) => participant.participantId !== participantId) });
     reply.code(204).send();
   });
 }

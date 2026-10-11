@@ -22,6 +22,25 @@ interface MentionRow {
 
 export class ReplyNotInConversationError extends Error {}
 
+export function getMessage(db: Database, id: string, userId?: string): Message | undefined {
+  const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as MessageRow | undefined;
+  return row ? rowToMessage(db, row, getMentions(db, id), listAttachmentsForMessage(db, id), userId) : undefined;
+}
+
+/** A bounded window around a search hit, including its root for thread replies. */
+export function listMessageContext(db: Database, id: string, userId?: string): Message[] {
+  const message = getMessage(db, id, userId);
+  if (!message) return [];
+  const scope = message.threadRootId ? 'thread_root_id = ?' : 'conversation_id = ? AND thread_root_id IS NULL';
+  const scopeId = message.threadRootId ?? message.conversationId;
+  const before = db.prepare(`SELECT * FROM messages WHERE ${scope} AND rowid < (SELECT rowid FROM messages WHERE id = ?) ORDER BY rowid DESC LIMIT 25`).all(scopeId, id) as MessageRow[];
+  const after = db.prepare(`SELECT * FROM messages WHERE ${scope} AND rowid > (SELECT rowid FROM messages WHERE id = ?) ORDER BY rowid LIMIT 25`).all(scopeId, id) as MessageRow[];
+  const window = [...before.reverse().map((row) => rowToMessage(db, row, getMentions(db, row.id), listAttachmentsForMessage(db, row.id), userId)), message,
+    ...after.map((row) => rowToMessage(db, row, getMentions(db, row.id), listAttachmentsForMessage(db, row.id), userId))];
+  const root = message.threadRootId ? getMessage(db, message.threadRootId, userId) : undefined;
+  return root ? [root, ...window] : window;
+}
+
 function getMentions(db: Database, messageId: string): MentionRef[] {
   const rows = db.prepare('SELECT * FROM message_mentions WHERE message_id = ?').all(messageId) as MentionRow[];
   return rows.map((r) => ({ targetId: r.target_id, targetType: r.target_type }));
@@ -121,10 +140,12 @@ export function createMessage(
   return rowToMessage(db, row, input.mentions, listAttachmentsForMessage(db, row.id));
 }
 
-export function listMessagesForConversation(db: Database, conversationId: string, limit = 50, userId?: string): Message[] {
+export function listMessagesForConversation(db: Database, conversationId: string, limit = 50, userId?: string, before?: string): Message[] {
   const rows = db
-    .prepare('SELECT * FROM messages WHERE conversation_id = ? AND thread_root_id IS NULL ORDER BY created_at DESC, rowid DESC LIMIT ?')
-    .all(conversationId, limit) as MessageRow[];
+    .prepare(before
+      ? 'SELECT * FROM messages WHERE conversation_id = ? AND thread_root_id IS NULL AND rowid < (SELECT rowid FROM messages WHERE id = ? AND conversation_id = ?) ORDER BY created_at DESC, rowid DESC LIMIT ?'
+      : 'SELECT * FROM messages WHERE conversation_id = ? AND thread_root_id IS NULL ORDER BY created_at DESC, rowid DESC LIMIT ?')
+    .all(...(before ? [conversationId, before, conversationId, limit] : [conversationId, limit])) as MessageRow[];
   return rows.reverse().map((row) => rowToMessage(db, row, getMentions(db, row.id), listAttachmentsForMessage(db, row.id), userId));
 }
 
@@ -200,7 +221,7 @@ export function getMessageThread(db: Database, rootMessageId: string): MessageTh
 export function listThreadMessages(db: Database, rootMessageId: string, limit = 100, userId?: string): Message[] {
   const root = db.prepare('SELECT * FROM messages WHERE id = ?').get(rootMessageId) as MessageRow | undefined;
   if (!root) return [];
-  const replies = db.prepare('SELECT * FROM messages WHERE thread_root_id = ? ORDER BY created_at, rowid LIMIT ?').all(rootMessageId, limit) as MessageRow[];
+  const replies = (db.prepare('SELECT * FROM messages WHERE thread_root_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?').all(rootMessageId, limit) as MessageRow[]).reverse();
   return [root, ...replies].map((row) => rowToMessage(db, row, getMentions(db, row.id), listAttachmentsForMessage(db, row.id), userId));
 }
 
@@ -220,8 +241,10 @@ export function markThreadRead(db: Database, rootMessageId: string, userId: stri
 export function searchMessages(db: Database, query: string, userId: string, limit = 50): Message[] {
   const pattern = `%${query.replace(/[\\%_]/g, '\\$&')}%`;
   const rows = db.prepare(`SELECT m.* FROM messages m
-    JOIN conversation_participants p ON p.conversation_id = m.conversation_id
-    WHERE p.participant_id = ? AND p.participant_type = 'user' AND m.body LIKE ? ESCAPE '\\'
+    JOIN conversations c ON c.id = m.conversation_id
+    WHERE (EXISTS (SELECT 1 FROM conversation_participants p WHERE p.conversation_id = m.conversation_id
+      AND p.participant_id = ? AND p.participant_type = 'user') OR (c.kind = 'channel' AND c.visibility = 'public'))
+      AND lower(m.body) LIKE lower(?) ESCAPE '\\'
     ORDER BY m.created_at DESC LIMIT ?`).all(userId, pattern, limit) as MessageRow[];
   return rows.map((row) => rowToMessage(db, row, getMentions(db, row.id), listAttachmentsForMessage(db, row.id), userId));
 }

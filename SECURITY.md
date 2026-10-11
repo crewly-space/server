@@ -18,6 +18,15 @@ is no long-term support branch yet.
 ## What the server does today
 
 - Session tokens are random 32-byte values, stored only as SHA-256 digests.
+- WebSocket sessions are revalidated before event delivery and periodically while idle.
+  Logout, password changes, suspension, and deletion revoke affected open connections;
+  removing a group participant removes their conversation subscription.
+- The default MCP HTTP transport validates all DNS answers and pins outbound connections
+  to a validated address, including IPv4-mapped IPv6. Private networks require the
+  explicit `CREWLY_ALLOW_PRIVATE_NETWORK` opt-in; injected transports are trusted overrides.
+- Relaxing tool policies or remembering a tool approval requires `integrations.manage`.
+  Members may only tighten existing agent policies; replacements that relax effective
+  access are rejected atomically.
 - Passwords are hashed with scrypt and compared in constant time.
 - Setup and login are rate limited per client address.
 - Responses carry a content security policy, `nosniff`, `frame-ancestors 'none'`,

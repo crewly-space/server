@@ -56,6 +56,21 @@ describe('messaging end-to-end: dm/group creation, persistence, WS delivery, rec
     return { socket, next, ready };
   }
 
+  it('opens bounded search context only for users allowed to read that conversation', async () => {
+    const setup = await app.inject({ method: 'POST', url: '/api/v1/auth/setup', payload: { email: 'context-owner@example.com', displayName: 'Owner', password: 'super-secret-1' } });
+    const headers = { authorization: `Bearer ${setup.json().token}` };
+    const member = createUser(db, { email: 'context-member@example.com', displayName: 'Member', passwordHash: 'x', role: 'member' });
+    const outsider = createUser(db, { email: 'context-outsider@example.com', displayName: 'Outsider', passwordHash: 'x', role: 'member' });
+    const conversation = await app.inject({ method: 'POST', url: '/api/v1/conversations', headers, payload: { participantId: member.id, participantType: 'user' } });
+    const post = await app.inject({ method: 'POST', url: `/api/v1/conversations/${conversation.json().id}/messages`, headers, payload: { body: 'Private searchable text' } });
+    const url = `/api/v1/messages/${post.json().id}/context`;
+    expect((await app.inject({ method: 'GET', url })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${createSession(db, outsider.id)}` } })).statusCode).toBe(403);
+    const allowed = await app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${createSession(db, member.id)}` } });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json().messages.map((message: { id: string }) => message.id)).toEqual([post.json().id]);
+  });
+
   it('proves the full messaging path: group creation, message persistence, live WS delivery, and reconnect/replay across a disconnect', async () => {
     const setup = await app.inject({
       method: 'POST',
@@ -118,4 +133,31 @@ describe('messaging end-to-end: dm/group creation, persistence, WS delivery, rec
     expect((replayed.payload as { body: string }).body).toBe('moved to tuesday, sent while bob was offline');
     bobReconnect.close();
   });
+  it('delivers thread replies and resolved status live, with accurate root summaries', async () => {
+    const alice = createUser(db, { email: 'thread-alice@example.com', displayName: 'Alice', passwordHash: 'x', role: 'owner' });
+    const bob = createUser(db, { email: 'thread-bob@example.com', displayName: 'Bob', passwordHash: 'x', role: 'member' });
+    const aliceHeaders = { authorization: `Bearer ${createSession(db, alice.id)}` };
+    const bobToken = createSession(db, bob.id);
+    const group = await app.inject({ method: 'POST', url: '/api/v1/conversations/group', headers: aliceHeaders,
+      payload: { name: 'Threads', participants: [{ participantId: bob.id, participantType: 'user' }] } });
+    const conversationId = group.json().id;
+    const root = await app.inject({ method: 'POST', url: `/api/v1/conversations/${conversationId}/messages`, headers: aliceHeaders, payload: { body: 'Discuss here' } });
+    const rootId = root.json().id;
+    expect((await app.inject({ method: 'POST', url: `/api/v1/messages/${rootId}/thread`, headers: aliceHeaders })).statusCode).toBe(201);
+    const stream = connectWs(bobToken);
+    await stream.ready;
+    try {
+      const reply = await app.inject({ method: 'POST', url: `/api/v1/threads/${rootId}/messages`, headers: aliceHeaders, payload: { body: 'A live reply' } });
+      expect(reply.statusCode).toBe(201);
+      expect(await stream.next()).toMatchObject({ type: 'thread.message.created', payload: { rootMessageId: rootId, message: { body: 'A live reply' } } });
+      expect(await stream.next()).toMatchObject({ type: 'thread.updated', payload: { id: rootId, thread: { replyCount: 1, status: 'open' } } });
+      const resolved = await app.inject({ method: 'PATCH', url: `/api/v1/threads/${rootId}`, headers: aliceHeaders, payload: { status: 'resolved' } });
+      expect(resolved.statusCode).toBe(200);
+      expect(await stream.next()).toMatchObject({ type: 'thread.updated', payload: { id: rootId, thread: { replyCount: 1, status: 'resolved' } } });
+      const timeline = await app.inject({ method: 'GET', url: `/api/v1/conversations/${conversationId}/messages`, headers: aliceHeaders });
+      expect(timeline.json()).toHaveLength(1);
+      expect(timeline.json()[0].thread).toMatchObject({ status: 'resolved', replyCount: 1 });
+    } finally { stream.socket.close(); }
+  });
+
 });

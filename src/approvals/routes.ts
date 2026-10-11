@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
 import type { ApprovalRequest } from '../protocol/index.js';
 import type { Role } from '../users/repository.js';
+import { hasPermission } from '../permissions/roles.js';
 import { executeApprovedToolCall, type ApprovedExecution, type ToolRuntimeOptions } from '../tools/runtime.js';
 import {
   ApprovalAlreadyResolvedError,
@@ -55,6 +56,10 @@ export function registerApprovalRoutes(app: FastifyInstance, options: ApprovalRo
       return;
     }
     const body = RespondBodySchema.parse(request.body);
+    if (body.remember && !hasPermission(app.db, request.user!.id, 'integrations.manage')) {
+      reply.code(403).send({ error: 'loosening_requires_admin' });
+      return;
+    }
     let resolved: ApprovalRequest;
     try {
       resolved = resolveApproval(app.db, id, body.decision, request.user!.id);

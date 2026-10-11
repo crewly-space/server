@@ -159,6 +159,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
     }
     setUserPassword(app.db, user.id, await hashPassword(body.newPassword));
     revokeOtherSessions(app.db, user.id, request.headers.authorization!.slice(7));
+    app.hub.revalidateSessions();
     reply.code(204).send();
   });
 
@@ -444,7 +445,9 @@ export function registerUserRoutes(app: FastifyInstance): void {
       reply.code(409).send({ error: 'last_owner' });
       return;
     }
-    reply.send(publicUser(setUserSuspended(app.db, id, body.suspended)!));
+    const updated = setUserSuspended(app.db, id, body.suspended)!;
+    app.hub.revalidateSessions();
+    reply.send(publicUser(updated));
   });
 
   app.delete('/api/v1/users/:id', { preHandler: requireAuth }, async (request, reply) => {
@@ -467,6 +470,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
       return;
     }
     deleteUser(app.db, id);
+    app.hub.revalidateSessions();
     reply.code(204).send();
   });
 }

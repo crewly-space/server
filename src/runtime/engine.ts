@@ -3,7 +3,7 @@ import type { Database } from '../db/driver.js';
 import { randomUUID } from 'node:crypto';
 import { enqueueJob } from '../jobs/repository.js';
 import { SUMMARIZE_CONVERSATION_JOB_TYPE } from '../memory/summary.js';
-import { createMessage, listRecentMessagesForConversation, listThreadMessages } from '../messages/repository.js';
+import { createMessage, getMessage, listRecentMessagesForConversation, listThreadMessages } from '../messages/repository.js';
 import type { ConnectionHub } from '../ws/hub.js';
 import type { GatewayEvent } from '../gateway/gateway.js';
 import { ProviderError } from '../providers/errors.js';
@@ -332,6 +332,7 @@ async function executeTurn(
   completeAgentRun(deps.db, runId, message.id);
   trace('run.completed', { resultMessageId: message.id });
   deps.hub.publish(topic, 'message.created', { ...message });
+  if (input.threadRootId) deps.hub.publish(topic, 'thread.updated', { ...getMessage(deps.db, input.threadRootId) });
   void deps.automationDispatch?.({
     type: 'message', eventId: message.id, dedupeKey: message.id,
     payload: { messageId: message.id, conversationId: input.conversationId, body: message.body, authorId: message.authorId, authorType: message.authorType },

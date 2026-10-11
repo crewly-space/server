@@ -12,6 +12,7 @@ function fakeSocket() {
     readyState: 1,
     OPEN: 1,
     send: vi.fn(),
+    close: vi.fn(),
   } as unknown as WebSocket;
 }
 
@@ -80,6 +81,31 @@ describe('ConnectionHub', () => {
     hub.removeUserTopic('a', 'conversation:c1');
     hub.publish('conversation:c1', 'message.created', { id: 'm2' });
     expect(mine.send).toHaveBeenCalledTimes(1);
+    db.close();
+  });
+
+  it('closes and unsubscribes revoked sessions before sending an event', () => {
+    const { db, hub } = freshHub();
+    const socket = fakeSocket();
+    const authorize = vi.fn().mockReturnValue(false);
+    hub.subscribe(socket, ['user:a'], 'a', authorize);
+    hub.publish('user:a', 'user.updated', {});
+    expect(socket.send).not.toHaveBeenCalled();
+    expect(socket.close).toHaveBeenCalledWith(4001, 'unauthorized');
+    hub.revalidateSessions();
+    expect(authorize).toHaveBeenCalledTimes(1);
+    db.close();
+  });
+
+  it('revalidates idle sessions without disconnecting valid ones', () => {
+    const { db, hub } = freshHub();
+    const valid = fakeSocket();
+    const expired = fakeSocket();
+    hub.subscribe(valid, ['user:a'], 'a', () => true);
+    hub.subscribe(expired, ['user:b'], 'b', () => false);
+    hub.revalidateSessions();
+    expect(valid.close).not.toHaveBeenCalled();
+    expect(expired.close).toHaveBeenCalledWith(4001, 'unauthorized');
     db.close();
   });
 });

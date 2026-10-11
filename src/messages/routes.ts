@@ -14,7 +14,7 @@ import type { ReplyRouter } from './reply-router.js';
 import { emitNotification } from '../notifications/service.js';
 import { getUserById, type Role } from '../users/repository.js';
 import { blockedAgentIds, canReadChannel, getChannel } from '../channels/repository.js';
-import { createMessage, getMessageThread, lastAgentInThread, messageContext, listMessagesForConversation, listRecentMessagesForConversation, listThreadMessages, markThreadRead, openMessageThread, ReplyNotInConversationError, searchMessages, setThreadStatus } from './repository.js';
+import { createMessage, getMessage, getMessageThread, lastAgentInThread, listMessageContext, messageContext, listMessagesForConversation, listRecentMessagesForConversation, listThreadMessages, markThreadRead, openMessageThread, ReplyNotInConversationError, searchMessages, setThreadStatus } from './repository.js';
 import { AttachmentNotOwnedError, AttachmentValidationError, ATTACHMENT_MAX_COUNT_PER_MESSAGE } from '../attachments/service.js';
 import { decideAgentRouting, messageNamesAgent, pickMessageOwner, type ConversationCues } from './routing.js';
 import { dispatchAutomationEvent } from '../automations/service.js';
@@ -30,6 +30,7 @@ const CreateMessageBodySchema = z.object({
 
 const ListMessagesQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).default(50),
+  before: z.string().min(1).max(200).optional(),
 });
 
 type MentionRef = { targetId: string; targetType: 'user' | 'agent' };
@@ -319,7 +320,17 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
       return;
     }
     const query = ListMessagesQuerySchema.parse(request.query);
-    reply.send(listMessagesForConversation(app.db, id, query.limit, request.user!.id));
+    reply.send(listMessagesForConversation(app.db, id, query.limit, request.user!.id, query.before));
+  });
+
+  app.get('/api/v1/messages/:id/context', { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const message = getMessage(app.db, id);
+    if (!message) { reply.code(404).send({ error: 'message_not_found' }); return; }
+    if (!isParticipant(app.db, message.conversationId, request.user!.id, 'user') && !canReadChannel(app.db, message.conversationId, request.user!.id)) {
+      reply.code(403).send({ error: 'not_a_participant' }); return;
+    }
+    reply.send({ messages: listMessageContext(app.db, id, request.user!.id) });
   });
 
   app.post('/api/v1/messages/:id/thread', { preHandler: requireAuth }, async (request, reply) => {
@@ -360,6 +371,7 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
       body: body.body, mentions: body.mentions, replyToMessageId: rootId, threadRootId: rootId, attachmentIds: body.attachmentIds });
     markThreadRead(app.db, rootId, request.user!.id);
     hub.publish(`conversation:${thread.conversationId}`, 'thread.message.created', { rootMessageId: rootId, message });
+    hub.publish(`conversation:${thread.conversationId}`, 'thread.updated', { ...getMessage(app.db, rootId) });
     // The same routing as the main timeline, plus the thread itself: the agent
     // working in it hears a follow-up without being @-mentioned again.
     const conversation = getConversation(app.db, thread.conversationId);
@@ -396,7 +408,9 @@ export function registerMessageRoutes(app: FastifyInstance, hub: ConnectionHub, 
     if (!thread) { reply.code(404).send({ error: 'thread_not_found' }); return; }
     if (!isParticipant(app.db, thread.conversationId, request.user!.id, 'user')) { reply.code(403).send({ error: 'not_a_participant' }); return; }
     const body = z.object({ status: z.enum(['open', 'resolved', 'archived']) }).parse(request.body);
-    reply.send(setThreadStatus(app.db, rootId, body.status));
+    const updated = setThreadStatus(app.db, rootId, body.status);
+    hub.publish(`conversation:${thread.conversationId}`, 'thread.updated', { ...getMessage(app.db, rootId) });
+    reply.send(updated);
   });
 
   app.get('/api/v1/messages/search', { preHandler: requireAuth }, async (request, reply) => {

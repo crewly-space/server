@@ -14,6 +14,7 @@ export class ConnectionHub {
   private sockets = new Map<WebSocket, Set<string>>();
   /** Whose each socket is, so a topic can follow a person onto their open sockets. */
   private owners = new Map<WebSocket, string>();
+  private authorizers = new Map<WebSocket, () => boolean>();
 
   constructor(private db: Database) {}
 
@@ -34,14 +35,28 @@ export class ConnectionHub {
     return event;
   }
 
-  subscribe(socket: WebSocket, topics: string[], userId?: string): void {
+  subscribe(socket: WebSocket, topics: string[], userId?: string, authorize?: () => boolean): void {
     this.sockets.set(socket, new Set(topics));
     if (userId) this.owners.set(socket, userId);
+    if (authorize) this.authorizers.set(socket, authorize);
   }
 
   unsubscribe(socket: WebSocket): void {
     this.sockets.delete(socket);
     this.owners.delete(socket);
+    this.authorizers.delete(socket);
+  }
+
+  revalidateSessions(): void {
+    for (const socket of this.authorizers.keys()) this.authorized(socket);
+  }
+
+  private authorized(socket: WebSocket): boolean {
+    const authorize = this.authorizers.get(socket);
+    if (!authorize || authorize()) return true;
+    this.unsubscribe(socket);
+    socket.close(4001, 'unauthorized');
+    return false;
   }
 
   /** Starts sending a topic to every socket someone already has open, e.g. on joining a channel. */
@@ -71,7 +86,7 @@ export class ConnectionHub {
 
   private broadcastToTopic(event: WsServerEvent): void {
     for (const [socket, topics] of this.sockets) {
-      if (topics.has(event.topic) && socket.readyState === socket.OPEN) {
+      if (topics.has(event.topic) && socket.readyState === socket.OPEN && this.authorized(socket)) {
         socket.send(JSON.stringify(event));
       }
     }

@@ -8,7 +8,8 @@ import { createSession } from '../auth/session.js';
 import { createAgent } from '../agents/repository.js';
 import { createConversation } from '../conversations/repository.js';
 import { createAgentRun } from '../runtime/runs.js';
-import { createApproval } from './repository.js';
+import { createApproval, getApproval } from './repository.js';
+import { executeApprovedToolCall } from '../tools/runtime.js';
 
 describe('approval routes', () => {
   let db: Database;
@@ -137,5 +138,24 @@ describe('approval routes', () => {
     });
     expect(own.statusCode).toBe(200);
     await app.close();
+  });
+
+  it('requires integration management to remember an approval without resolving it', async () => {
+    createUser(db, { email: 'owner@example.com', displayName: 'Owner', passwordHash: 'x', role: 'owner' });
+    const member = createUser(db, { email: 'member@example.com', displayName: 'Member', passwordHash: 'x', role: 'member' });
+    const approval = createPendingApprovalFor(member.id);
+    const app = await buildApp({ db });
+    const headers = { authorization: `Bearer ${createSession(db, member.id)}` };
+    try {
+      const denied = await app.inject({ method: 'POST', url: `/api/v1/approvals/${approval.id}/respond`, headers,
+        payload: { decision: 'approve', remember: true } });
+      expect(denied.statusCode).toBe(403);
+      expect(getApproval(db, approval.id)?.status).toBe('pending');
+      await expect(executeApprovedToolCall(db, approval.id, { userId: member.id, remember: true }, { mcp: {}, fetchImpl: fetch }))
+        .rejects.toThrow('loosening_requires_admin');
+      const allowed = await app.inject({ method: 'POST', url: `/api/v1/approvals/${approval.id}/respond`, headers,
+        payload: { decision: 'approve' } });
+      expect(allowed.statusCode).toBe(200);
+    } finally { await app.close(); }
   });
 });

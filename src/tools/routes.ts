@@ -8,7 +8,8 @@ import { listMcpServers } from '../mcp/repository.js';
 import { hasPermission } from '../permissions/roles.js';
 import { lastSuccessByConnection, listToolExecutions } from './audit.js';
 import { buildToolCatalog, publicTool, toolsForAgent } from './catalog.js';
-import { evaluateToolPolicy, forgetApprovals, listToolPolicies, replaceToolPolicies, SELECTOR_TYPES, type SelectorType } from './policy.js';
+import { evaluateToolPolicy, forgetApprovals, listToolPolicies, replaceToolPolicies, SELECTOR_TYPES, ToolPolicyLooseningError, type SelectorType } from './policy.js';
+import { callRisk } from './classify.js';
 import { PROVIDER_PROFILES } from './providers.js';
 import { searchTools } from './search.js';
 import { TOOL_POLICY_MODES } from './types.js';
@@ -113,13 +114,16 @@ export function registerToolRoutes(app: FastifyInstance): void {
       if (!admin) { forbid(reply); return; }
     } else {
       if (!ownedAgent(app, request, reply, body.agentId)) return;
-      const loosening = body.policies.find((policy) => policy.mode === 'always' || policy.mode === 'ask_once');
-      if (loosening && !admin) {
-        reply.code(403).send({ error: 'loosening_requires_admin', message: 'Only an admin can let an agent use a tool without asking every time.' });
-        return;
-      }
     }
-    reply.send({ policies: replaceToolPolicies(app.db, body.agentId, body.policies, request.user!.id) });
+    const tools = admin ? [] : buildToolCatalog(app.db).flatMap((tool) => [tool, ...[
+      'SELECT 1', 'INSERT INTO audit VALUES (1)', 'DROP TABLE audit',
+    ].map((sql) => ({ ...tool, ...callRisk(tool, { sql }) }))]);
+    try {
+      reply.send({ policies: replaceToolPolicies(app.db, body.agentId, body.policies, request.user!.id, { onlyTighten: !admin, tools }) });
+    } catch (error) {
+      if (!(error instanceof ToolPolicyLooseningError)) throw error;
+      reply.code(403).send({ error: 'loosening_requires_admin', message: 'Only an admin can relax tool policies.' });
+    }
   });
 
   /** The audit log of tool executions. People who do not manage integrations see their own agents'. */

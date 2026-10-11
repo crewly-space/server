@@ -13,6 +13,7 @@ import { evaluateToolPolicy, hasStandingApproval, rememberApproval, setToolPolic
 import { checkArguments, redactArguments } from './schema.js';
 import { searchTools } from './search.js';
 import type { ToolPolicyMode } from './types.js';
+import { hasPermission } from '../permissions/roles.js';
 
 /**
  * The tool runtime. Every call an agent makes to an external tool comes
@@ -234,6 +235,9 @@ export async function executeApprovedToolCall(
   input: { userId: string; remember?: boolean },
   options: ToolRuntimeOptions,
 ): Promise<ApprovedExecution> {
+  if (input.remember && !hasPermission(db, input.userId, 'integrations.manage')) {
+    throw new Error('loosening_requires_admin');
+  }
   const row = db.prepare('SELECT agent_id, run_id, tool_call, execution FROM approvals WHERE id = ?').get(approvalId) as
     { agent_id: string; run_id: string; tool_call: string | null; execution: string | null } | undefined;
   if (!row?.tool_call) return { status: 'skipped', toolRef: null, content: '', conversationId: null };

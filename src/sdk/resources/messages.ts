@@ -30,13 +30,19 @@ export class MessagesResource {
     return this.http.request('POST', `/api/v1/conversations/${encodePathSegment(conversationId)}/messages`, input);
   }
 
-  list(conversationId: string, limit?: number): Promise<Message[]> {
-    const query = limit !== undefined ? `?limit=${limit}` : '';
+  list(conversationId: string, limit?: number, before?: string): Promise<Message[]> {
+    const params = new URLSearchParams();
+    if (limit !== undefined) params.set('limit', String(limit));
+    if (before !== undefined) params.set('before', before);
+    const query = params.size ? `?${params}` : '';
     return this.http.request('GET', `/api/v1/conversations/${encodePathSegment(conversationId)}/messages${query}`);
   }
 
   openThread(messageId: string): Promise<MessageThread> {
     return this.http.request('POST', `/api/v1/messages/${encodePathSegment(messageId)}/thread`);
+  }
+  context(messageId: string): Promise<{ messages: Message[] }> {
+    return this.http.request('GET', `/api/v1/messages/${encodePathSegment(messageId)}/context`);
   }
   thread(rootMessageId: string): Promise<{ thread: MessageThread; messages: Message[] }> {
     return this.http.request('GET', `/api/v1/threads/${encodePathSegment(rootMessageId)}/messages`);

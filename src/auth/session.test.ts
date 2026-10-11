@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDatabase } from '../db/connection.js';
 import { runMigrations } from '../db/migrate.js';
 import { createUser } from '../users/repository.js';
@@ -11,6 +11,7 @@ describe('sessions', () => {
   let dataDir: string;
 
   afterEach(() => {
+    vi.restoreAllMocks();
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
@@ -40,6 +41,16 @@ describe('sessions', () => {
   it('returns undefined for an unknown token', () => {
     const { db } = freshDbWithUser();
     expect(verifySessionToken(db, 'nonexistent')).toBeUndefined();
+    db.close();
+  });
+
+  it.each(['invalid-date', '2026-10-09T12:00:00.000Z'])('rejects invalid or exactly expired session %s', (expiresAt) => {
+    const { db, user } = freshDbWithUser();
+    const token = createSession(db, user.id);
+    db.prepare('UPDATE sessions SET expires_at = ?').run(expiresAt);
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-09T12:00:00.000Z'));
+    expect(verifySessionToken(db, token)).toBeUndefined();
+    expect(db.prepare('SELECT COUNT(*) FROM sessions').pluck().get()).toBe(0);
     db.close();
   });
 

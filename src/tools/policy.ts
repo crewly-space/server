@@ -70,12 +70,42 @@ export function deleteToolPolicy(db: Database, id: string): boolean {
   return db.prepare('DELETE FROM tool_policies WHERE id = ?').run(id).changes > 0;
 }
 
+export class ToolPolicyLooseningError extends Error {}
+
+type PolicyInput = { selectorType: SelectorType; selector: string; mode: ToolPolicyMode };
+
+function onlyTightensPolicies(current: ToolPolicy[], proposed: PolicyInput[]): boolean {
+  const selectors = new Set(proposed.map((rule) => `${rule.selectorType}:${rule.selector}`));
+  if (selectors.size !== proposed.length) return false;
+  if (current.some((rule) => {
+    const replacement = proposed.find((candidate) => candidate.selectorType === rule.selectorType && candidate.selector === rule.selector);
+    return !replacement || stricterMode(replacement.mode, rule.mode) !== replacement.mode;
+  })) return false;
+  return proposed.every((rule) => {
+    const previous = current.find((candidate) => candidate.selectorType === rule.selectorType && candidate.selector === rule.selector);
+    if (previous) return true;
+    if (rule.mode === 'always' || rule.mode === 'ask_once') return false;
+    return current.every((candidate) => SELECTOR_TYPES.indexOf(rule.selectorType) >= SELECTOR_TYPES.indexOf(candidate.selectorType)
+      || stricterMode(rule.mode, candidate.mode) === rule.mode);
+  });
+}
+
 /** Replaces one agent's (or the workspace's) rules in one go. */
-export function replaceToolPolicies(db: Database, agentId: string | null, policies: Array<{ selectorType: SelectorType; selector: string; mode: ToolPolicyMode }>, userId: string): ToolPolicy[] {
+export function replaceToolPolicies(db: Database, agentId: string | null, policies: PolicyInput[], userId: string,
+  options: { onlyTighten?: boolean; tools?: PolicyTarget[] } = {}): ToolPolicy[] {
   db.transaction(() => {
+    const tools = options.tools ?? [];
+    const before = options.onlyTighten && agentId ? tools.map((tool) => evaluateToolPolicy(db, agentId, tool).mode) : [];
+    if (options.onlyTighten && (!agentId || !onlyTightensPolicies(listToolPolicies(db, agentId), policies))) {
+      throw new ToolPolicyLooseningError('loosening_requires_admin');
+    }
     if (agentId) db.prepare('DELETE FROM tool_policies WHERE agent_id = ?').run(agentId);
     else db.prepare('DELETE FROM tool_policies WHERE agent_id IS NULL').run();
     for (const policy of policies) setToolPolicy(db, { agentId, ...policy, userId });
+    if (options.onlyTighten && agentId && tools.some((tool, index) => {
+      const after = evaluateToolPolicy(db, agentId, tool).mode;
+      return stricterMode(before[index]!, after) !== after;
+    })) throw new ToolPolicyLooseningError('loosening_requires_admin');
   })();
   return listToolPolicies(db, agentId);
 }

@@ -5,6 +5,7 @@ import { buildApp } from '../app.js';
 import { runMigrations } from '../db/migrate.js';
 import { createUser } from '../users/repository.js';
 import { createConversation } from '../conversations/repository.js';
+import { createSession } from '../auth/session.js';
 
 describe('WebSocket delivery and reconnect/replay', () => {
   let db: Database;
@@ -66,6 +67,21 @@ describe('WebSocket delivery and reconnect/replay', () => {
     return { socket, next, ready };
   }
 
+  it('captures a member-readable bootstrap cursor and replays only subsequent events', async () => {
+    const unauthorized = await app.inject({ method: 'GET', url: '/api/v1/ws/cursor' });
+    expect(unauthorized.statusCode).toBe(401);
+    const member = createUser(db, { email: 'cursor@example.com', displayName: 'Cursor member', passwordHash: 'x', role: 'member' });
+    const memberToken = createSession(db, member.id);
+    app.hub.publish(`user:${member.id}`, 'user.updated', { old: true });
+    const watermark = await app.inject({ method: 'GET', url: '/api/v1/ws/cursor', headers: { authorization: `Bearer ${memberToken}` } });
+    expect(watermark.statusCode).toBe(200);
+    const duringBootstrap = app.hub.publish(`user:${member.id}`, 'user.updated', { new: true });
+    const { socket, next, ready } = connectWs(memberToken, watermark.json().seq);
+    await ready;
+    expect((await next()).seq).toBe(duringBootstrap.seq);
+    socket.close();
+  });
+
   it('delivers a live event published after the socket connects', async () => {
     const { socket, next, ready } = connectWs(token);
     await ready;
@@ -108,6 +124,80 @@ describe('WebSocket delivery and reconnect/replay', () => {
     const { socket } = connectWs('not-a-real-token');
     const closeCode = await new Promise<number>((resolve) => socket.once('close', resolve));
     expect(closeCode).toBe(4001);
+  });
+
+  it('closes only the session being logged out', async () => {
+    const retainedToken = createSession(db, userId);
+    const first = connectWs(token);
+    const retained = connectWs(retainedToken);
+    await Promise.all([first.ready, retained.ready]);
+    const closed = new Promise<number>((resolve) => first.socket.once('close', resolve));
+    const response = await app.inject({ method: 'POST', url: '/api/v1/auth/logout', headers: { authorization: `Bearer ${token}` } });
+    expect(response.statusCode).toBe(204);
+    expect(await closed).toBe(4001);
+    app.hub.publish(`user:${userId}`, 'user.updated', { retained: true });
+    expect((await retained.next()).payload).toEqual({ retained: true });
+    retained.socket.close();
+  });
+
+  it.each(['suspend', 'delete'])('closes existing sockets when an account is %s', async (action) => {
+    const member = createUser(db, { email: 'member@example.com', displayName: 'Member', passwordHash: 'x', role: 'member' });
+    const memberToken = createSession(db, member.id);
+    const { socket, ready } = connectWs(memberToken);
+    await ready;
+    const closed = new Promise<number>((resolve) => socket.once('close', resolve));
+    const response = await app.inject(action === 'suspend'
+      ? { method: 'PUT', url: `/api/v1/users/${member.id}/suspension`, headers: { authorization: `Bearer ${token}` }, payload: { suspended: true } }
+      : { method: 'DELETE', url: `/api/v1/users/${member.id}`, headers: { authorization: `Bearer ${token}` } });
+    expect(response.statusCode).toBe(action === 'suspend' ? 200 : 204);
+    expect(await closed).toBe(4001);
+  });
+
+  it('does not send events after the session expires', async () => {
+    const { socket, ready } = connectWs(token);
+    await ready;
+    const received: unknown[] = [];
+    socket.on('message', (raw) => received.push(JSON.parse(raw.toString())));
+    const closed = new Promise<number>((resolve) => socket.once('close', resolve));
+    db.prepare('UPDATE sessions SET expires_at = ?').run('2000-01-01T00:00:00.000Z');
+    app.hub.publish(`user:${userId}`, 'private.after-expiry', {});
+    expect(await closed).toBe(4001);
+    expect(received).toEqual([]);
+  });
+
+  it('stops group events immediately after a participant is removed', async () => {
+    const member = createUser(db, { email: 'member@example.com', displayName: 'Member', passwordHash: 'x', role: 'member' });
+    const group = createConversation(db, { kind: 'group', name: 'Private', participants: [
+      { participantId: userId, participantType: 'user' }, { participantId: member.id, participantType: 'user' },
+    ] });
+    const { socket, ready, next } = connectWs(createSession(db, member.id));
+    await ready;
+    const response = await app.inject({ method: 'DELETE', url: `/api/v1/conversations/${group.id}/members/${member.id}`, headers: { authorization: `Bearer ${token}` } });
+    expect(response.statusCode).toBe(204);
+    app.hub.publish(`conversation:${group.id}`, 'private.after-removal', {});
+    app.hub.publish(`user:${member.id}`, 'user.updated', {});
+    expect(await next()).toMatchObject({ type: 'conversations.changed', payload: { conversationId: group.id } });
+    expect((await next()).type).toBe('user.updated');
+    const remaining = await app.inject({ method: 'GET', url: '/api/v1/conversations', headers: { authorization: `Bearer ${token}` } });
+    expect(remaining.statusCode).toBe(200);
+    expect(remaining.json()).toEqual(expect.arrayContaining([expect.objectContaining({ id: group.id, participants: [{ participantId: userId, participantType: 'user' }] })]));
+    socket.close();
+  });
+
+  it('subscribes an existing socket when its user is added to a group', async () => {
+    const member = createUser(db, { email: 'member@example.com', displayName: 'Member', passwordHash: 'x', role: 'member' });
+    const other = createUser(db, { email: 'other@example.com', displayName: 'Other', passwordHash: 'x', role: 'member' });
+    const group = createConversation(db, { kind: 'group', name: 'Private', participants: [
+      { participantId: userId, participantType: 'user' }, { participantId: other.id, participantType: 'user' },
+    ] });
+    const { socket, ready, next } = connectWs(createSession(db, member.id));
+    await ready;
+    const response = await app.inject({ method: 'POST', url: `/api/v1/conversations/${group.id}/members`, headers: { authorization: `Bearer ${token}` }, payload: { participantId: member.id, participantType: 'user' } });
+    expect(response.statusCode).toBe(204);
+    app.hub.publish(`conversation:${group.id}`, 'message.created', { body: 'new participant' });
+    expect(await next()).toMatchObject({ type: 'conversations.changed', payload: { conversationId: group.id } });
+    expect((await next()).topic).toBe(`conversation:${group.id}`);
+    socket.close();
   });
 
   it('subscribes a connecting client to its conversation topics, not just its user topic', async () => {

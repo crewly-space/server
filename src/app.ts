@@ -283,7 +283,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerSecretRoutes(app);
   registerMcpSecretHooks();
   const mcpOptions = {
-    fetchImpl: opts.fetchImpl ?? globalThis.fetch.bind(globalThis),
+    fetchImpl: opts.fetchImpl,
     allowStdio: opts.allowMcpStdio ?? false,
     clientVersion: opts.version,
   };

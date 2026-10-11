@@ -32,6 +32,11 @@ export class CrewlyClient {
   private readonly http: HttpClient;
   private readonly baseUrl: string;
 
+  /** Read before loading history, then resume here to retain changes during bootstrap. */
+  realtimeCursor(): Promise<{ seq: number }> {
+    return this.http.request('GET', '/api/v1/ws/cursor');
+  }
+
   readonly auth: AuthResource;
   readonly agents: AgentsResource;
   readonly conversations: ConversationsResource;

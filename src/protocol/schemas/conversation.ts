@@ -15,7 +15,7 @@ export const ConversationSchema = z
     id: z.string().min(1),
     kind: ConversationKindSchema,
     name: z.string().min(1).nullable(),
-    // A channel can be empty or have one member; a DM or group cannot.
+    // Channels and retained groups can outlive their members. DMs keep two.
     participants: z.array(ParticipantRefSchema),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
@@ -24,8 +24,8 @@ export const ConversationSchema = z
     message: 'group conversations and channels require a name',
     path: ['name'],
   })
-  .refine((c) => c.kind === 'channel' || c.participants.length >= 2, {
-    message: 'dm and group conversations require at least two participants',
+  .refine((c) => c.kind !== 'dm' || c.participants.length >= 2, {
+    message: 'dm conversations require at least two participants',
     path: ['participants'],
   })
   .refine((c) => c.kind !== 'dm' || c.participants.length === 2, {

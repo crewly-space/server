@@ -218,6 +218,7 @@ export function registerAuthRoutes(
   });
   app.post('/api/v1/auth/logout', { preHandler: requireAuth }, async (request, reply) => {
     revokeSession(app.db, request.headers.authorization!.slice(7));
+    app.hub.revalidateSessions();
     reply.code(204).send();
   });
 }
