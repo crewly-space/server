@@ -119,10 +119,17 @@ try {
         }
     }
 
-    Copy-Item `
-        (Join-Path $TempDir 'crewly.exe') `
-        $CliPath `
-        -Force
+    # With the old binary gone, a refusal here is not Windows protecting a
+    # running file: it is antivirus that quarantined crewly.exe once and now
+    # blocks the name. Say so, rather than showing a bare access error.
+    try {
+        Copy-Item `
+            (Join-Path $TempDir 'crewly.exe') `
+            $CliPath `
+            -Force
+    } catch [System.UnauthorizedAccessException] {
+        throw "Windows refused to write $CliPath. This is almost always antivirus (Avast, AVG, Windows Defender...) that quarantined crewly.exe and now blocks it. Restore crewly.exe from its quarantine, or add an exception for $InstallDir, then run the installer again."
+    }
 
     # Older installers put the server and app next to the CLI, where the CLI
     # still looks first. Left behind, that copy would never be updated again,
