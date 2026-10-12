@@ -81,7 +81,7 @@ export class AgentsResource {
     return this.http.request('GET', `/api/v1/agents/${encodePathSegment(id)}/runtime`);
   }
 
-  /** A coding runtime needs a paired device that has it, and one of that device's workspaces. */
+  /** A coding runtime needs a paired device that has it. Without a `workspaceId` it works in a scratch folder of its own. */
   setRuntime(id: string, input: SetAgentRuntimeInput): Promise<AgentRuntime> {
     return this.http.request('PUT', `/api/v1/agents/${encodePathSegment(id)}/runtime`, input);
   }

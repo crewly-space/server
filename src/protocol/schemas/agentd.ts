@@ -8,6 +8,10 @@ export const AgentdOperationNameSchema = z.enum([
   /** Turn a device-backed provider on in the device's own configuration. */
   'provider.enable',
   'workspace.list',
+  /** Add, rename or remove one of the device's workspaces, on its owner's behalf. */
+  'workspace.add',
+  'workspace.update',
+  'workspace.remove',
   'approval.respond',
 ]);
 export type AgentdOperationName = z.infer<typeof AgentdOperationNameSchema>;

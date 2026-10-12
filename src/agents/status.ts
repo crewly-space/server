@@ -56,8 +56,8 @@ export function computeAgentStatus(db: Database, agent: Agent, sources: StatusSo
     )
     .get(agent.id) as { status: 'completed' | 'failed'; error_code: string | null; at: string } | undefined;
   const binding = db
-    .prepare('SELECT runtime_kind, device_id FROM runtime_bindings WHERE agent_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1')
-    .get(agent.id) as { runtime_kind: string; device_id: string | null } | undefined;
+    .prepare('SELECT runtime_kind, device_id, workspace_id FROM runtime_bindings WHERE agent_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1')
+    .get(agent.id) as { runtime_kind: string; device_id: string | null; workspace_id: string | null } | undefined;
 
   let execution: AgentExecutionState = 'ready';
   let reason: string | null = null;
@@ -79,9 +79,9 @@ export function computeAgentStatus(db: Database, agent: Agent, sources: StatusSo
   } else if (problem) {
     execution = 'provider_unavailable';
     reason = problem;
-  } else if (runtime && !runtimeHealth(db, sources.deviceHub, agent.ownerUserId, runtime, binding?.device_id ?? null).available) {
+  } else if (runtime && !runtimeHealth(db, sources.deviceHub, agent.ownerUserId, runtime, binding?.device_id ?? null, binding?.workspace_id ?? null).available) {
     execution = 'runtime_unavailable';
-    reason = runtimeHealth(db, sources.deviceHub, agent.ownerUserId, runtime, binding?.device_id ?? null).reason;
+    reason = runtimeHealth(db, sources.deviceHub, agent.ownerUserId, runtime, binding?.device_id ?? null, binding?.workspace_id ?? null).reason;
   } else if (last?.status === 'failed') {
     execution = 'error';
     reason = last.error_code ? `Last run failed: ${last.error_code}` : 'Last run failed';

@@ -1,10 +1,11 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { requireAuth } from '../auth/middleware.js';
 import type { DeviceConnectionHub } from './hub.js';
 import type { AgentdServerIdentity } from './server-identity.js';
 import { getDevice, getPairing, getPairingByCode, listDevicesForUser, type DeviceRecord } from './repository.js';
+import { changeDeviceWorkspace, DeviceWorkspaceError, type WorkspaceChange } from './workspaces.js';
 
 const PAIRING_TTL_MS = 10 * 60_000;
 const CreatePairingSchema = z.object({
@@ -14,6 +15,8 @@ const CreatePairingSchema = z.object({
   platform: z.string().min(1).max(100).optional(),
 });
 const ClaimPairingSchema = z.object({ pollToken: z.string().min(32).max(256) });
+const AddWorkspaceSchema = z.object({ path: z.string().trim().min(1).max(4096), name: z.string().trim().max(100).optional() });
+const RenameWorkspaceSchema = z.object({ name: z.string().trim().min(1).max(100) });
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const rawBase64 = (bytes: Buffer) => bytes.toString('base64').replace(/=+$/, '');
@@ -136,5 +139,34 @@ export function registerDeviceRoutes(app: FastifyInstance, hub: DeviceConnection
 
   app.get('/api/v1/devices', { preHandler: requireAuth }, async (request, reply) => {
     reply.send(listDevicesForUser(app.db, request.user!.id).map((device) => publicDevice(device, hub)));
+  });
+
+  /*
+   * A person manages the workspaces of their own devices only: the device
+   * does the work and has the last word, the server only relays.
+   */
+  const changeWorkspace = async (request: FastifyRequest, reply: FastifyReply, change: WorkspaceChange) => {
+    const { id } = request.params as { id: string };
+    try {
+      reply.send(await changeDeviceWorkspace(app.db, hub, request.user!.id, id, change));
+    } catch (error) {
+      if (!(error instanceof DeviceWorkspaceError)) throw error;
+      reply.code(error.status).send({ error: error.code, message: error.message });
+    }
+  };
+
+  app.post('/api/v1/devices/:id/workspaces', { preHandler: requireAuth }, async (request, reply) => {
+    const body = AddWorkspaceSchema.parse(request.body);
+    await changeWorkspace(request, reply, { action: 'add', path: body.path, ...(body.name ? { name: body.name } : {}) });
+  });
+
+  app.patch('/api/v1/devices/:id/workspaces/:workspaceId', { preHandler: requireAuth }, async (request, reply) => {
+    const { workspaceId } = request.params as { workspaceId: string };
+    await changeWorkspace(request, reply, { action: 'update', workspaceId, name: RenameWorkspaceSchema.parse(request.body).name });
+  });
+
+  app.delete('/api/v1/devices/:id/workspaces/:workspaceId', { preHandler: requireAuth }, async (request, reply) => {
+    const { workspaceId } = request.params as { workspaceId: string };
+    await changeWorkspace(request, reply, { action: 'remove', workspaceId });
   });
 }

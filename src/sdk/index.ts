@@ -88,6 +88,8 @@ export {
   DevicesResource,
   type DeviceInfo,
   type DevicePairingInfo,
+  type DeviceWorkspace,
+  type DeviceWorkspaceChange,
 } from './resources/devices.js';
 export {
   ServerResource,

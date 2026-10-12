@@ -76,8 +76,24 @@ describe('agent runtime', () => {
     expect((await put({ runtimeKind: 'claude-code', deviceId: 'dev_1', workspaceId: 'x' })).json().message)
       .toBe('Claude Code is not installed on Laptop. Run `crewly runtime install` there.');
     expect((await put({ runtimeKind: 'codex', deviceId: 'dev_1', workspaceId: 'x' })).json().message)
-      .toBe("Choose one of Laptop's workspaces. Add one there with `crewly workspace add <path>`.");
+      .toBe('That workspace is no longer on Laptop. Choose another one, or none.');
     expect((await put({ runtimeKind: 'codex' })).json().message).toBe('Codex runs on a paired device: choose one');
+  });
+
+  it('runs a coding runtime without a workspace, in a scratch folder', async () => {
+    pairDevice({ runtimes: [{ id: 'claude-code', authenticated: true }], workspaces: [] });
+    const bound = await put({ runtimeKind: 'claude-code', deviceId: 'dev_1' });
+    expect(bound.statusCode).toBe(200);
+    expect(bound.json()).toMatchObject({ binding: { deviceId: 'dev_1', workspaceId: null, workspaceName: 'Scratch folder' } });
+  });
+
+  it('says so when the bound workspace was removed from the device', async () => {
+    pairDevice({ runtimes: [{ id: 'claude-code', authenticated: true }], workspaces: [{ id: 'ws_app', name: 'app' }] });
+    await put({ runtimeKind: 'claude-code', deviceId: 'dev_1', workspaceId: 'ws_app' });
+    db.prepare('UPDATE devices SET capabilities = ? WHERE id = ?')
+      .run(JSON.stringify({ runtimes: [{ id: 'claude-code', authenticated: true }], workspaces: [] }), 'dev_1');
+    const view = await app.inject({ method: 'GET', url: `/api/v1/agents/${agentId}/runtime`, headers: as(ownerToken) });
+    expect(view.json().health).toEqual({ available: false, reason: 'Its workspace was removed from Laptop. Choose another one.' });
   });
 
   it('accepts only the runtime options it knows', async () => {

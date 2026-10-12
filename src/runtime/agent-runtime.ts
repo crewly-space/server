@@ -48,6 +48,7 @@ export interface AgentRuntimeView {
     id: string;
     deviceId: string | null;
     deviceName: string | null;
+    /** Null when the agent has no workspace and works in a scratch folder of its own. */
     workspaceId: string | null;
     workspaceName: string;
     options: RuntimeOptions;
@@ -99,6 +100,7 @@ function devicesFor(db: Database, hub: DeviceConnectionHub | undefined, ownerUse
 /**
  * Whether a coding runtime can run for this agent now, and why not: judged on
  * the bound device when there is one, else on any of the owner's devices.
+ * A bound workspace must still be on the device.
  */
 export function runtimeHealth(
   db: Database,
@@ -106,6 +108,7 @@ export function runtimeHealth(
   ownerUserId: string,
   runtime: string,
   deviceId: string | null,
+  workspaceId: string | null = null,
 ): { available: boolean; reason: string | null } {
   if (runtime === 'native') return { available: true, reason: null };
   const label = LABELS[runtime] ?? runtime;
@@ -115,6 +118,9 @@ export function runtimeHealth(
   if (offering.length === 0) return { available: false, reason: `${label} is not installed on ${deviceId ? candidates[0]!.name : 'any paired device'}` };
   const signedIn = offering.filter((device) => device.runtimes.some((entry) => entry.id === runtime && entry.authenticated));
   if (signedIn.length === 0) return { available: false, reason: `${label} is installed but not signed in` };
+  if (deviceId && workspaceId && !candidates[0]!.workspaces.some((workspace) => workspace.id === workspaceId)) {
+    return { available: false, reason: `Its workspace was removed from ${candidates[0]!.name}. Choose another one.` };
+  }
   if (!signedIn.some((device) => device.connected)) return { available: false, reason: `${signedIn[0]!.name} is offline` };
   return { available: true, reason: null };
 }
@@ -132,12 +138,15 @@ export function agentRuntime(db: Database, hub: DeviceConnectionHub | undefined,
           deviceId: binding.device_id,
           deviceName: device?.name ?? null,
           workspaceId: binding.workspace_id,
-          workspaceName: binding.workspace_path,
+          workspaceName: kind === 'native' ? ''
+            : binding.workspace_id
+              ? device?.workspaces.find((workspace) => workspace.id === binding.workspace_id)?.name ?? binding.workspace_path
+              : 'Scratch folder',
           options: { ...DEFAULT_OPTIONS, ...(JSON.parse(binding.options) as Partial<RuntimeOptions>) },
           updatedAt: binding.updated_at,
         }
       : null,
-    health: runtimeHealth(db, hub, agent.ownerUserId, kind, binding?.device_id ?? null),
+    health: runtimeHealth(db, hub, agent.ownerUserId, kind, binding?.device_id ?? null, binding?.workspace_id ?? null),
     sessions: (db
       .prepare('SELECT id, conversation_id, status, updated_at FROM runtime_sessions WHERE agent_id = ? ORDER BY updated_at DESC LIMIT 20')
       .all(agent.id) as Array<{ id: string; conversation_id: string; status: string; updated_at: string }>)
@@ -148,8 +157,9 @@ export function agentRuntime(db: Database, hub: DeviceConnectionHub | undefined,
 
 /**
  * Points an agent at a runtime. A coding runtime needs one of the owner's
- * devices that has it installed, and one of that device's workspaces; the
- * native runtime needs neither. Earlier bindings are kept, since runtime
+ * devices that has it installed, and may name one of that device's
+ * workspaces; without one it works in a scratch folder of its own and sees
+ * none of the device's files. The native runtime needs neither. Earlier bindings are kept, since runtime
  * sessions refer to them -- the newest one is the agent's runtime.
  */
 export function setAgentRuntime(
@@ -175,12 +185,12 @@ export function setAgentRuntime(
   if (!capabilities.runtimes.some((runtime) => runtime.id === input.runtimeKind)) {
     throw new RuntimeConfigError(`${label} is not installed on ${device.name}. Run \`crewly runtime install\` there.`);
   }
-  const workspace = capabilities.workspaces.find((candidate) => candidate.id === input.workspaceId);
-  if (!workspace) {
-    throw new RuntimeConfigError(`Choose one of ${device.name}'s workspaces. Add one there with \`crewly workspace add <path>\`.`);
+  const workspace = input.workspaceId ? capabilities.workspaces.find((candidate) => candidate.id === input.workspaceId) : undefined;
+  if (input.workspaceId && !workspace) {
+    throw new RuntimeConfigError(`That workspace is no longer on ${device.name}. Choose another one, or none.`);
   }
   db.prepare(
     `INSERT INTO runtime_bindings (id, agent_id, runtime_kind, workspace_path, vendor_state, device_id, workspace_id, options, created_at, updated_at)
      VALUES (?, ?, ?, ?, '{}', ?, ?, ?, ?, ?)`,
-  ).run(randomUUID(), agent.id, input.runtimeKind, workspace.name ?? workspace.id, device.id, workspace.id, JSON.stringify(options), now, now);
+  ).run(randomUUID(), agent.id, input.runtimeKind, workspace ? workspace.name ?? workspace.id! : '-', device.id, workspace?.id ?? null, JSON.stringify(options), now, now);
 }
