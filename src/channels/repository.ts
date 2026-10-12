@@ -274,6 +274,18 @@ export function orderCategories(db: Database, ids: string[]): void {
  * sidebar had no channel at all and the feature looked absent. Only ever the
  * first channel: a server whose owner deleted #general does not get it back.
  */
+/**
+ * Puts a newcomer in the server's first public channel, the one every server
+ * starts with and whose topic promises that everyone can post. Without this a
+ * teammate's first screen is a channel asking them to join it.
+ */
+export function joinDefaultChannel(db: Database, userId: string): void {
+  const row = db.prepare(
+    "SELECT id FROM conversations WHERE kind = 'channel' AND visibility = 'public' AND archived_at IS NULL ORDER BY created_at ASC LIMIT 1",
+  ).get() as { id: string } | undefined;
+  if (row) addMember(db, row.id, { participantId: userId, participantType: 'user' });
+}
+
 export function ensureDefaultChannel(db: Database, owner: Reader): Channel | undefined {
   const any = db.prepare("SELECT 1 FROM conversations WHERE kind = 'channel' LIMIT 1").get();
   if (any) return undefined;

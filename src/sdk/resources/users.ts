@@ -11,6 +11,13 @@ export interface DirectoryUser {
   avatarMode: AvatarMode;
 }
 
+/** Any agent on the server, as a conversation draws it: whoever owns it. */
+export interface DirectoryAgent {
+  id: string;
+  name: string;
+  avatarMode: AvatarMode;
+}
+
 export interface UserAccount {
   id: string;
   email: string;
@@ -64,8 +71,8 @@ export class UsersResource {
     return this.http.request('GET', '/api/v1/users');
   }
 
-  /** Names and avatars of everyone on the server. Open to members, unlike `list`. */
-  directory(): Promise<{ users: DirectoryUser[] }> {
+  /** Names and avatars of everyone on the server, people and agents. Open to members, unlike `list`. */
+  directory(): Promise<{ users: DirectoryUser[]; agents?: DirectoryAgent[] }> {
     return this.http.request('GET', '/api/v1/users/directory');
   }
 

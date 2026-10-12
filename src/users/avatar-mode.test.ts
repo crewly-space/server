@@ -68,6 +68,19 @@ describe('avatar modes', () => {
     await app.close();
   });
 
+  it('names a teammate’s agent to members, without its instructions or model', async () => {
+    const { app, ownerToken, memberToken } = await setup();
+    createProviderConfig(db, { id: 'openai', kind: 'openai', apiKey: 'sk-test' });
+    const created = await app.inject({
+      method: 'POST', url: '/api/v1/agents', headers: { authorization: `Bearer ${ownerToken}` },
+      payload: { name: 'Echo', personality: 'Secret instructions', modelPolicy: { defaultProviderId: 'openai', defaultModel: 'gpt-4o-mini' }, avatarMode: 'name' },
+    });
+    expect(created.statusCode).toBe(201);
+    const directory = await app.inject({ method: 'GET', url: '/api/v1/users/directory', headers: { authorization: `Bearer ${memberToken}` } });
+    expect(directory.json().agents).toEqual([{ id: created.json().id, name: 'Echo', avatarMode: 'name' }]);
+    await app.close();
+  });
+
   it('stores an agent’s avatar and keeps it when an edit leaves it out', async () => {
     const { app, ownerToken } = await setup();
     createProviderConfig(db, { id: 'openai', kind: 'openai', apiKey: 'sk-test' });

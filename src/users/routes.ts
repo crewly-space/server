@@ -34,6 +34,8 @@ import {
   type UserRow,
 } from './repository.js';
 import { hasPermission } from '../permissions/roles.js';
+import { listAllAgents } from '../agents/repository.js';
+import { joinDefaultChannel } from '../channels/repository.js';
 
 const CreateUserBodySchema = z.object({
   email: z.string().email(),
@@ -121,10 +123,15 @@ export function registerUserRoutes(app: FastifyInstance, options: UserRouteOptio
    *
    * Members cannot list users -- emails and roles are for whoever administers
    * the server -- but they still see other people's messages, and have to be
-   * able to draw who wrote them.
+   * able to draw who wrote them. The same goes for agents: a member's own
+   * list holds only their agents, yet a teammate's agent answers in channels
+   * they share. Only the name and avatar -- never instructions or models.
    */
   app.get('/api/v1/users/directory', { preHandler: requireAuth }, async (_request, reply) => {
-    reply.send({ users: listUsers(app.db).filter((user) => !user.suspended_at).map(directoryEntry) });
+    reply.send({
+      users: listUsers(app.db).filter((user) => !user.suspended_at).map(directoryEntry),
+      agents: listAllAgents(app.db).map((agent) => ({ id: agent.id, name: agent.name, avatarMode: agent.avatarMode })),
+    });
   });
 
   /** A person's own name and avatar. Anyone may change their own; nobody else's. */
@@ -405,6 +412,7 @@ export function registerUserRoutes(app: FastifyInstance, options: UserRouteOptio
       reply.code(409).send({ error: 'invite_already_used' });
       return;
     }
+    joinDefaultChannel(app.db, user.id);
     reply.code(201).send({ token: createSession(app.db, user.id), user: publicUser(user) });
   });
 

@@ -69,6 +69,16 @@ describe('invite-first membership', () => {
     expect(await statuses()).toEqual([['sam@example.com', 'accepted']]);
   });
 
+  it('puts a new teammate straight into the server’s first channel', async () => {
+    const { code } = (await invite({ email: 'sam@example.com', send: false })).json().invite;
+    const accepted = await app.inject({
+      method: 'POST', url: `/api/v1/invites/${code}/accept`,
+      payload: { email: 'sam@example.com', displayName: 'Sam', password: 'another-secret-1' },
+    });
+    const channels = await app.inject({ method: 'GET', url: '/api/v1/channels', headers: as(accepted.json().token) });
+    expect(channels.json().channels.map((c: { name: string; joined: boolean }) => [c.name, c.joined])).toEqual([['general', true]]);
+  });
+
   it('lets someone who already has an account accept by signing in, keeping their password', async () => {
     const existing = createUser(db, { email: 'lee@example.com', displayName: 'Lee', passwordHash: 'kept', role: 'member' });
     const session = createSession(db, existing.id);

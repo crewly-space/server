@@ -77,6 +77,7 @@ export { ApprovalsResource } from './resources/approvals.js';
 export {
   UsersResource,
   type CreateUserInput,
+  type DirectoryAgent,
   type DirectoryUser,
   type Invite,
   type InvitePreview,
