@@ -151,6 +151,10 @@ describe('agent-to-agent delegation', () => {
       'text_stats',
       'url_component',
       'date_math',
+      'schedule_message',
+      'schedule_task',
+      'list_scheduled_tasks',
+      'cancel_scheduled_task',
       'create_artifact',
     ]);
   });
@@ -186,6 +190,10 @@ describe('agent-to-agent delegation', () => {
       'text_stats',
       'url_component',
       'date_math',
+      'schedule_message',
+      'schedule_task',
+      'list_scheduled_tasks',
+      'cancel_scheduled_task',
       'create_artifact',
       'delegate_to_agent',
     ]);

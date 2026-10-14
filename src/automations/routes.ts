@@ -91,7 +91,7 @@ export function registerAutomationRoutes(
     if (typeof secret !== 'string' || !verifyWebhookSecret(app.db, id, secret)) { reply.code(404).send({ error: 'automation_not_found' }); return; }
     const body = (request.body && typeof request.body === 'object' && !Array.isArray(request.body)) ? request.body as Record<string, unknown> : { value: request.body };
     const eventId = typeof request.headers['x-webhook-event-id'] === 'string' ? request.headers['x-webhook-event-id'] : typeof body.event_id === 'string' ? body.event_id : undefined;
-    await dispatchAutomationEvent(deps(), { type: 'webhook', eventId, dedupeKey: eventId ?? JSON.stringify(body), payload: body });
+    await dispatchAutomationEvent(deps(), { type: 'webhook', automationId: id, eventId, dedupeKey: eventId ?? JSON.stringify(body), payload: body });
     reply.code(202).send({ accepted: true });
   });
 
