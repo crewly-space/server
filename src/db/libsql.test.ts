@@ -9,7 +9,7 @@ describe('libSQL compatibility', () => {
       db.exec('CREATE TABLE example (id TEXT PRIMARY KEY, data BLOB, value TEXT)');
       db.prepare('INSERT INTO example VALUES (@id, @data, @value)').run({ id: 'one', data: Buffer.from('hello'), value: null });
       expect(db.prepare('SELECT value FROM example WHERE value IS ?').get(null)).toEqual({ value: null });
-      expect(db.prepare('SELECT data FROM example WHERE id = ?').pluck().get('one')).toEqual(Buffer.from('hello'));
+      expect(Buffer.from(db.prepare('SELECT data FROM example WHERE id = ?').pluck().get('one') as Uint8Array)).toEqual(Buffer.from('hello'));
       expect(db.prepare('SELECT id FROM example').get()).toEqual({ id: 'one' });
       expect(db.prepare('SELECT id FROM example WHERE id = ?').get('missing')).toBeUndefined();
       expect(db.prepare('SELECT id FROM example').all()).toEqual([{ id: 'one' }]);
