@@ -30,7 +30,9 @@ export class HttpClient {
     try {
       response = await this.fetchImpl(`${this.baseUrl.replace(/\/+$/, '')}${path}`, {
         method,
-        signal: AbortSignal.timeout(30_000),
+        // Explicit agent invocation waits for the turn to finish; allow the
+        // model/tool work time while ordinary workspace reads fail promptly.
+        signal: AbortSignal.timeout(method === 'POST' && /^\/api\/v1\/agents\/[^/]+\/runs$/.test(path) ? 300_000 : 30_000),
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });

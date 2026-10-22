@@ -198,3 +198,13 @@ describe('HTTP recovery', () => {
     });
   });
 });
+
+
+it('allows a directly invoked agent time to finish its model and tool work', async () => {
+  const timeout = vi.spyOn(AbortSignal, 'timeout');
+  try {
+    const client = new HttpClient('https://server.test', fakeFetch(() => new Response('{}')));
+    await client.request('POST', '/api/v1/agents/assistant/runs', { conversationId: 'room' });
+    expect(timeout).toHaveBeenCalledWith(300_000);
+  } finally { timeout.mockRestore(); }
+});
