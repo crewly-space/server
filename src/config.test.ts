@@ -65,3 +65,14 @@ describe('loadConfig', () => {
   });
 });
 
+
+it('accepts hosted Turso configuration and platform-assigned ports', () => {
+  const config = loadConfig({ TURSO_DATABASE_URL: 'libsql://crewly-example.turso.io', TURSO_AUTH_TOKEN: 'test-token', PORT: '10000', CREWLY_SETUP_TOKEN: 'test-setup-token-at-least-twenty', RENDER_EXTERNAL_URL: 'https://crewly-example.onrender.com' }, []);
+  expect(config.turso).toEqual({ url: 'libsql://crewly-example.turso.io', authToken: 'test-token' });
+  expect(config.port).toBe(10000);
+  expect(config.publicUrl).toBe('https://crewly-example.onrender.com');
+  expect(config.setupToken).toBe('test-setup-token-at-least-twenty');
+  expect(() => loadConfig({ TURSO_DATABASE_URL: 'libsql://crewly-example.turso.io' }, [])).toThrow(/set together/);
+  expect(() => loadConfig({ TURSO_DATABASE_URL: 'libsql://crewly-example.turso.io', TURSO_AUTH_TOKEN: 'x', CREWLY_DATABASE_URL: 'postgres://localhost/test' }, [])).toThrow(/not both/);
+  expect(() => loadConfig({ TURSO_DATABASE_URL: 'https://name:secret@example.com', TURSO_AUTH_TOKEN: 'x' }, [])).toThrow(/database URL/);
+});

@@ -10,6 +10,10 @@ export interface AppConfig {
    * hosted servers; a self-hosted server keeps SQLite in its data directory.
    */
   databaseUrl?: string;
+  /** Managed libSQL primary; dataDir still stores uploads and keys. */
+  turso?: { url: string; authToken: string };
+  /** First-boot secret supplied through a hosting dashboard. */
+  setupToken?: string;
   host: string;
   webDir?: string;
   logLevel: string;
@@ -62,9 +66,10 @@ export function loadConfig(
   const fileEnv = readEnvFile(path.join(dataDir, '.env'));
   // Flags win over process environment, which wins over the data directory's .env.
   const resolved = { ...fileEnv, ...env, ...cli };
-  const port = resolved.CREWLY_PORT ? Number(resolved.CREWLY_PORT) : 8787;
+  const portValue = resolved.CREWLY_PORT || resolved.PORT;
+  const port = portValue ? Number(portValue) : 8787;
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`port must be an integer between 1 and 65535, got ${resolved.CREWLY_PORT}`);
+    throw new Error(`port must be an integer between 1 and 65535, got ${portValue}`);
   }
   const handoffPublicKey = resolved.CREWLY_CLOUD_HANDOFF_PUBLIC_KEY?.trim();
   const deploymentId = resolved.CREWLY_DEPLOYMENT_ID?.trim();
@@ -95,9 +100,10 @@ export function loadConfig(
     }
   }
   let publicUrl: string | undefined;
-  if (resolved.CREWLY_PUBLIC_URL?.trim()) {
+  const publicUrlValue = resolved.CREWLY_PUBLIC_URL?.trim() || resolved.RENDER_EXTERNAL_URL?.trim();
+  if (publicUrlValue) {
     try {
-      publicUrl = new URL(resolved.CREWLY_PUBLIC_URL.trim()).origin;
+      publicUrl = new URL(publicUrlValue).origin;
     } catch {
       throw new Error(`CREWLY_PUBLIC_URL is not a valid URL: ${resolved.CREWLY_PUBLIC_URL}`);
     }
@@ -108,7 +114,22 @@ export function loadConfig(
   if (!Number.isInteger(attachmentMaxBytes) || attachmentMaxBytes < 1 || attachmentMaxBytes > 100 * 1024 * 1024) {
     throw new Error(`CREWLY_ATTACHMENT_MAX_BYTES must be an integer from 1 to 104857600, got ${resolved.CREWLY_ATTACHMENT_MAX_BYTES}`);
   }
+  const tursoUrl = resolved.TURSO_DATABASE_URL?.trim();
+  const tursoToken = resolved.TURSO_AUTH_TOKEN?.trim();
+  if (Boolean(tursoUrl) !== Boolean(tursoToken)) throw new Error('TURSO_DATABASE_URL and TURSO_AUTH_TOKEN must be set together');
+  if (tursoUrl) {
+    let valid = false;
+    try {
+      const url = new URL(tursoUrl);
+      valid = !url.username && !url.password && !url.search && !url.hash && Boolean(url.hostname)
+        && (url.protocol === 'libsql:' || url.protocol === 'https:' || (url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)));
+    } catch { /* report without echoing credentials */ }
+    if (!valid) throw new Error('TURSO_DATABASE_URL must be a libsql:// or https:// database URL (HTTP is allowed only on loopback for development)');
+  }
+  const setupToken = resolved.CREWLY_SETUP_TOKEN?.trim();
+  if (setupToken && (setupToken.length < 20 || setupToken.length > 512)) throw new Error('CREWLY_SETUP_TOKEN must contain 20 to 512 characters');
   const databaseUrl = resolved.CREWLY_DATABASE_URL?.trim();
+  if (databaseUrl && tursoUrl) throw new Error('Choose TURSO_DATABASE_URL or CREWLY_DATABASE_URL, not both');
   if (databaseUrl && !/^postgres(ql)?:\/\//.test(databaseUrl)) {
     throw new Error('CREWLY_DATABASE_URL must be a postgres:// or postgresql:// URL');
   }
@@ -131,6 +152,8 @@ export function loadConfig(
     port,
     dataDir,
     ...(databaseUrl ? { databaseUrl } : {}),
+    ...(tursoUrl && tursoToken ? { turso: { url: tursoUrl, authToken: tursoToken } } : {}),
+    ...(setupToken ? { setupToken } : {}),
     host: resolved.CREWLY_HOST ?? '127.0.0.1',
     webDir: resolved.CREWLY_WEB_DIR ? path.resolve(resolved.CREWLY_WEB_DIR) : undefined,
     logLevel,

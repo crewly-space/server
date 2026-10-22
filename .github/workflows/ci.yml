@@ -18,6 +18,32 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  libsql:
+    runs-on: ubuntu-latest
+    env:
+      CREWLY_TEST_LIBSQL: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '24', cache: npm }
+      - run: npm ci --include=optional
+      - run: npm test -- --maxWorkers=4
+      - name: Verify the remote database path against a pinned libSQL primary
+        shell: bash
+        run: |
+          set -euo pipefail
+          LIBSQL_TEST_DIR=$(mktemp -d)
+          LIBSQL_TEST_ARCHIVE=libsql-server-x86_64-unknown-linux-gnu.tar.xz
+          LIBSQL_TEST_RELEASE=https://github.com/tursodatabase/libsql/releases/download/libsql-server-v0.24.32
+          curl -fsSL "$LIBSQL_TEST_RELEASE/$LIBSQL_TEST_ARCHIVE" -o "$LIBSQL_TEST_DIR/$LIBSQL_TEST_ARCHIVE"
+          curl -fsSL "$LIBSQL_TEST_RELEASE/$LIBSQL_TEST_ARCHIVE.sha256" -o "$LIBSQL_TEST_DIR/$LIBSQL_TEST_ARCHIVE.sha256"
+          (
+            cd "$LIBSQL_TEST_DIR"
+            sha256sum -c "$LIBSQL_TEST_ARCHIVE.sha256"
+            tar -xf "$LIBSQL_TEST_ARCHIVE"
+          )
+          CREWLY_TEST_LIBSQL_SERVER="$LIBSQL_TEST_DIR/libsql-server-x86_64-unknown-linux-gnu/sqld" npm test -- test/db/libsql-remote.test.ts --maxWorkers=1
+
   # The same suite on PostgreSQL, the database hosted servers run on. It also
   # holds the PostgreSQL baseline to SQLite's schema (src/db/postgres.test.ts).
   postgres:

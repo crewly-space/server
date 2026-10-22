@@ -47,6 +47,6 @@ rmSync(target, { recursive: true, force: true });
 mkdirSync(target, { recursive: true });
 const tarball = resolve(repoRoot, "app-dist.tar.gz");
 writeFileSync(tarball, Buffer.from(await response.arrayBuffer()));
-execFileSync("tar", ["-xzf", tarball, "-C", target, "--strip-components=1"], { stdio: "inherit" });
+execFileSync("tar", ["--no-same-owner", "-xzf", tarball, "-C", target, "--strip-components=1"], { stdio: "inherit" });
 rmSync(tarball, { force: true });
 console.log("fetch-app: unpacked into web/");

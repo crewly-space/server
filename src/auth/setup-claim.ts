@@ -12,13 +12,17 @@ export interface SetupClaim {
  * Creates the one-time secret required to claim a fresh server. The CLI reads
  * this file locally, while manual installs can copy it from the data directory.
  */
-export function prepareSetupClaim(dataDir: string, initialized: boolean): SetupClaim {
+export function prepareSetupClaim(dataDir: string, initialized: boolean, configuredToken?: string): SetupClaim {
   const file = path.join(dataDir, 'claim-token');
   if (initialized) {
     fs.rmSync(file, { force: true });
     return { file, consume() {} };
   }
 
+  if (configuredToken) {
+    if (configuredToken.length < 20 || configuredToken.length > 512) throw new Error('CREWLY_SETUP_TOKEN must contain 20 to 512 characters');
+    return { token: configuredToken, file, consume() { fs.rmSync(file, { force: true }); } };
+  }
   let token: string;
   try {
     token = fs.readFileSync(file, 'utf8').trim();

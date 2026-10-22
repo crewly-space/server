@@ -1,5 +1,10 @@
 # Crewly Server
 
+**Simplest hosted setup:** [one Render application + Turso](docs/simple-hosting.md).
+The root `render.yaml` hosts the app, API and agents together, without Crewly
+Cloud, Superserver or a separate PostgreSQL service.
+
+
 The self-hostable Crewly server: API, WebSocket hub, job runner, and SQLite
 storage. This repository also owns the two things that define the server's
 contract with everything else — the wire **protocol** and the TypeScript
