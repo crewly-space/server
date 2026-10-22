@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { openSqlite } from './driver.js';
 import { verifyManagedDatabaseKey } from './managed-key.js';
 
-describe('libSQL compatibility', () => {
+describe.skipIf(Boolean(process.env.CREWLY_TEST_DATABASE_URL))('libSQL compatibility', () => {
   it('binds a lone null, named values and binary data without leaking query metadata', () => {
     const db = openSqlite(':memory:');
     try {
