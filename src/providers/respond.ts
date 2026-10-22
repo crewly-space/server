@@ -10,6 +10,7 @@ import { ProviderError } from './errors.js';
 import type { DeviceConnectionHub } from '../devices/hub.js';
 import { getProviderConfig } from './repository.js';
 import { capabilityInstructions } from './capabilities.js';
+import { CONVERSATION_BEHAVIOR } from './behavior.js';
 
 /**
  * Whether the provider this agent answers with can be handed tool
@@ -25,7 +26,9 @@ function acceptsTools(db: Database, providerId: string): boolean {
 function toChatMessages(agentId: string, recentMessages: Message[]): ChatMessage[] {
   return recentMessages.map((m) => ({
     role: m.authorType === 'agent' && m.authorId === agentId ? 'assistant' : 'user',
-    content: m.body,
+    content: m.attachments?.length
+      ? `${m.body}\n\nAttached files (metadata only; use an available tool to read contents):\n${JSON.stringify(m.attachments.map((file) => ({ id: file.id, filename: file.filename, mimeType: file.mimeType, sizeBytes: file.sizeBytes })))}`
+      : m.body,
   }));
 }
 
@@ -127,6 +130,7 @@ export function createProviderRespond(
     const facts = listMemoryFactsForAgent(db, agentId).slice(-20);
     const summary = getConversationSummary(db, conversationId);
     const context = [agent.personality && `Agent instructions: ${agent.personality}`,
+      CONVERSATION_BEHAVIOR,
       ...instructionProviders.map((provide) => provide(agent, input)),
       tools?.instructions,
       // Always last among the instructions: whatever the agent's own

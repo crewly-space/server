@@ -17,6 +17,8 @@ import {
   type AutomationAction,
   type AutomationInput,
 } from './service.js';
+import { isParticipant } from '../conversations/repository.js';
+import { canReadChannel } from '../channels/repository.js';
 import { parsePublicHttpsUrl } from '../security/outbound.js';
 
 const ActionSchema = z.discriminatedUnion('type', [
@@ -53,6 +55,35 @@ export function registerAutomationRoutes(
     if (!request.user || !allowed(app, request.user.id)) { reply.code(403).send({ error: 'automations_manage_required' }); return false; }
     return true;
   };
+
+  // Conversation tools are available to ordinary members. Their saved tasks
+  // need a matching, ownership-scoped UI API, not admin automation access.
+  const canRead = (conversationId: string, userId: string) => isParticipant(app.db, conversationId, userId, 'user')
+    || canReadChannel(app.db, conversationId, userId);
+  const ownTasks = (conversationId: string, userId: string) => listAutomations(app.db).filter((rule) =>
+    rule.createdBy === userId && rule.triggerConfig.kind === 'conversation_schedule'
+    && rule.triggerConfig.conversationId === conversationId);
+  app.get('/api/v1/conversations/:conversationId/scheduled-tasks', { preHandler: requireAuth }, async (request, reply) => {
+    const { conversationId } = request.params as { conversationId: string };
+    if (!canRead(conversationId, request.user!.id)) return reply.code(404).send({ error: 'conversation_not_found' });
+    const tasks = ownTasks(conversationId, request.user!.id).map((rule) => {
+      const lastRun = listAutomationRuns(app.db, rule.id, 1)[0];
+      return { id: rule.id, name: rule.name, enabled: rule.enabled, runAt: String(rule.triggerConfig.runAt),
+        intervalMinutes: typeof rule.triggerConfig.intervalMinutes === 'number' ? rule.triggerConfig.intervalMinutes : null,
+        agentId: String(rule.triggerConfig.agentId), kind: rule.actions[0]?.type === 'invoke_agent' ? 'task' : 'reminder',
+        body: rule.actions[0]?.type === 'post_message' ? rule.actions[0].body : rule.actions[0]?.type === 'invoke_agent' ? rule.actions[0].prompt ?? '' : '',
+        lastRun: lastRun ? { status: lastRun.status, error: lastRun.error, createdAt: lastRun.createdAt } : null };
+    });
+    return reply.send({ tasks });
+  });
+  app.delete('/api/v1/conversations/:conversationId/scheduled-tasks/:id', { preHandler: requireAuth }, async (request, reply) => {
+    const { conversationId, id } = request.params as { conversationId: string; id: string };
+    if (!canRead(conversationId, request.user!.id)) return reply.code(404).send({ error: 'conversation_not_found' });
+    const task = ownTasks(conversationId, request.user!.id).find((rule) => rule.id === id);
+    if (!task) return reply.code(404).send({ error: 'scheduled_task_not_found' });
+    updateAutomation(app.db, id, { ...task, enabled: false });
+    return reply.code(204).send();
+  });
 
   app.get('/api/v1/automations', { preHandler: requireAuth }, async (request, reply) => {
     if (!check(request, reply)) return;
@@ -91,7 +122,7 @@ export function registerAutomationRoutes(
     if (typeof secret !== 'string' || !verifyWebhookSecret(app.db, id, secret)) { reply.code(404).send({ error: 'automation_not_found' }); return; }
     const body = (request.body && typeof request.body === 'object' && !Array.isArray(request.body)) ? request.body as Record<string, unknown> : { value: request.body };
     const eventId = typeof request.headers['x-webhook-event-id'] === 'string' ? request.headers['x-webhook-event-id'] : typeof body.event_id === 'string' ? body.event_id : undefined;
-    await dispatchAutomationEvent(deps(), { type: 'webhook', eventId, dedupeKey: eventId ?? JSON.stringify(body), payload: body });
+    await dispatchAutomationEvent(deps(), { type: 'webhook', automationId: id, eventId, dedupeKey: eventId ?? JSON.stringify(body), payload: body });
     reply.code(202).send({ accepted: true });
   });
 

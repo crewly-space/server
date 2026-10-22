@@ -14,6 +14,18 @@ export interface CreateGroupInput {
 
 export type AddConversationMemberInput = ParticipantRef;
 
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  enabled: boolean;
+  runAt: string;
+  intervalMinutes: number | null;
+  agentId: string;
+  kind: 'task' | 'reminder';
+  body: string;
+  lastRun: { status: 'running' | 'succeeded' | 'failed' | 'skipped'; error: string | null; createdAt: string } | null;
+}
+
 export class ConversationsResource {
   constructor(private readonly http: HttpClient) {}
 
@@ -27,6 +39,14 @@ export class ConversationsResource {
 
   list(): Promise<Conversation[]> {
     return this.http.request('GET', '/api/v1/conversations');
+  }
+
+  scheduledTasks(conversationId: string): Promise<{ tasks: ScheduledTask[] }> {
+    return this.http.request('GET', `/api/v1/conversations/${encodePathSegment(conversationId)}/scheduled-tasks`);
+  }
+
+  cancelScheduledTask(conversationId: string, taskId: string): Promise<void> {
+    return this.http.request('DELETE', `/api/v1/conversations/${encodePathSegment(conversationId)}/scheduled-tasks/${encodePathSegment(taskId)}`);
   }
 
   /** Who answers a message nobody addressed: mentions & keywords, a model, or every agent. */

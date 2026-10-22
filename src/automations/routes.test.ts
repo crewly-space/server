@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
 import { openSqlite, type Database } from '../db/driver.js';
+import { createUser } from '../users/repository.js';
+import { createSession } from '../auth/session.js';
+import { createAutomation } from './service.js';
+import { createConversation, removeParticipant } from '../conversations/repository.js';
 import { runMigrations } from '../db/migrate.js';
 
 describe('automation rules', () => {
@@ -46,6 +50,26 @@ describe('automation rules', () => {
     const runs = await app.inject({ method: 'GET', url: '/api/v1/automations/runs', headers });
     expect(runs.json().runs).toHaveLength(1);
     expect(runs.json().runs[0]).toMatchObject({ status: 'succeeded', dedupeKey: 'evt-1' });
+  });
+
+  it('lets a member inspect and cancel only their own tasks in an accessible conversation', async () => {
+    const member = createUser(db, { email: 'member@example.test', displayName: 'Member', passwordHash: 'x', role: 'member' });
+    const stranger = createUser(db, { email: 'other@example.test', displayName: 'Other', passwordHash: 'x', role: 'member' });
+    const headers = { authorization: `Bearer ${createSession(db, member.id)}` };
+    const conversation = createConversation(db, { kind: 'group', name: 'Planning', participants: [{ participantId: member.id, participantType: 'user' }, { participantId: stranger.id, participantType: 'user' }] });
+    const make = (userId: string) => createAutomation(db, { createdBy: userId, name: 'Reminder', triggerType: 'schedule', triggerConfig: { kind: 'conversation_schedule', conversationId: conversation.id, agentId: 'helper', runAt: '2030-01-01T12:00:00Z' }, actions: [{ type: 'post_message', conversationId: conversation.id, body: 'Take a break' }] }).automation;
+    const own = make(member.id), other = make(stranger.id);
+    const path = `/api/v1/conversations/${conversation.id}/scheduled-tasks`;
+    expect((await app.inject({ method: 'GET', url: '/api/v1/automations', headers })).statusCode).toBe(403);
+    const listed = await app.inject({ method: 'GET', url: path, headers });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().tasks).toEqual([expect.objectContaining({ id: own.id, enabled: true, kind: 'reminder', body: 'Take a break' })]);
+    expect((await app.inject({ method: 'DELETE', url: `${path}/${other.id}`, headers })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'DELETE', url: `${path}/${own.id}`, headers })).statusCode).toBe(204);
+    expect((await app.inject({ method: 'GET', url: path, headers })).json().tasks[0].enabled).toBe(false);
+    removeParticipant(db, conversation.id, member.id);
+    expect((await app.inject({ method: 'GET', url: path, headers })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'DELETE', url: `${path}/${own.id}`, headers })).statusCode).toBe(404);
   });
 
   it('does not expose automation management to a member', async () => {
