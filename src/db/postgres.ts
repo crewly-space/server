@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { waitForWorkerReply } from './worker-reply.js';
 import type { Database, Statement } from './driver.js';
 
 /**
@@ -228,9 +229,7 @@ export function openPostgres(url: string): Database {
     if (closed) throw new Error('The database connection is closed');
     Atomics.store(flag, 0, 0);
     port1.postMessage(request);
-    if (Atomics.wait(flag, 0, 0, STATEMENT_TIMEOUT_MS + 5_000) === 'timed-out') {
-      throw new Error('PostgreSQL did not answer in time');
-    }
+    waitForWorkerReply(flag, STATEMENT_TIMEOUT_MS + 5_000);
     const received = receiveMessageOnPort(port1);
     if (!received) throw new Error('PostgreSQL worker returned no answer');
     return received.message as Reply;
