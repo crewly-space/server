@@ -30,6 +30,7 @@ const CODE_MESSAGES: Record<string, string> = {
   agent_blocked: 'That agent is blocked in this channel. Unblock it first.',
   category_not_found: 'That section no longer exists.',
   invalid_request: 'Some of those details are not valid. Check the form and try again.',
+  request_timeout: 'The Crewly server took too long to respond. Try again.',
   network_error: 'Cannot reach the Crewly server. Check that it is running.',
 };
 

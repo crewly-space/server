@@ -177,3 +177,24 @@ describe('HttpClient', () => {
     });
   });
 });
+
+
+describe('HTTP recovery', () => {
+  it('bounds requests and reports a timeout separately from invalid credentials', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(AbortSignal.abort(new DOMException('Timed out', 'TimeoutError')));
+    const fetchImpl = vi.fn(async (_url, init) => { init?.signal?.throwIfAborted(); return new Response('{}'); }) as typeof fetch;
+    try {
+      const client = new HttpClient('https://server.test', fetchImpl);
+      await expect(client.request('POST', '/api/v1/messages', { body: 'Once' })).rejects.toMatchObject({ status: 0, code: 'request_timeout' });
+      expect(timeout).toHaveBeenCalledWith(30_000);
+      expect(fetchImpl).toHaveBeenCalledOnce(); // Never replay a write automatically.
+    } finally { timeout.mockRestore(); }
+  });
+
+  it('shows an actionable error for a proxy HTML error page', async () => {
+    const client = new HttpClient('https://server.test', fakeFetch(() => new Response('<html>Bad gateway</html>', { status: 502 })));
+    await expect(client.request('GET', '/api/v1/auth/me')).rejects.toMatchObject({
+      status: 502, message: 'The Crewly server hit an error. Check its logs for details.',
+    });
+  });
+});

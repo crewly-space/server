@@ -30,14 +30,15 @@ export class HttpClient {
     try {
       response = await this.fetchImpl(`${this.baseUrl.replace(/\/+$/, '')}${path}`, {
         method,
+        signal: AbortSignal.timeout(30_000),
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });
     } catch (err) {
       throw new CrewlyApiError(
-        describeStatus(0, 'network_error'),
+        describeStatus(0, isTimeout(err) ? 'request_timeout' : 'network_error'),
         0,
-        'network_error',
+        isTimeout(err) ? 'request_timeout' : 'network_error',
         { detail: `${method} ${path}: ${(err as Error).message}` }
       );
     }
@@ -48,6 +49,10 @@ export class HttpClient {
       text = await response.text();
       data = text.length > 0 ? JSON.parse(text) : undefined;
     } catch (err) {
+      if (isTimeout(err)) throw new CrewlyApiError(describeStatus(0, 'request_timeout'), 0, 'request_timeout');
+      // Reverse proxies often return HTML for 502/503; preserve the HTTP
+      // status so callers can offer recovery instead of a JSON parse error.
+      if (!response.ok) throw new CrewlyApiError(describeStatus(response.status), response.status, 'invalid_response', text);
       throw new CrewlyApiError(
         `invalid response calling ${method} ${path}: ${(err as Error).message}`,
         response.status,
@@ -87,13 +92,14 @@ export class HttpClient {
     try {
       response = await this.fetchImpl(`${this.baseUrl.replace(/\/+$/, '')}${path}`, {
         method: 'GET',
+        signal: AbortSignal.timeout(120_000),
         headers,
       });
     } catch (err) {
       throw new CrewlyApiError(
-        describeStatus(0, 'network_error'),
+        describeStatus(0, isTimeout(err) ? 'request_timeout' : 'network_error'),
         0,
-        'network_error',
+        isTimeout(err) ? 'request_timeout' : 'network_error',
         { detail: `GET ${path}: ${(err as Error).message}` },
       );
     }
@@ -109,4 +115,8 @@ export class HttpClient {
     }
     return response.blob();
   }
+}
+
+function isTimeout(reason: unknown): boolean {
+  return reason instanceof Error && ['TimeoutError', 'AbortError'].includes(reason.name);
 }

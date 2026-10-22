@@ -219,6 +219,7 @@ export {
   type WebSocketConnection,
   type WebSocketConstructor,
   type WsEventHandler,
+  type WsConnectionState,
 } from './ws-client.js';
 
 export type {

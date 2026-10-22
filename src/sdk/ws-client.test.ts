@@ -6,7 +6,7 @@ class FakeWebSocket {
   static instances: FakeWebSocket[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
-  onclose: (() => void) | null = null;
+  onclose: ((event?: { code?: number }) => void) | null = null;
   onerror: (() => void) | null = null;
   closed = false;
   sent: string[] = [];
@@ -223,5 +223,51 @@ describe('WsClient', () => {
     const client = new WsClient('http://localhost:4000', WebSocketImpl);
 
     expect(() => client.reconnect()).toThrow();
+  });
+});
+
+
+describe('live connection recovery', () => {
+  it('reports lost connections and backs off repeated failures', () => {
+    vi.useFakeTimers();
+    const client = new WsClient('https://server.test', freshFakeWebSocketImpl());
+    const state = vi.fn(); client.onState(state);
+    try {
+      client.connect({ token: 'session' });
+      FakeWebSocket.instances[0].onclose?.();
+      expect(state).toHaveBeenLastCalledWith('disconnected');
+      vi.advanceTimersByTime(1000);
+      expect(FakeWebSocket.instances).toHaveLength(2);
+      FakeWebSocket.instances[1].onclose?.();
+      vi.advanceTimersByTime(1000);
+      expect(FakeWebSocket.instances).toHaveLength(2);
+      vi.advanceTimersByTime(1000);
+      expect(FakeWebSocket.instances).toHaveLength(3);
+    } finally { client.close(); vi.useRealTimers(); }
+  });
+
+  it.each([4001, 4003])('stops reconnecting when access is rejected with %s', (code) => {
+    vi.useFakeTimers();
+    const client = new WsClient('https://server.test', freshFakeWebSocketImpl());
+    const state = vi.fn(); client.onState(state);
+    try {
+      client.connect({ token: 'expired' });
+      FakeWebSocket.instances[0].onclose?.({ code });
+      vi.advanceTimersByTime(60_000);
+      expect(FakeWebSocket.instances).toHaveLength(1);
+      expect(state).toHaveBeenLastCalledWith(code === 4001 ? 'unauthorized' : 'forbidden');
+    } finally { client.close(); vi.useRealTimers(); }
+  });
+
+  it('ignores malformed control frames without poisoning event replay', () => {
+    const client = new WsClient('https://server.test', freshFakeWebSocketImpl());
+    const event = vi.fn(); client.onEvent(event); client.connect({ token: 'session' });
+    for (const data of ['not json', 'null', '{"type":"unknown"}']) {
+      expect(() => FakeWebSocket.instances[0].onmessage?.({ data })).not.toThrow();
+    }
+    FakeWebSocket.instances[0].emitMessage(EVENT_FIXTURE);
+    expect(event).toHaveBeenCalledOnce();
+    expect(client.getLastSeq()).toBe(1);
+    client.close();
   });
 });
