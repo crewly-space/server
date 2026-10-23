@@ -312,7 +312,10 @@ describe('tool platform: the definition of done', () => {
     // 14. Every tool execution is in the audit log, with who, what and how it went.
     const executions = (await api('GET', '/api/v1/tool-executions')).body.executions as Array<Record<string, unknown>>;
     const summary = executions.map((entry) => `${entry.toolRef} ${entry.status}`).reverse();
-    expect(summary).toEqual([
+    // Calls can finish within the same millisecond. The API promises newest
+    // timestamps first; UUID tie-breaking does not encode execution order.
+    expect(executions.map(entry => entry.createdAt)).toEqual(executions.map(entry => entry.createdAt).sort().reverse());
+    expect(summary.toSorted()).toEqual([
       'sentry.get_issue_details success',
       'github.get_file_contents success',
       'github.create_branch success',
@@ -321,7 +324,7 @@ describe('tool platform: the definition of done', () => {
       'vercel.deploy_to_vercel success',
       'github.merge_pull_request approval_required',
       'github.merge_pull_request success',
-    ]);
+    ].toSorted());
     const merge = executions[0]!;
     expect(merge).toMatchObject({ agentId, userId, approvalId: pending[0]!.id, skillId, connectionKind: 'mcp_server', provider: 'github', permission: 'pull_request:merge' });
     expect(typeof merge.durationMs).toBe('number');
