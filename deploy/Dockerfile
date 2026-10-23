@@ -13,8 +13,9 @@ RUN npm ci
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 COPY scripts ./scripts
+COPY release.json ./release.json
 COPY web ./web
-ARG CREWLY_APP_VERSION=latest
+ARG CREWLY_APP_VERSION
 RUN npm run build && \
     if [ ! -f web/index.html ]; then node scripts/fetch-app.mjs "$CREWLY_APP_VERSION"; fi && \
     npm prune --omit=dev

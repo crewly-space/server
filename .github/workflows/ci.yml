@@ -15,6 +15,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '24', cache: npm }
       - run: npm ci
+      - run: node --test scripts/app-bundle.test.mjs
       - run: npm run typecheck
       - run: npm test
 

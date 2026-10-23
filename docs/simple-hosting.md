@@ -36,8 +36,8 @@ needed for this setup.
    If you use a custom domain, set `CREWLY_PUBLIC_URL` to that HTTPS origin so
    invite/notification links use it. Without it Crewly uses `RENDER_EXTERNAL_URL`.
 
-The Blueprint downloads the latest **published** app release during build.
-Unreleased app changes are not automatically included. `APP_VERSION` can pin a
+The Blueprint downloads the **published** app release pinned in `release.json` during build.
+The coordinated app release must be published first; a missing or mismatched app stops the build. `APP_VERSION` can pin a
 specific app release, or `CREWLY_APP_TARBALL` can select an existing built app
 archive. The app is served from the same origin as the API.
 
