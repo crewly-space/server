@@ -305,9 +305,14 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerSkillSecretHooks();
   registerSkillRoutes(app);
   registerRegistryRoutes(app, opts.fetchImpl);
+  const delegation = delegationToolset({
+    db: opts.db, hub, respond: () => respond, status: agentStatus,
+    queue: runQueue, maxDepth: opts.maxDelegationDepth,
+  });
   const respond: RespondFn = opts.respond ?? createProviderRespond(opts.db, globalThis.fetch.bind(globalThis), deviceHub, {
     gateway,
     instructions: [skillInstructions(opts.db)],
+    proactiveToolsets: [delegation],
     toolsets: [
       utilityToolset(),
       automationToolset(opts.db),
@@ -316,14 +321,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       toolRuntimeToolset(opts.db, toolRuntimeOptions),
       artifactToolset({ db: opts.db, store: attachmentStore }),
       browserToolset({ db: opts.db, adapter: opts.browserAdapter ?? new FetchBrowserAdapter(opts.fetchImpl), store: attachmentStore }),
-      delegationToolset({
-        db: opts.db,
-        hub,
-        respond: () => respond,
-        status: agentStatus,
-        queue: runQueue,
-        maxDepth: opts.maxDelegationDepth,
-      }),
+      delegation,
     ],
   });
   registerAutomationRoutes(app, {

@@ -43,9 +43,11 @@ export interface RespondInput {
    * answer with {@link NO_REPLY} to stay out of it.
    */
   optionalReply?: boolean;
-  /** A bounded, text-only check for a useful next step; no tools are offered. */
+  /** Background review: only bounded agent consultations may be offered. */
   proactive?: boolean;
   proactiveFocus?: string;
+  /** Receives a scoped task, not the original conversation or its summary. */
+  delegated?: boolean;
 }
 
 /** What an agent says, on an optional turn, to post nothing at all. */
@@ -274,6 +276,7 @@ async function executeTurn(
       recentMessages,
       run: { runId, rootRunId, hopCount },
       allowArtifacts: delivery.kind === 'post' && !input.proactive,
+      ...(delivery.kind === 'return' ? { delegated: true } : {}),
       onEvent: ({ type, ...data }) => trace(type, data),
       isCancelled: () => isRunCancelled(deps.db, runId) || Boolean(input.shouldContinue && !input.shouldContinue()),
       ...(input.proactive ? { proactive: true, proactiveFocus: input.proactiveFocus } : {}),
