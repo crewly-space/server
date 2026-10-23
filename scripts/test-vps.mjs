@@ -39,7 +39,7 @@ try {
   assert.deepEqual((await api(messages)).map(message => message.body), ['Before the backup']);
   assert.equal(run('setup-code').trim(), claimToken);
   const image = 'crewly-vps-broken-check';
-  writeFileSync(join(root, 'Dockerfile'), 'FROM crewly-release-check\nHEALTHCHECK --interval=1s --timeout=1s --retries=1 CMD exit 1\n');
+  writeFileSync(join(root, 'Dockerfile'), 'FROM crewly-release-check\nENTRYPOINT ["node","-e","process.exit(1)"]\n');
   execFileSync('docker', ['build', '-t', image, root], { stdio: 'ignore' });
   assert.throws(() => run('update', image));
   run('doctor');
