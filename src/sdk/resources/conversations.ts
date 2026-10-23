@@ -14,6 +14,11 @@ export interface CreateGroupInput {
 
 export type AddConversationMemberInput = ParticipantRef;
 
+export interface CreateScheduledTaskInput {
+  requestId: string; name: string; agentId: string; kind: 'task' | 'reminder'; body: string;
+  runAt: string; intervalMinutes?: number;
+}
+
 export interface ScheduledTask {
   id: string;
   name: string;
@@ -43,6 +48,10 @@ export class ConversationsResource {
 
   scheduledTasks(conversationId: string): Promise<{ tasks: ScheduledTask[] }> {
     return this.http.request('GET', `/api/v1/conversations/${encodePathSegment(conversationId)}/scheduled-tasks`);
+  }
+
+  createScheduledTask(conversationId: string, input: CreateScheduledTaskInput): Promise<{ task: ScheduledTask }> {
+    return this.http.request('POST', `/api/v1/conversations/${encodePathSegment(conversationId)}/scheduled-tasks`, input);
   }
 
   cancelScheduledTask(conversationId: string, taskId: string): Promise<void> {

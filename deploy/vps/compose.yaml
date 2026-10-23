@@ -1,0 +1,37 @@
+name: crewly-vps
+services:
+  crewly:
+    image: ${CREWLY_SERVER_IMAGE:?Run ./crewly-vps init first}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${CREWLY_PORT:-8787}:8787"
+    volumes:
+      - data:/data
+    environment:
+      NODE_ENV: production
+      CREWLY_HOST: 0.0.0.0
+      CREWLY_PORT: 8787
+      CREWLY_DATA_DIR: /data
+      CREWLY_WEB_DIR: /app/web
+      CREWLY_PUBLIC_URL: ${CREWLY_PUBLIC_URL}
+      CREWLY_SECRETS_KEY: ${CREWLY_SECRETS_KEY}
+      CREWLY_SETUP_TOKEN: ${CREWLY_SETUP_TOKEN}
+      CREWLY_TRUST_PROXY: "true"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8787/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+volumes:
+  data:

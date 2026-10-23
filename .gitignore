@@ -10,3 +10,9 @@ web/*
 app-dist.tar.gz
 
 data/
+deploy/vps/.env*
+deploy/vps/.last-backup
+deploy/vps/backups/
+deploy/vps/nginx.conf
+
+deploy/vps/.operation.lock

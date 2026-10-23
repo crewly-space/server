@@ -62,6 +62,10 @@ jobs:
           curl -fsS http://127.0.0.1:8787/ > /tmp/crewly-index.html
           node -e 'if(!require("fs").readFileSync("/tmp/crewly-index.html","utf8").includes("id=\"root\""))process.exit(1)'
           node -e 'fetch("http://127.0.0.1:8787/crewly-app.json").then(r=>r.json()).then(m=>{if(m.version!==require("./package.json").version)process.exit(1)})'
+      - name: Exercise VPS backup, restore and failed-update rollback
+        env:
+          CREWLY_TEST_VPS: '1'
+        run: node scripts/test-vps.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: crewly-linux-release-candidate

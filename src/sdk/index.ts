@@ -26,6 +26,7 @@ export {
   type CreateDmInput,
   type CreateGroupInput,
   type ScheduledTask,
+  type CreateScheduledTaskInput,
 } from './resources/conversations.js';
 export {
   ChannelsResource,
