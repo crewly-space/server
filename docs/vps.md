@@ -22,9 +22,7 @@ cd deploy/vps
 
 If 8787 is already in use, choose another local port in `init` (for example
 8790). Initialization refuses to overwrite existing keys. Keep the generated
-`.env` private and preserve it across updates. You can move this whole deployment
-folder to `/opt/crewly` before initialization; keep `crewly-vps` and `compose.yaml`
-together. Docker's named volume stays associated with project `crewly-vps`.
+`.env` private and preserve it across updates. You can place the source checkout under `/opt/crewly-server` from the start. Keep `crewly-vps`, `compose.yaml` and `.env` together in the deployment folder; keep that folder in place after backups are created because saved backup paths are absolute. Docker's named volume stays associated with project `crewly-vps`.
 
 Merge the generated `nginx.conf` **location block** into the domain's existing
 HTTPS vhost, then run `sudo nginx -t && sudo systemctl reload nginx`. Keep the
@@ -44,12 +42,13 @@ From `deploy/vps` (or the copied `/opt/crewly` folder):
 ./crewly-vps doctor
 ./crewly-vps logs
 ./crewly-vps backup
-./crewly-vps update ghcr.io/crewly-space/server:vNEXT
+./crewly-vps upgrade                        # fetch source, build, back up and update
+./crewly-vps update IMAGE:VERSION           # or use a published/prebuilt image
 ./crewly-vps rollback
 ./crewly-vps restore /absolute/path/to/backups/TIMESTAMP
 ```
 
-`update` accepts a versioned image or digest. It downloads first, backs up the
+`upgrade` fast-forwards a clean source checkout, rebuilds the pinned app and server, then uses the same protected update path. Build or network failures leave the running app alone. `update` accepts a versioned image or digest. It downloads first, backs up the
 entire stopped volume and original environment, starts the new version, and waits
 for readiness. Failed startup automatically restores the previous **image and
 data**, including the encryption key. `rollback` returns to the most recent

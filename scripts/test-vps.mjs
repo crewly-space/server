@@ -43,6 +43,8 @@ try {
   execFileSync('docker', ['build', '-t', image, root], { stdio: 'ignore' });
   assert.throws(() => run('update', image));
   run('doctor');
+  // A failed update must not leave the broken image as the rollback target.
+  run('rollback');
   assert.deepEqual((await api(messages)).map(message => message.body), ['Before the backup']);
   console.log('PASS: VPS init preserves keys; backup restores messages, sessions and setup secret; unhealthy update restores the previous image and data');
 } finally {

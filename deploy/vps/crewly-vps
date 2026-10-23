@@ -74,6 +74,16 @@ restore() {
   if ! healthy; then fail "Restored app failed health checks. Safety backup: $safety"; fi
   printf 'Restored data, encryption key and matching image. Safety backup: %s\n' "$safety"
 }
+build_source() {
+  source_root=$(CDPATH='' cd -- "$ROOT/../.." && pwd)
+  [ -f "$source_root/scripts/prepare-vps.mjs" ] || fail 'Run install from a server source checkout. For an existing image, use init and up.'
+  version=$(sed -n 's/.*"version": "\([0-9][0-9.]*\)".*/\1/p' "$source_root/package.json" | head -n 1)
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'Cannot read the source version'
+  image="crewly-local:$version"
+  docker compose version >/dev/null
+  docker run --rm -v "$source_root:/workspace" -w /workspace node:24-bookworm node scripts/prepare-vps.mjs
+  docker build -f "$source_root/deploy/Dockerfile" -t "$image" "$source_root"
+}
 need docker
 need sha256sum
 command=${1:-help}
@@ -90,17 +100,20 @@ case "$command" in
     public=${2:-}; port=${3:-8787}
     [[ "$public" =~ ^https://[a-zA-Z0-9][a-zA-Z0-9.-]+(:[0-9]+)?/?$ ]] || fail 'Usage: ./crewly-vps install https://your-domain.example [PORT]'
     [[ "$port" =~ ^[0-9]+$ ]] && ((port > 1024 && port < 65536)) || fail 'Choose a port between 1025 and 65535'
-    source_root=$(CDPATH='' cd -- "$ROOT/../.." && pwd)
-    [ -f "$source_root/scripts/prepare-vps.mjs" ] || fail 'Run install from a server source checkout. For an existing image, use init and up.'
-    version=$(sed -n 's/.*"version": "\([0-9][0-9.]*\)".*/\1/p' "$source_root/package.json" | head -n 1)
-    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'Cannot read the source version'
-    image="crewly-local:$version"
-    docker compose version >/dev/null
-    docker run --rm -v "$source_root:/workspace" -w /workspace node:24-bookworm node scripts/prepare-vps.mjs
-    docker build -f "$source_root/deploy/Dockerfile" -t "$image" "$source_root"
+    build_source
     "$0" init "$public" "$image" "$port"
     "$0" up
     printf 'Ready behind nginx. Merge %s/nginx.conf into your existing HTTPS vhost, then run ./crewly-vps setup-code.\n' "$ROOT"
+    ;;
+  upgrade)
+    configured
+    source_root=$(CDPATH='' cd -- "$ROOT/../.." && pwd)
+    [ -d "$source_root/.git" ] && [ -f "$source_root/scripts/prepare-vps.mjs" ] || fail 'Source checkout not found. Use update IMAGE instead.'
+    need git
+    git -C "$source_root" diff --quiet && git -C "$source_root" diff --cached --quiet || fail 'Source has local edits; commit or restore them before upgrading'
+    git -C "$source_root" pull --ff-only
+    build_source
+    "$0" update "$image"
     ;;
   init)
     [ ! -e .env ] || fail '.env already exists; init will never replace your keys'
@@ -142,6 +155,7 @@ NGINX
     if ! healthy; then
       printf 'Update failed; restoring the previous image AND data.\n' >&2
       restore "$previous"
+      printf '%s\n' "$previous" > "$ROOT/.last-backup"
       exit 1
     fi
     "$0" doctor
@@ -157,5 +171,5 @@ NGINX
     ;;
   setup-code) configured; value CREWLY_SETUP_TOKEN ;;
   logs) configured; compose logs --tail 100 -f crewly ;;
-  *) printf '%s\n' 'Crewly VPS: install HTTPS_ORIGIN [PORT] | init HTTPS_ORIGIN IMAGE [PORT] | up | doctor | backup | update IMAGE | rollback | restore BACKUP_DIR | setup-code | logs' ;;
+  *) printf '%s\n' 'Crewly VPS: install HTTPS_ORIGIN [PORT] | init HTTPS_ORIGIN IMAGE [PORT] | up | doctor | backup | upgrade | update IMAGE | rollback | restore BACKUP_DIR | setup-code | logs' ;;
 esac
