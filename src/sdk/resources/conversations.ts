@@ -15,8 +15,8 @@ export interface CreateGroupInput {
 export type AddConversationMemberInput = ParticipantRef;
 
 export interface CreateScheduledTaskInput {
-  requestId: string; name: string; agentId: string; kind: 'task' | 'reminder'; body: string;
-  runAt: string; intervalMinutes?: number;
+  requestId: string; name: string; agentId: string; kind: 'task' | 'reminder' | 'followup'; body: string;
+  runAt: string; intervalMinutes?: number; timeZone?: string;
 }
 
 export interface ScheduledTask {
@@ -26,9 +26,10 @@ export interface ScheduledTask {
   runAt: string;
   intervalMinutes: number | null;
   agentId: string;
-  kind: 'task' | 'reminder';
+  kind: 'task' | 'reminder' | 'followup';
+  timeZone?: string;
   body: string;
-  lastRun: { status: 'running' | 'succeeded' | 'failed' | 'skipped'; error: string | null; createdAt: string } | null;
+  lastRun: { status: 'running' | 'succeeded' | 'failed' | 'skipped'; error: string | null; createdAt: string; skipReason?: string } | null;
 }
 
 export class ConversationsResource {

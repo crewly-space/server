@@ -96,6 +96,16 @@ describe('automation rules', () => {
     createProviderConfig(db, { id: 'not-connected', kind: 'openai-compatible', apiKey: 'test', baseUrl: 'https://example.test/v1' });
     const task = await app.inject({ method: 'POST', url, headers, payload: { ...payload, requestId: 'recurring-task-request', kind: 'task', intervalMinutes: 1440 } });
     expect(task.statusCode).toBe(201); expect(task.json().task).toMatchObject({ kind: 'task', intervalMinutes: 1440 });
+    const followup = { ...payload, requestId: 'proactive-followup-request', kind: 'followup', intervalMinutes: 1440, timeZone: 'Europe/Warsaw' };
+    expect((await app.inject({ method: 'POST', url, headers, payload: { ...followup, intervalMinutes: 60 } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url, headers, payload: { ...followup, timeZone: undefined } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url, headers, payload: { ...followup, timeZone: 'not-a-zone' } })).statusCode).toBe(400);
+    const saved = await app.inject({ method: 'POST', url, headers, payload: followup });
+    expect(saved.statusCode).toBe(201);
+    expect(saved.json().task).toMatchObject({ kind: 'followup', timeZone: 'Europe/Warsaw', intervalMinutes: 1440 });
+    expect((await app.inject({ method: 'POST', url, headers, payload: followup })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url, headers, payload: { ...followup, requestId: 'second-followup-request' } })).statusCode).toBe(409);
+    expect((await app.inject({ method: 'DELETE', url: `${url}/${saved.json().task.id}`, headers })).statusCode).toBe(204);
   });
 
   it('does not expose automation management to a member', async () => {

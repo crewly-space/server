@@ -18,6 +18,8 @@ const CODE_MESSAGES: Record<string, string> = {
   agent_provider_unavailable: 'Connect a model provider for this assistant before scheduling AI work. Plain reminders do not need one.',
   schedule_time_must_be_in_future: 'Choose a time in the future.',
   schedule_request_changed: 'This request was already saved with different details. Refresh your tasks before trying again.',
+  followup_daily_interval_required: 'Proactive follow-ups need a time zone and a repeat interval of at least 24 hours.',
+  followup_already_enabled: 'Proactive follow-ups are already enabled for this assistant in this conversation. Check the active tasks.',
   conversation_agent_not_found: 'That assistant is no longer available in this conversation.',
   provider_not_configured: 'No model provider is configured for that agent. Add one in Settings, then try again.',
   provider_exists: 'A provider with that id already exists. Pick a different id.',

@@ -8,6 +8,7 @@ import { fetchPublicHttps } from '../security/outbound.js';
 import { conversationPeople, emitNotification } from '../notifications/service.js';
 import { isParticipant } from '../conversations/repository.js';
 import { canReadChannel, blockedAgentIds } from '../channels/repository.js';
+import { executeFollowup, isFollowupDaytime } from './proactive.js';
 
 export type AutomationTriggerType = 'webhook' | 'message' | 'schedule' | 'run';
 export type AutomationAction =
@@ -232,6 +233,9 @@ function beginRun(db: Database, rule: Automation, event: AutomationEvent): Autom
 }
 
 async function executeActions(deps: AutomationDeps, rule: Automation, event: AutomationEvent): Promise<Record<string, unknown>> {
+  if (rule.triggerConfig.proactive === true) {
+    return executeFollowup(deps, rule, () => checkConversationScheduleAccess(deps.db, rule, String(rule.triggerConfig.conversationId)));
+  }
   const outputs: unknown[] = [];
   for (const action of rule.actions) {
     if (action.type === 'post_message') {
@@ -281,7 +285,7 @@ export async function dispatchAutomationEvent(deps: AutomationDeps, event: Autom
     if (!run) continue;
     try {
       const output = await executeActions(deps, rule, event);
-      deps.db.prepare('UPDATE automation_runs SET status = \'succeeded\', output = ?, finished_at = ? WHERE id = ?').run(JSON.stringify(output), new Date().toISOString(), run.id);
+      deps.db.prepare('UPDATE automation_runs SET status = ?, output = ?, finished_at = ? WHERE id = ?').run(output.skipped ? 'skipped' : 'succeeded', JSON.stringify(output), new Date().toISOString(), run.id);
     } catch (error) {
       deps.db.prepare('UPDATE automation_runs SET status = \'failed\', error = ?, finished_at = ? WHERE id = ?')
         .run(error instanceof Error ? error.message : String(error), new Date().toISOString(), run.id);
@@ -297,6 +301,7 @@ export async function dispatchAutomationEvent(deps: AutomationDeps, event: Autom
 export async function runDueSchedules(deps: AutomationDeps, now = new Date()): Promise<void> {
   const rules = (deps.db.prepare("SELECT * FROM automations WHERE enabled = 1 AND trigger_type = 'schedule'").all() as AutomationRow[]).map(view);
   for (const rule of rules) {
+    if (rule.triggerConfig.proactive === true && !isFollowupDaytime(String(rule.triggerConfig.timeZone), now)) continue;
     // Preserve the epoch-based cadence/dedupe keys of existing interval rules.
     const start = rule.triggerConfig.runAt === undefined ? 0 : Date.parse(String(rule.triggerConfig.runAt));
     if (!Number.isFinite(start) || now.getTime() < start) continue;

@@ -64,6 +64,10 @@ const OPTIONAL_REPLY_INSTRUCTIONS = `This latest message went to everyone in the
 Reply only if it is about your work, asks something you are best placed to answer, or you have something useful that nobody else is likely to add. Do not reply just to acknowledge, agree or repeat another agent.
 If you have nothing to add, answer with exactly ${NO_REPLY} and nothing else; nothing will be posted.`;
 
+const PROACTIVE_INSTRUCTIONS = `The person enabled proactive follow-ups for this conversation. This is a background review, not a new human request.
+Look for an unresolved goal or blocker in the recent conversation and summary. Only post if you can move it forward with a concrete next action, useful draft or decision. Keep it brief and use the person's language. Do not repeat the previous answer, ask whether they are still there, invent a deadline, or revive a completed or abandoned topic.
+You have no tools on this review. Do not claim to check external systems, perform actions, set reminders or keep monitoring. A useful suggestion or draft is enough. If the conversation is already resolved or nothing useful can be added, answer exactly ${NO_REPLY}; nothing will be posted.`;
+
 /** A model that keeps calling tools gets this many rounds before it must answer. */
 export const MAX_TOOL_ROUNDS = 8;
 
@@ -121,7 +125,7 @@ export function createProviderRespond(
       throw new ProviderError(`agent ${agentId} not found`);
     }
 
-    const toolsets = acceptsTools(db, agent.modelPolicy.defaultProviderId)
+    const toolsets = !input.proactive && acceptsTools(db, agent.modelPolicy.defaultProviderId)
       ? (await Promise.all(toolsetProviders.map((provide) => provide(agent, input))))
         .filter((toolset): toolset is AgentToolset => Boolean(toolset?.definitions.length))
       : [];
@@ -138,7 +142,8 @@ export function createProviderRespond(
       capabilityInstructions(tools?.definitions ?? []),
       facts.length && `Memory facts:\n${facts.map((f) => `- ${f.content}`).join('\n')}`,
       summary && `Conversation summary: ${summary.summary}`,
-      input.optionalReply && OPTIONAL_REPLY_INSTRUCTIONS].filter(Boolean).join('\n\n');
+      input.proactive ? `${PROACTIVE_INSTRUCTIONS}\nReview focus chosen by the person: ${input.proactiveFocus ?? 'Unresolved work in this conversation.'}`
+        : input.optionalReply && OPTIONAL_REPLY_INSTRUCTIONS].filter(Boolean).join('\n\n');
     const messages: ChatMessage[] = context
       ? [{ role: 'system', content: context }, ...toChatMessages(agentId, recentMessages)]
       : toChatMessages(agentId, recentMessages);
