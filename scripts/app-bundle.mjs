@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, resolve, sep } from 'node:path';
 
 export function verifyAppBundle(directory, expectedVersion) {
@@ -26,6 +26,9 @@ export function installLocalApp(source, target, version) {
     cpSync(source, stage, { recursive: true });
     if (existsSync(resolve(target, '.gitkeep'))) cpSync(resolve(target, '.gitkeep'), resolve(stage, '.gitkeep'));
     verifyAppBundle(stage, version);
+    // Public assets prepared by a build container must remain readable to the
+    // host Docker client and the non-root runtime. Secrets never live here.
+    chmodSync(stage, 0o755);
     if (existsSync(target)) renameSync(target, previous);
     try { renameSync(stage, target); } catch (error) { if (existsSync(previous)) renameSync(previous, target); throw error; }
   } finally { rmSync(stage, { recursive: true, force: true }); rmSync(previous, { recursive: true, force: true }); }

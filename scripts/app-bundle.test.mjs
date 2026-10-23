@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, statSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installLocalApp } from './app-bundle.mjs';
@@ -21,5 +21,6 @@ test('installs only complete matching bundles and preserves the old app after a 
     assert.equal(readFileSync(join(target, 'index.html'), 'utf8'), 'old working app');
     writeFileSync(join(source, 'index.html'), html); installLocalApp(source, target, '0.2.0');
     assert.equal(readFileSync(join(target, 'index.html'), 'utf8'), html);
+    assert.equal(statSync(target).mode & 0o777, 0o755);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

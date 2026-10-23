@@ -15,11 +15,8 @@ Run these from the server checkout (the first two commands may take a few minute
 ```sh
 git clone --branch codex/simple-hosting https://github.com/crewly-space/server.git crewly-server
 cd crewly-server
-docker run --rm -v "$PWD:/workspace" -w /workspace node:24-bookworm node scripts/prepare-vps.mjs
-docker build -f deploy/Dockerfile -t crewly-local:0.2.0 .
+./deploy/vps/crewly-vps install https://app.crewly.space 8787
 cd deploy/vps
-./crewly-vps init https://app.crewly.space crewly-local:0.2.0 8787
-./crewly-vps up
 ./crewly-vps setup-code
 ```
 

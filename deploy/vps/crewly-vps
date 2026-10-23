@@ -17,6 +17,17 @@ set_image() {
   mv "$stage" .env
 }
 healthy() { compose up -d --wait --wait-timeout "${CREWLY_WAIT_TIMEOUT:-120}" crewly; }
+wait_existing() {
+  local container deadline status
+  container=$(compose ps -a -q crewly)
+  deadline=$((SECONDS + ${CREWLY_WAIT_TIMEOUT:-120}))
+  while ((SECONDS < deadline)); do
+    status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")
+    case "$status" in healthy) return 0 ;; unhealthy|exited|dead) return 1 ;; esac
+    sleep 1
+  done
+  return 1
+}
 image_id() {
   local container
   container=$(compose ps -a -q crewly)
@@ -38,7 +49,7 @@ backup() {
     fail "Backup failed; previous app restarted. Incomplete backup: $folder"
   fi
   (cd "$folder" && sha256sum data.tar.gz server.env image > checksums.txt)
-  if [ "$restart_mode" = wait ]; then compose start --wait --wait-timeout "${CREWLY_WAIT_TIMEOUT:-120}" crewly >/dev/null; fi
+  if [ "$restart_mode" = wait ]; then compose start crewly >/dev/null; wait_existing || fail "App did not recover after backup. Snapshot: $folder"; fi
   printf '%s\n' "$folder" > "$ROOT/.last-backup"
   printf 'Backup: %s\n' "$folder"
 }
@@ -74,6 +85,23 @@ case "$command" in
     ;;
 esac
 case "$command" in
+  install)
+    [ ! -e .env ] || fail 'This deployment is already configured. Use update IMAGE, or up to resume it.'
+    public=${2:-}; port=${3:-8787}
+    [[ "$public" =~ ^https://[a-zA-Z0-9][a-zA-Z0-9.-]+(:[0-9]+)?/?$ ]] || fail 'Usage: ./crewly-vps install https://your-domain.example [PORT]'
+    [[ "$port" =~ ^[0-9]+$ ]] && ((port > 1024 && port < 65536)) || fail 'Choose a port between 1025 and 65535'
+    source_root=$(CDPATH='' cd -- "$ROOT/../.." && pwd)
+    [ -f "$source_root/scripts/prepare-vps.mjs" ] || fail 'Run install from a server source checkout. For an existing image, use init and up.'
+    version=$(sed -n 's/.*"version": "\([0-9][0-9.]*\)".*/\1/p' "$source_root/package.json" | head -n 1)
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'Cannot read the source version'
+    image="crewly-local:$version"
+    docker compose version >/dev/null
+    docker run --rm -v "$source_root:/workspace" -w /workspace node:24-bookworm node scripts/prepare-vps.mjs
+    docker build -f "$source_root/deploy/Dockerfile" -t "$image" "$source_root"
+    "$0" init "$public" "$image" "$port"
+    "$0" up
+    printf 'Ready behind nginx. Merge %s/nginx.conf into your existing HTTPS vhost, then run ./crewly-vps setup-code.\n' "$ROOT"
+    ;;
   init)
     [ ! -e .env ] || fail '.env already exists; init will never replace your keys'
     public=${2:-}; image=${3:-}; port=${4:-8787}
@@ -83,7 +111,6 @@ case "$command" in
     need openssl
     printf 'CREWLY_PUBLIC_URL=%s\nCREWLY_SERVER_IMAGE=%s\nCREWLY_PORT=%s\nCREWLY_SECRETS_KEY=%s\nCREWLY_SETUP_TOKEN=%s\n' \
       "${public%/}" "$image" "$port" "$(openssl rand -base64 32)" "$(openssl rand -hex 32)" > .env
-    domain=${public#https://}; domain=${domain%/}
     cat > nginx.conf <<NGINX
 # Merge this upstream into your existing HTTPS vhost. Do not create a second
 # vhost for a domain that nginx already serves. Keep your current TLS config.
@@ -92,7 +119,7 @@ location / {
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-For \$remote_addr;
     proxy_set_header X-Forwarded-Proto \$scheme;
     proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -130,5 +157,5 @@ NGINX
     ;;
   setup-code) configured; value CREWLY_SETUP_TOKEN ;;
   logs) configured; compose logs --tail 100 -f crewly ;;
-  *) printf '%s\n' 'Crewly VPS: init HTTPS_ORIGIN IMAGE [PORT] | up | doctor | backup | update IMAGE | rollback | restore BACKUP_DIR | setup-code | logs' ;;
+  *) printf '%s\n' 'Crewly VPS: install HTTPS_ORIGIN [PORT] | init HTTPS_ORIGIN IMAGE [PORT] | up | doctor | backup | update IMAGE | rollback | restore BACKUP_DIR | setup-code | logs' ;;
 esac
