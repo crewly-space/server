@@ -13,6 +13,8 @@ step uses disposable Node containers; you do not need Node installed on the VPS.
 Run these from the server checkout (the first two commands may take a few minutes):
 
 ```sh
+git clone --branch codex/simple-hosting https://github.com/crewly-space/server.git crewly-server
+cd crewly-server
 docker run --rm -v "$PWD:/workspace" -w /workspace node:24-bookworm node scripts/prepare-vps.mjs
 docker build -f deploy/Dockerfile -t crewly-local:0.2.0 .
 cd deploy/vps

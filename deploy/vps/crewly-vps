@@ -17,12 +17,18 @@ set_image() {
   mv "$stage" .env
 }
 healthy() { compose up -d --wait --wait-timeout "${CREWLY_WAIT_TIMEOUT:-120}" crewly; }
-image_id() { docker image inspect --format '{{.Id}}' "$(value CREWLY_SERVER_IMAGE)"; }
+image_id() {
+  local container
+  container=$(compose ps -a -q crewly)
+  if [ -n "$container" ]; then docker inspect --format '{{.Image}}' "$container"
+  else docker image inspect --format '{{.Id}}' "$(value CREWLY_SERVER_IMAGE)"; fi
+}
 backup() {
   configured
-  local stamp folder id
+  local stamp folder id restart_mode=${1:-wait}
   stamp=$(date -u +%Y%m%dT%H%M%SZ)-$$
-  folder="$ROOT/backups/$stamp"; mkdir -p "$folder"
+  mkdir -p "$ROOT/backups"
+  folder=$(mktemp -d "$ROOT/backups/$stamp.XXXXXX")
   id=$(image_id)
   cp .env "$folder/server.env"; printf '%s\n' "$id" > "$folder/image"
   # Include the whole stopped data volume: DB, WAL, attachments, pairing keys.
@@ -32,7 +38,7 @@ backup() {
     fail "Backup failed; previous app restarted. Incomplete backup: $folder"
   fi
   (cd "$folder" && sha256sum data.tar.gz server.env image > checksums.txt)
-  compose start crewly >/dev/null
+  if [ "$restart_mode" = wait ]; then compose start --wait --wait-timeout "${CREWLY_WAIT_TIMEOUT:-120}" crewly >/dev/null; fi
   printf '%s\n' "$folder" > "$ROOT/.last-backup"
   printf 'Backup: %s\n' "$folder"
 }
@@ -45,7 +51,7 @@ restore() {
   # Validate before taking anything offline. Only our fixed three files matter.
   [ -s "$folder/server.env" ] && [ -s "$folder/image" ] || fail 'Backup metadata is missing'
   tar -tzf "$folder/data.tar.gz" >/dev/null || fail 'Unreadable backup archive'
-  backup
+  backup no-restart
   safety=$(cat .last-backup)
   compose stop crewly >/dev/null
   if ! compose run --rm --no-deps -T --entrypoint sh crewly -ec \
@@ -105,7 +111,7 @@ NGINX
     configured; next=${2:-}; [[ "$next" =~ ^[a-zA-Z0-9][a-zA-Z0-9._/@:+-]+$ ]] || fail 'Usage: ./crewly-vps update IMAGE:VERSION'
     # Fetch first; network failure cannot stop a working installation.
     docker image inspect "$next" >/dev/null 2>&1 || docker pull "$next"
-    backup; previous=$(cat .last-backup); set_image "$next"
+    backup no-restart; previous=$(cat .last-backup); set_image "$next"
     if ! healthy; then
       printf 'Update failed; restoring the previous image AND data.\n' >&2
       restore "$previous"

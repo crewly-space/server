@@ -18,7 +18,7 @@ const port = probe.address().port; await new Promise(resolve => probe.close(reso
 let token;
 async function api(path, body) {
   const response = await fetch(`http://127.0.0.1:${port}/api/v1${path}`, { method: body ? 'POST' : 'GET',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body && JSON.stringify(body) });
+    headers: { 'content-type': 'application/json', connection: 'close', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body && JSON.stringify(body) });
   if (!response.ok) throw new Error(`${path}: ${response.status} ${await response.text()}`);
   return response.json();
 }
