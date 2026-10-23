@@ -80,7 +80,9 @@ describe('scheduled proactive agent consultations', () => {
     expect(messages()).toEqual([{ author_id: userId, body: 'Our launch still needs a useful plan.' }, { author_id: lead, body: 'Next step: run a small pilot with these acceptance checks.' }]);
     expect(tree().map(run => ({ agentId: run.agentId, status: run.status }))).toEqual([{ agentId: lead, status: 'completed' }, { agentId: researcher, status: 'completed' }]);
     expect(listRunEvents(db, tree()[0]!.runId).some(event => event.type === 'delegation.completed')).toBe(true);
-    await vi.advanceTimersByTimeAsync(24 * 60 * 60000);
+    vi.setSystemTime(new Date('2030-06-02T12:01:00Z'));
+    await vi.advanceTimersByTimeAsync(60000);
+    await vi.waitFor(() => expect(listAutomationRuns(db, ruleId)).toHaveLength(2));
     expect(sent).toHaveLength(3);
   });
 
