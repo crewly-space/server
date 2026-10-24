@@ -42,7 +42,7 @@ npm run fetch:app          # sibling ../app/dist, else the app release
 docker build -f deploy/Dockerfile -t crewly-server .
 ```
 
-The image must include a complete, version-matching app. The build fetches its pinned release if no prepared web/ exists; a missing or corrupt app stops the build. To deploy a candidate before a public app release exists, use the separate pinned-source preparation in [the VPS guide](docs/vps.md).
+The image must include a complete, version-matching app. The build fetches its pinned release if no prepared web/ exists; a missing or corrupt app stops the build. To build the server and its pinned app from source, use the separate preparation in [the VPS guide](docs/vps.md).
 
 ## External connectors
 

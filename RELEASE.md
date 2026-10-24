@@ -55,6 +55,6 @@ online for reminders. Keep the original encryption key and device identity.
 Cloud account/organization/subscription data is not imported into standalone
 server accounts. Export only after stopping writes and keeping a rollback copy.
 
-This candidate does not provision hosting, change live DNS or migrate an
+This release does not provision hosting, change live DNS or migrate an
 existing production database. The first-run code on Render comes from
 `CREWLY_SETUP_TOKEN` in its Environment dashboard.

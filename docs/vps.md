@@ -6,14 +6,14 @@ origin**. No separate database process, Cloud, Superserver or frontend host is
 required. SQLite is the default. Use Turso only if you specifically want a
 managed remote database; this backup/restore workflow is for local SQLite.
 
-## Deploy this candidate before public releases exist
+## Install on your VPS
 
-Clone the server at the candidate branch and prepare its pinned app. The build
+Clone the server from `main` and prepare its pinned app. The build
 step uses disposable Node containers; you do not need Node installed on the VPS.
 Run these from the server checkout (the first two commands may take a few minutes):
 
 ```sh
-git clone --branch codex/simple-hosting https://github.com/crewly-space/server.git crewly-server
+git clone --branch main https://github.com/crewly-space/server.git crewly-server
 cd crewly-server
 ./deploy/vps/crewly-vps install https://app.crewly.space 8787
 cd deploy/vps
