@@ -25,6 +25,7 @@ export {
   type AddConversationMemberInput,
   type CreateDmInput,
   type CreateGroupInput,
+  type ScheduledTask,
 } from './resources/conversations.js';
 export {
   ChannelsResource,
@@ -219,6 +220,7 @@ export {
   type WebSocketConnection,
   type WebSocketConstructor,
   type WsEventHandler,
+  type WsConnectionState,
 } from './ws-client.js';
 
 export type {

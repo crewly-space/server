@@ -24,7 +24,7 @@ describe('runtime end-to-end: agent invocation, WS delivery, and max-hop protect
     db.pragma('foreign_keys = ON');
     runMigrations(db);
     createProviderConfig(db, { id: 'anthropic', kind: 'anthropic', apiKey: 'sk-test' });
-    app = await buildApp({ db, respond });
+    app = await buildApp({ db, respond, logger: process.env.CREWLY_TEST_DATABASE_URL ? { level: 'error' } : false });
     await app.listen({ port: 0, host: '127.0.0.1' });
     const address = app.server.address();
     if (typeof address === 'string' || address === null) throw new Error('expected AddressInfo');
@@ -99,7 +99,7 @@ describe('runtime end-to-end: agent invocation, WS delivery, and max-hop protect
       headers: { authorization: `Bearer ${token}` },
       payload: { conversationId },
     });
-    expect(invoke.statusCode).toBe(201);
+    expect(invoke.statusCode, invoke.body).toBe(201);
     expect(invoke.json().message.body).toBe('Hello from the agent!');
 
     const received = await messagePromise;
@@ -138,7 +138,7 @@ describe('runtime end-to-end: agent invocation, WS delivery, and max-hop protect
       headers: { authorization: `Bearer ${token}` },
       payload: { conversationId },
     });
-    expect(invoke.statusCode).toBe(201);
+    expect(invoke.statusCode, invoke.body).toBe(201);
 
     const messages = await app.inject({
       method: 'GET',

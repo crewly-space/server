@@ -12,9 +12,11 @@ export type WebSocketConstructor = new (url: string) => WebSocketConnection;
 interface ActiveWebSocket extends WebSocketConnection {
   onopen: (() => void) | null;
   onmessage: ((event: { data: unknown }) => void) | null;
-  onclose: (() => void) | null;
+  onclose: ((event?: { code?: number }) => void) | null;
   onerror: (() => void) | null;
 }
+
+export type WsConnectionState = 'connecting' | 'connected' | 'disconnected' | 'unauthorized' | 'forbidden';
 
 export class WsClient {
   private socket: ActiveWebSocket | undefined;
@@ -25,6 +27,8 @@ export class WsClient {
   private lastToken: string | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
+  private retryDelay = 1000;
+  private stateHandlers: ((state: WsConnectionState) => void)[] = [];
 
   constructor(
     private readonly baseUrl: string,
@@ -37,10 +41,12 @@ export class WsClient {
     this.lastToken = input.token;
     this.lastSeq = undefined;
     this.resumeSeq = input.sinceSeq;
+    this.retryDelay = 1000;
     this.openSocket(input);
   }
 
   private openSocket(input: { token: string; sinceSeq?: number }): void {
+    this.emitState('connecting');
     const wsUrl = this.baseUrl.replace(/\/+$/, '').replace(/^http/, 'ws');
     const socket = new this.WebSocketImpl(`${wsUrl}/api/v1/ws`) as ActiveWebSocket;
     // Browsers surface connection failures as events, while implementations such as
@@ -52,25 +58,45 @@ export class WsClient {
       socket.send(JSON.stringify({ type: 'authenticate', token: input.token, ...(input.sinceSeq !== undefined ? { sinceSeq: input.sinceSeq } : {}) }));
     };
     socket.onmessage = (event) => {
-      const decoded = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data)) as WsServerEvent | { type: 'authenticated' };
+      let decoded: WsServerEvent | { type: 'authenticated' };
+      try { decoded = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data)); } catch { return; }
+      if (!decoded || typeof decoded !== 'object') return;
       if (decoded.type === 'authenticated' && !('seq' in decoded)) {
+        this.retryDelay = 1000;
+        this.emitState('connected');
         for (const handler of this.openHandlers) handler();
         return;
       }
       const parsed = decoded as WsServerEvent;
+      if (!Number.isSafeInteger(parsed.seq) || parsed.seq < 0) return;
       if (this.resumeSeq !== undefined && parsed.seq <= this.resumeSeq) return;
       this.lastSeq = this.lastSeq === undefined ? parsed.seq : Math.max(this.lastSeq, parsed.seq);
       this.resumeSeq = this.resumeSeq === undefined ? parsed.seq : Math.max(this.resumeSeq, parsed.seq);
       for (const handler of this.handlers) handler(parsed);
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (this.stopped || this.socket !== socket) return;
       this.socket = undefined;
+      if (event?.code === 4001 || event?.code === 4003) {
+        this.stopped = true;
+        this.emitState(event.code === 4001 ? 'unauthorized' : 'forbidden');
+        return;
+      }
+      this.emitState('disconnected');
       this.reconnectTimer = setTimeout(() => {
         if (!this.stopped && this.lastToken) this.openSocket({ token: this.lastToken, sinceSeq: this.resumeSeq });
-      }, 1000);
+      }, this.retryDelay);
+      this.retryDelay = Math.min(this.retryDelay * 2, 30_000);
     };
     this.socket = socket;
+  }
+
+  onState(handler: (state: WsConnectionState) => void): void {
+    this.stateHandlers.push(handler);
+  }
+
+  private emitState(state: WsConnectionState): void {
+    for (const handler of this.stateHandlers) handler(state);
   }
 
   onEvent(handler: WsEventHandler): void {

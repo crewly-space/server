@@ -5,6 +5,9 @@ import type { ConnectionHub } from '../ws/hub.js';
 import { runAgentTurn, type RespondFn } from '../runtime/engine.js';
 import type { AgentRunQueue } from '../runtime/queue.js';
 import { fetchPublicHttps } from '../security/outbound.js';
+import { conversationPeople, emitNotification } from '../notifications/service.js';
+import { isParticipant } from '../conversations/repository.js';
+import { canReadChannel, blockedAgentIds } from '../channels/repository.js';
 
 export type AutomationTriggerType = 'webhook' | 'message' | 'schedule' | 'run';
 export type AutomationAction =
@@ -105,9 +108,15 @@ function prepareInput(input: AutomationInput): { data: AutomationInput; webhookS
     config.secretHash = hashSecret(webhookSecret);
   }
   if (input.triggerType === 'schedule') {
-    const interval = Number(config.intervalMinutes ?? 60);
-    if (!Number.isInteger(interval) || interval < 1 || interval > 10080) throw new Error('schedule_interval_invalid');
-    config.intervalMinutes = interval;
+    if (config.runAt !== undefined) {
+      if (typeof config.runAt !== 'string' || !Number.isFinite(Date.parse(config.runAt))) throw new Error('schedule_time_invalid');
+      config.runAt = new Date(config.runAt).toISOString();
+    }
+    if (config.runAt === undefined || config.intervalMinutes !== undefined) {
+      const interval = Number(config.intervalMinutes ?? 60);
+      if (!Number.isInteger(interval) || interval < 1 || interval > 10080) throw new Error('schedule_interval_invalid');
+      config.intervalMinutes = interval;
+    }
   }
   return {
     webhookSecret,
@@ -169,6 +178,8 @@ export function verifyWebhookSecret(db: Database, id: string, secret: string): b
 
 export interface AutomationEvent {
   type: AutomationTriggerType;
+  /** Targeted triggers (schedules/webhooks) must never wake unrelated rules. */
+  automationId?: string;
   eventId?: string;
   dedupeKey: string;
   payload: Record<string, unknown>;
@@ -183,6 +194,17 @@ export interface AutomationDeps {
   queue?: AgentRunQueue;
   fetchImpl?: typeof fetch;
   automationDispatch?: (event: { type: 'message' | 'run'; eventId: string; dedupeKey: string; payload: Record<string, unknown>; conversationId?: string; hopCount?: number }) => Promise<void> | void;
+}
+
+function checkConversationScheduleAccess(db: Database, rule: Automation, conversationId: string): void {
+  if (rule.triggerConfig.kind !== 'conversation_schedule') return;
+  const agentId = String(rule.triggerConfig.agentId ?? '');
+  if (!rule.createdBy || rule.triggerConfig.conversationId !== conversationId
+    || !db.prepare('SELECT 1 FROM users WHERE id = ? AND suspended_at IS NULL').get(rule.createdBy)
+    || (!isParticipant(db, conversationId, rule.createdBy, 'user') && !canReadChannel(db, conversationId, rule.createdBy))
+    || !isParticipant(db, conversationId, agentId, 'agent') || blockedAgentIds(db, conversationId).includes(agentId)) {
+    throw new Error('schedule_access_revoked');
+  }
 }
 
 function conditionsMatch(conditions: Record<string, unknown>, payload: Record<string, unknown>): boolean {
@@ -215,14 +237,21 @@ async function executeActions(deps: AutomationDeps, rule: Automation, event: Aut
     if (action.type === 'post_message') {
       const conversationId = action.conversationId ?? event.conversationId;
       if (!conversationId) throw new Error('automation_message_conversation_required');
+      checkConversationScheduleAccess(deps.db, rule, conversationId);
       const message = createMessage(deps.db, { conversationId, authorId: `automation:${rule.id}`, authorType: 'integration', body: action.body, mentions: [], replyToMessageId: null });
       deps.hub.publish(`conversation:${conversationId}`, 'message.created', { ...message });
+      await emitNotification(deps.db, {
+        type: 'mention.created', recipients: rule.triggerConfig.kind === 'conversation_schedule' && rule.createdBy
+          ? [{ userId: rule.createdBy }] : conversationPeople(deps.db, conversationId),
+        dedupeKey: `automation-message:${message.id}`, title: rule.name, body: action.body.slice(0, 280), conversationId,
+      });
       outputs.push({ type: action.type, messageId: message.id });
       continue;
     }
     if (action.type === 'invoke_agent') {
       const conversationId = action.conversationId ?? event.conversationId;
       if (!conversationId) throw new Error('automation_agent_conversation_required');
+      checkConversationScheduleAccess(deps.db, rule, conversationId);
       const prompt = action.prompt?.trim() || `Automation ${rule.name} was triggered.`;
       const promptMessage = createMessage(deps.db, { conversationId, authorId: `automation:${rule.id}`, authorType: 'integration', body: prompt, mentions: [], replyToMessageId: null });
       deps.hub.publish(`conversation:${conversationId}`, 'message.created', { ...promptMessage });
@@ -246,6 +275,7 @@ export async function dispatchAutomationEvent(deps: AutomationDeps, event: Autom
   const rules = (deps.db.prepare('SELECT * FROM automations WHERE enabled = 1 AND trigger_type = ?').all(event.type) as AutomationRow[]).map(view);
   if (hopCount > MAX_HOPS) return;
   for (const rule of rules) {
+    if (event.automationId && event.automationId !== rule.id) continue;
     if (!conditionsMatch(rule.conditions, event.payload)) continue;
     const run = beginRun(deps.db, rule, event);
     if (!run) continue;
@@ -255,6 +285,11 @@ export async function dispatchAutomationEvent(deps: AutomationDeps, event: Autom
     } catch (error) {
       deps.db.prepare('UPDATE automation_runs SET status = \'failed\', error = ?, finished_at = ? WHERE id = ?')
         .run(error instanceof Error ? error.message : String(error), new Date().toISOString(), run.id);
+      if (rule.triggerConfig.kind === 'conversation_schedule' && rule.createdBy) {
+        await emitNotification(deps.db, { type: 'agent.needs_attention', recipients: [{ userId: rule.createdBy }],
+          dedupeKey: `schedule-failed:${run.id}`, title: `${rule.name} could not finish`,
+          body: error instanceof Error ? error.message : String(error) });
+      }
     }
   }
 }
@@ -262,12 +297,20 @@ export async function dispatchAutomationEvent(deps: AutomationDeps, event: Autom
 export async function runDueSchedules(deps: AutomationDeps, now = new Date()): Promise<void> {
   const rules = (deps.db.prepare("SELECT * FROM automations WHERE enabled = 1 AND trigger_type = 'schedule'").all() as AutomationRow[]).map(view);
   for (const rule of rules) {
-    const interval = Number(rule.triggerConfig.intervalMinutes ?? 60);
-    const slot = Math.floor(now.getTime() / (interval * 60_000));
+    // Preserve the epoch-based cadence/dedupe keys of existing interval rules.
+    const start = rule.triggerConfig.runAt === undefined ? 0 : Date.parse(String(rule.triggerConfig.runAt));
+    if (!Number.isFinite(start) || now.getTime() < start) continue;
+    const recurring = rule.triggerConfig.intervalMinutes !== undefined;
+    const interval = Number(rule.triggerConfig.intervalMinutes);
+    if (recurring && (!Number.isInteger(interval) || interval < 1 || interval > 10080)) continue;
+    const slot = recurring ? Math.floor((now.getTime() - start) / (interval * 60_000)) : 0;
+    const dedupeKey = rule.triggerConfig.runAt === undefined
+      ? `schedule:${slot}` : `schedule:${start}:${recurring ? interval : 'once'}:${slot}`;
     await dispatchAutomationEvent(deps, {
-      type: 'schedule', eventId: `schedule:${rule.id}:${slot}`, dedupeKey: `schedule:${slot}`,
+      type: 'schedule', automationId: rule.id, eventId: `${rule.id}:${dedupeKey}`, dedupeKey,
       payload: { scheduledAt: now.toISOString(), slot }, hopCount: 0,
     });
+    if (!recurring) deps.db.prepare('UPDATE automations SET enabled = 0 WHERE id = ?').run(rule.id);
   }
 }
 
