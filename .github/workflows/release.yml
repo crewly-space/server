@@ -160,6 +160,8 @@ jobs:
       - name: Sign the checksums
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          # Public trust anchor embedded in the published CLI v0.1.14.
+          RELEASE_PUBLIC_KEY: LEZFVrHlBk2PyBZ2bm7A5y9pVJ4BGXgCno2wpfp70lg=
         working-directory: deploy/dist
         run: |
           set -eu
@@ -174,7 +176,12 @@ jobs:
           openssl pkeyutl -sign -rawin -inkey "$key" -in checksums.txt -out checksums.txt.sig
           openssl pkey -in "$key" -pubout -out "$pub"
           openssl pkeyutl -verify -rawin -pubin -inkey "$pub" -in checksums.txt -sigfile checksums.txt.sig
-          echo "Signed with public key: $(openssl pkey -pubin -in "$pub" -outform DER | tail -c 32 | base64)"
+          signed_key=$(openssl pkey -pubin -in "$pub" -outform DER | tail -c 32 | base64)
+          if [ "$signed_key" != "$RELEASE_PUBLIC_KEY" ]; then
+            echo "::error::The existing CLI does not trust this signing key; refusing to publish"
+            exit 1
+          fi
+          echo "Signed with public key: $signed_key"
 
       # A release branch creates its version tag only after all archives and
       # the final signed checksum listing are ready. Existing tags are never moved.
