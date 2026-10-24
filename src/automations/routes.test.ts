@@ -3,7 +3,9 @@ import { buildApp } from '../app.js';
 import { openSqlite, type Database } from '../db/driver.js';
 import { createUser } from '../users/repository.js';
 import { createSession } from '../auth/session.js';
-import { createAutomation } from './service.js';
+import { createAgent } from '../agents/repository.js';
+import { createProviderConfig } from '../providers/repository.js';
+import { createAutomation, runDueSchedules } from './service.js';
 import { createConversation, removeParticipant } from '../conversations/repository.js';
 import { runMigrations } from '../db/migrate.js';
 
@@ -70,6 +72,40 @@ describe('automation rules', () => {
     removeParticipant(db, conversation.id, member.id);
     expect((await app.inject({ method: 'GET', url: path, headers })).statusCode).toBe(404);
     expect((await app.inject({ method: 'DELETE', url: `${path}/${own.id}`, headers })).statusCode).toBe(404);
+  });
+
+  it('creates member reminders without a model, deduplicates retries and persists delivery', async () => {
+    const member = createUser(db, { email: 'schedule@example.test', displayName: 'Member', passwordHash: 'x', role: 'member' });
+    const agent = createAgent(db, { ownerUserId: member.id, name: 'Helper', personality: '',
+      modelPolicy: { defaultProviderId: 'not-connected', defaultModel: 'model' }, permissions: { tools: [], canMessageAgents: true, canApproveOwnActions: false } });
+    const conversation = createConversation(db, { kind: 'dm', name: null, participants: [{ participantId: member.id, participantType: 'user' }, { participantId: agent.id, participantType: 'agent' }] });
+    const headers = { authorization: `Bearer ${createSession(db, member.id)}` };
+    const url = `/api/v1/conversations/${conversation.id}/scheduled-tasks`;
+    const payload = { requestId: 'request-reminder-0001', name: 'Take a break', agentId: agent.id, kind: 'reminder', body: 'Stand up', runAt: '2030-01-01T12:00:00Z' };
+    const create = () => app.inject({ method: 'POST', url, headers, payload });
+    const first = await create(); expect(first.statusCode).toBe(201);
+    const retry = await create(); expect(retry.statusCode).toBe(200); expect(retry.json().task.id).toBe(first.json().task.id);
+    expect((await app.inject({ method: 'POST', url, headers, payload: { ...payload, body: 'Different' } })).statusCode).toBe(409);
+    expect((await app.inject({ method: 'POST', url, headers: { authorization: `Bearer ${token}` }, payload })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'POST', url, headers, payload: { ...payload, requestId: 'invalid-time-request', runAt: '2000-01-01T00:00:00Z' } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url, headers, payload: { ...payload, requestId: 'missing-model-request', kind: 'task' } })).statusCode).toBe(409);
+    await runDueSchedules({ db, hub: app.hub, respond: async () => ({ body: 'unused' }) }, new Date('2030-01-01T12:01:00Z'));
+    const completed = await create(); expect(completed.json().task).toMatchObject({ enabled: false, lastRun: { status: 'succeeded' } });
+    const messages = await app.inject({ method: 'GET', url: `/api/v1/conversations/${conversation.id}/messages`, headers });
+    expect(messages.json().map((message: { body: string }) => message.body)).toEqual(['Stand up']);
+    createProviderConfig(db, { id: 'not-connected', kind: 'openai-compatible', apiKey: 'test', baseUrl: 'https://example.test/v1' });
+    const task = await app.inject({ method: 'POST', url, headers, payload: { ...payload, requestId: 'recurring-task-request', kind: 'task', intervalMinutes: 1440 } });
+    expect(task.statusCode).toBe(201); expect(task.json().task).toMatchObject({ kind: 'task', intervalMinutes: 1440 });
+    const followup = { ...payload, requestId: 'proactive-followup-request', kind: 'followup', intervalMinutes: 1440, timeZone: 'Europe/Warsaw' };
+    expect((await app.inject({ method: 'POST', url, headers, payload: { ...followup, intervalMinutes: 60 } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url, headers, payload: { ...followup, timeZone: undefined } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url, headers, payload: { ...followup, timeZone: 'not-a-zone' } })).statusCode).toBe(400);
+    const saved = await app.inject({ method: 'POST', url, headers, payload: followup });
+    expect(saved.statusCode).toBe(201);
+    expect(saved.json().task).toMatchObject({ kind: 'followup', timeZone: 'Europe/Warsaw', intervalMinutes: 1440 });
+    expect((await app.inject({ method: 'POST', url, headers, payload: followup })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url, headers, payload: { ...followup, requestId: 'second-followup-request' } })).statusCode).toBe(409);
+    expect((await app.inject({ method: 'DELETE', url: `${url}/${saved.json().task.id}`, headers })).statusCode).toBe(204);
   });
 
   it('does not expose automation management to a member', async () => {

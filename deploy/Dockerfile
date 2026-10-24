@@ -1,10 +1,9 @@
 # Build from this repository root:
 #   docker build -f deploy/Dockerfile -t crewly-server .
 #
-# The web UI lives in the crewly-app repository and is NOT built here. Put a
-# built app under ./web first -- `npm run fetch:app` downloads it from the
-# app repo's release, or copy a sibling checkout's dist/ there yourself. The
-# image is still valid without it; the server simply serves no UI.
+# The app is downloaded from its release, not built in this repository.
+# A prepared web/ takes precedence; otherwise pin CREWLY_APP_VERSION below.
+# A missing app fails the build instead of producing an API-only deployment.
 FROM node:24-bookworm-slim AS build
 WORKDIR /workspace
 
@@ -14,7 +13,12 @@ RUN npm ci
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 COPY scripts ./scripts
-RUN npm run build && npm prune --omit=dev
+COPY release.json ./release.json
+COPY web ./web
+ARG CREWLY_APP_VERSION
+RUN npm run build && \
+    if [ ! -f web/index.html ]; then node scripts/fetch-app.mjs "$CREWLY_APP_VERSION"; fi && \
+    npm prune --omit=dev
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production \
@@ -28,9 +32,7 @@ WORKDIR /app
 COPY --from=build /workspace/package.json ./package.json
 COPY --from=build /workspace/node_modules ./node_modules
 COPY --from=build /workspace/dist ./dist
-# Always present (web/.gitkeep is committed); empty unless fetch:app ran, in
-# which case it holds the built app. An empty web/ means the API serves no UI.
-COPY web ./web
+COPY --from=build /workspace/web ./web
 RUN mkdir -p /data /app/web && chown -R node:node /app /data
 USER node
 VOLUME ["/data"]

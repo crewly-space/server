@@ -254,6 +254,24 @@ describe('createProviderRespond', () => {
       db.close();
     });
 
+    it('makes proactive reviews text-only and gives them a silent outcome', async () => {
+      const { db, agent } = freshSetup();
+      createProviderConfig(db, { id: 'primary', kind: 'anthropic', apiKey: 'sk-test' });
+      const bodies: Array<{ system?: string; tools?: unknown[] }> = [];
+      let toolsetRequested = false;
+      await createProviderRespond(db, captureSystem(bodies, []), undefined, {
+        toolsets: [() => { toolsetRequested = true; return undefined; }],
+      })({ agentId: agent.id, conversationId: 'c', recentMessages: [], optionalReply: true, proactive: true, proactiveFocus: 'The launch draft' });
+      expect(toolsetRequested).toBe(false);
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]!.tools).toBeUndefined();
+      expect(bodies[0]!.system).toContain('background review');
+      expect(bodies[0]!.system).toContain('answer exactly NO_REPLY');
+      expect(bodies[0]!.system).toContain('The launch draft');
+      expect(bodies[0]!.system).not.toContain('This latest message went to everyone');
+      db.close();
+    });
+
     it('lists exactly the tools this run offers, and no global ones', async () => {
       const { db, agent } = freshSetup();
       createProviderConfig(db, { id: 'primary', kind: 'anthropic', apiKey: 'sk-test' });

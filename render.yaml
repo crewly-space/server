@@ -1,0 +1,37 @@
+# One public application. The disk keeps uploads and keys;
+# Turso manages the database primary. WebSockets and jobs use this one instance.
+services:
+  - type: web
+    name: crewly
+    runtime: node
+    plan: starter
+    region: frankfurt
+    numInstances: 1
+    buildCommand: npm ci --include=optional && npm run build && npm run fetch:app
+    startCommand: npm start
+    healthCheckPath: /readyz
+    disk:
+      name: crewly-data
+      mountPath: /var/data/crewly
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: CREWLY_HOST
+        value: 0.0.0.0
+      - key: CREWLY_DATA_DIR
+        value: /var/data/crewly
+      - key: CREWLY_WEB_DIR
+        value: ./web
+      - key: CREWLY_TRUST_PROXY
+        value: "true"
+      - key: CREWLY_SECRETS_KEY
+        generateValue: true
+      - key: CREWLY_SETUP_TOKEN
+        generateValue: true
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false

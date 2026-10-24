@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# One app and one volume, beside an existing nginx/TLS setup.
+set -Eeuo pipefail
+umask 077
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+cd "$ROOT"
+fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null || fail "$1 is required"; }
+value() { sed -n "s/^$1=//p" .env | tail -n 1; }
+compose() { docker compose --project-name crewly-vps --env-file .env -f compose.yaml "$@"; }
+configured() { [ -f .env ] || fail 'Run ./crewly-vps init https://your-domain.example IMAGE [PORT] first'; }
+set_image() {
+  local image=$1
+  [[ "$image" =~ ^[a-zA-Z0-9][a-zA-Z0-9._/@:+-]+$ ]] || fail 'Invalid image reference'
+  local stage; stage=$(mktemp "$ROOT/.env.XXXXXX")
+  sed "s|^CREWLY_SERVER_IMAGE=.*|CREWLY_SERVER_IMAGE=$image|" .env > "$stage"
+  mv "$stage" .env
+}
+healthy() { compose up -d --wait --wait-timeout "${CREWLY_WAIT_TIMEOUT:-120}" crewly; }
+wait_existing() {
+  local container deadline status
+  container=$(compose ps -a -q crewly)
+  deadline=$((SECONDS + ${CREWLY_WAIT_TIMEOUT:-120}))
+  while ((SECONDS < deadline)); do
+    status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")
+    case "$status" in healthy) return 0 ;; unhealthy|exited|dead) return 1 ;; esac
+    sleep 1
+  done
+  return 1
+}
+image_id() {
+  local container
+  container=$(compose ps -a -q crewly)
+  if [ -n "$container" ]; then docker inspect --format '{{.Image}}' "$container"
+  else docker image inspect --format '{{.Id}}' "$(value CREWLY_SERVER_IMAGE)"; fi
+}
+backup() {
+  configured
+  local stamp folder id restart_mode=${1:-wait}
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)-$$
+  mkdir -p "$ROOT/backups"
+  folder=$(mktemp -d "$ROOT/backups/$stamp.XXXXXX")
+  id=$(image_id)
+  cp .env "$folder/server.env"; printf '%s\n' "$id" > "$folder/image"
+  # Include the whole stopped data volume: DB, WAL, attachments, pairing keys.
+  compose stop crewly >/dev/null
+  if ! compose run --rm --no-deps -T --entrypoint tar crewly -czf - -C /data . > "$folder/data.tar.gz"; then
+    compose start crewly >/dev/null || true
+    fail "Backup failed; previous app restarted. Incomplete backup: $folder"
+  fi
+  (cd "$folder" && sha256sum data.tar.gz server.env image > checksums.txt)
+  if [ "$restart_mode" = wait ]; then compose start crewly >/dev/null; wait_existing || fail "App did not recover after backup. Snapshot: $folder"; fi
+  printf '%s\n' "$folder" > "$ROOT/.last-backup"
+  printf 'Backup: %s\n' "$folder"
+}
+restore() {
+  configured
+  local folder=$1 safety
+  folder=$(CDPATH='' cd -- "$folder" && pwd)
+  [ -f "$folder/checksums.txt" ] || fail 'Not a Crewly backup directory'
+  (cd "$folder" && sha256sum --check --strict checksums.txt) || fail 'Backup checksums do not match'
+  # Validate before taking anything offline. Only our fixed three files matter.
+  [ -s "$folder/server.env" ] && [ -s "$folder/image" ] || fail 'Backup metadata is missing'
+  tar -tzf "$folder/data.tar.gz" >/dev/null || fail 'Unreadable backup archive'
+  backup no-restart
+  safety=$(cat .last-backup)
+  compose stop crewly >/dev/null
+  if ! compose run --rm --no-deps -T --entrypoint sh crewly -ec \
+    'find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; tar --no-same-owner -xzf - -C /data' < "$folder/data.tar.gz"; then
+    fail "Restore failed; app left stopped. Safety backup: $safety"
+  fi
+  cp "$folder/server.env" .env
+  set_image "$(cat "$folder/image")"
+  if ! healthy; then fail "Restored app failed health checks. Safety backup: $safety"; fi
+  printf 'Restored data, encryption key and matching image. Safety backup: %s\n' "$safety"
+}
+build_source() {
+  source_root=$(CDPATH='' cd -- "$ROOT/../.." && pwd)
+  [ -f "$source_root/scripts/prepare-vps.mjs" ] || fail 'Run install from a server source checkout. For an existing image, use init and up.'
+  version=$(sed -n 's/.*"version": "\([0-9][0-9.]*\)".*/\1/p' "$source_root/package.json" | head -n 1)
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'Cannot read the source version'
+  image="crewly-local:$version"
+  docker compose version >/dev/null
+  docker run --rm -v "$source_root:/workspace" -w /workspace node:24-bookworm node scripts/prepare-vps.mjs
+  docker build -f "$source_root/deploy/Dockerfile" -t "$image" "$source_root"
+}
+need docker
+need sha256sum
+command=${1:-help}
+case "$command" in
+  init|up|backup|restore|rollback|update)
+    need flock
+    exec 9>"$ROOT/.operation.lock"
+    flock -n 9 || fail 'Another Crewly deployment or backup is in progress'
+    ;;
+esac
+case "$command" in
+  install)
+    [ ! -e .env ] || fail 'This deployment is already configured. Use update IMAGE, or up to resume it.'
+    public=${2:-}; port=${3:-8787}
+    [[ "$public" =~ ^https://[a-zA-Z0-9][a-zA-Z0-9.-]+(:[0-9]+)?/?$ ]] || fail 'Usage: ./crewly-vps install https://your-domain.example [PORT]'
+    [[ "$port" =~ ^[0-9]+$ ]] && ((port > 1024 && port < 65536)) || fail 'Choose a port between 1025 and 65535'
+    build_source
+    "$0" init "$public" "$image" "$port"
+    "$0" up
+    printf 'Ready behind nginx. Merge %s/nginx.conf into your existing HTTPS vhost, then run ./crewly-vps setup-code.\n' "$ROOT"
+    ;;
+  upgrade)
+    configured
+    source_root=$(CDPATH='' cd -- "$ROOT/../.." && pwd)
+    [ -d "$source_root/.git" ] && [ -f "$source_root/scripts/prepare-vps.mjs" ] || fail 'Source checkout not found. Use update IMAGE instead.'
+    need git
+    git -C "$source_root" diff --quiet && git -C "$source_root" diff --cached --quiet || fail 'Source has local edits; commit or restore them before upgrading'
+    git -C "$source_root" pull --ff-only
+    build_source
+    "$0" update "$image"
+    ;;
+  init)
+    [ ! -e .env ] || fail '.env already exists; init will never replace your keys'
+    public=${2:-}; image=${3:-}; port=${4:-8787}
+    [[ "$public" =~ ^https://[a-zA-Z0-9][a-zA-Z0-9.-]+(:[0-9]+)?/?$ ]] || fail 'Use an HTTPS origin, for example https://crewly.example.com'
+    [[ "$image" =~ ^[a-zA-Z0-9][a-zA-Z0-9._/@:+-]+$ ]] || fail 'Supply an explicit image tag or digest'
+    [[ "$port" =~ ^[0-9]+$ ]] && ((port > 1024 && port < 65536)) || fail 'Choose a port between 1025 and 65535'
+    need openssl
+    printf 'CREWLY_PUBLIC_URL=%s\nCREWLY_SERVER_IMAGE=%s\nCREWLY_PORT=%s\nCREWLY_SECRETS_KEY=%s\nCREWLY_SETUP_TOKEN=%s\n' \
+      "${public%/}" "$image" "$port" "$(openssl rand -base64 32)" "$(openssl rand -hex 32)" > .env
+    cat > nginx.conf <<NGINX
+# Merge this upstream into your existing HTTPS vhost. Do not create a second
+# vhost for a domain that nginx already serves. Keep your current TLS config.
+location / {
+    proxy_pass http://127.0.0.1:$port;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$remote_addr;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+    proxy_buffering off;
+    client_max_body_size 15m;
+}
+NGINX
+    printf 'Configured %s on 127.0.0.1:%s. Run ./crewly-vps up, then merge nginx.conf into your HTTPS vhost.\n' "$public" "$port"
+    ;;
+  up) configured; docker compose version >/dev/null; healthy; "$0" doctor ;;
+  backup) backup ;;
+  restore) [ -n "${2:-}" ] || fail 'Usage: ./crewly-vps restore /absolute/backup-directory'; restore "$2" ;;
+  rollback) configured; [ -f .last-backup ] || fail 'No backup recorded'; restore "$(cat .last-backup)" ;;
+  update)
+    configured; next=${2:-}; [[ "$next" =~ ^[a-zA-Z0-9][a-zA-Z0-9._/@:+-]+$ ]] || fail 'Usage: ./crewly-vps update IMAGE:VERSION'
+    # Fetch first; network failure cannot stop a working installation.
+    docker image inspect "$next" >/dev/null 2>&1 || docker pull "$next"
+    backup no-restart; previous=$(cat .last-backup); set_image "$next"
+    if ! healthy; then
+      printf 'Update failed; restoring the previous image AND data.\n' >&2
+      restore "$previous"
+      printf '%s\n' "$previous" > "$ROOT/.last-backup"
+      exit 1
+    fi
+    "$0" doctor
+    ;;
+  doctor)
+    configured
+    compose ps
+    compose exec -T crewly node -e '
+      const base="http://127.0.0.1:8787";
+      for(const path of ["/readyz","/crewly-app.json","/api/v1/auth/status"]){const r=await fetch(base+path);if(!r.ok)throw Error(path+" "+r.status);console.log("OK",path);}
+    ' --input-type=module
+    printf 'App: %s\nBackup: %s\n' "$(value CREWLY_PUBLIC_URL)" "$(cat .last-backup 2>/dev/null || printf 'none yet')"
+    ;;
+  setup-code) configured; value CREWLY_SETUP_TOKEN ;;
+  logs) configured; compose logs --tail 100 -f crewly ;;
+  *) printf '%s\n' 'Crewly VPS: install HTTPS_ORIGIN [PORT] | init HTTPS_ORIGIN IMAGE [PORT] | up | doctor | backup | upgrade | update IMAGE | rollback | restore BACKUP_DIR | setup-code | logs' ;;
+esac

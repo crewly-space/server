@@ -11,6 +11,7 @@ import type { AgentRunQueue } from './queue.js';
 import { conversationPeople, emitNotification } from '../notifications/service.js';
 import {
   appendRunEvent,
+  cancelAgentRun,
   completeAgentRun,
   createAgentRun,
   failAgentRun,
@@ -42,6 +43,11 @@ export interface RespondInput {
    * answer with {@link NO_REPLY} to stay out of it.
    */
   optionalReply?: boolean;
+  /** Background review: only bounded agent consultations may be offered. */
+  proactive?: boolean;
+  proactiveFocus?: string;
+  /** Receives a scoped task, not the original conversation or its summary. */
+  delegated?: boolean;
 }
 
 /** What an agent says, on an optional turn, to post nothing at all. */
@@ -95,6 +101,10 @@ export interface RunAgentTurnInput {
   routingDecision?: { mode: string; reason: string };
   /** Nobody asked this agent: it may decline, and then nothing is posted. */
   optional?: boolean;
+  proactive?: boolean;
+  proactiveFocus?: string;
+  /** Rechecked before work and delivery (for revoked access or stale context). */
+  shouldContinue?: () => boolean;
 }
 
 /** A run another agent asked for: it sees only the task, and its answer goes back, not into the chat. */
@@ -242,6 +252,7 @@ async function executeTurn(
 
   let result: AgentTurnResult;
   try {
+    if (input.shouldContinue && !input.shouldContinue()) throw new RunCancelledError('the turn is no longer relevant');
     // A delegated run sees the task it was given and nothing else of the
     // conversation: what it may know is what the delegating agent chose to say.
     const recentMessages: Message[] = delivery.kind === 'return'
@@ -264,15 +275,18 @@ async function executeTurn(
       conversationId: input.conversationId,
       recentMessages,
       run: { runId, rootRunId, hopCount },
-      allowArtifacts: delivery.kind === 'post',
+      allowArtifacts: delivery.kind === 'post' && !input.proactive,
+      ...(delivery.kind === 'return' ? { delegated: true } : {}),
       onEvent: ({ type, ...data }) => trace(type, data),
-      isCancelled: () => isRunCancelled(deps.db, runId),
+      isCancelled: () => isRunCancelled(deps.db, runId) || Boolean(input.shouldContinue && !input.shouldContinue()),
+      ...(input.proactive ? { proactive: true, proactiveFocus: input.proactiveFocus } : {}),
       ...(input.optional && delivery.kind === 'post' ? { optionalReply: true } : {}),
     });
-    if (isRunCancelled(deps.db, runId)) throw new RunCancelledError('the run was cancelled before it answered');
+    if (isRunCancelled(deps.db, runId) || (input.shouldContinue && !input.shouldContinue())) throw new RunCancelledError('the run was cancelled before it answered');
   } catch (error) {
     const failure = failureOf(error);
     if (error instanceof RunCancelledError) {
+      cancelAgentRun(deps.db, runId, failure.message);
       trace('run.cancelled', failure);
       finish('cancelled');
     } else {
@@ -360,7 +374,7 @@ async function executeTurn(
   });
   const run = getAgentRun(deps.db, runId)!;
 
-  if (!result.handoffToAgentId) {
+  if (!result.handoffToAgentId || input.proactive) {
     return { run, message, body: result.body, handoff: { attempted: false, dispatched: false } };
   }
 

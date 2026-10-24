@@ -1,5 +1,12 @@
 # Crewly Server
 
+**Your own VPS:** [one app with SQLite, nginx, backups and rollback](docs/vps.md).
+
+**Managed hosting option:** [one Render application + Turso](docs/simple-hosting.md).
+The root `render.yaml` hosts the app, API and agents together, without Crewly
+Cloud, Superserver or a separate PostgreSQL service.
+
+
 The self-hostable Crewly server: API, WebSocket hub, job runner, and SQLite
 storage. This repository also owns the two things that define the server's
 contract with everything else — the wire **protocol** and the TypeScript
@@ -21,7 +28,7 @@ Requires Node.js 24+. Bun 1.4+ only for the native binary build.
 
 ```sh
 npm ci
-npm test          # 315 tests, including the SDK integration suite
+npm test          # includes the SDK integration suite
 npm run typecheck
 npm run dev
 ```
@@ -35,7 +42,7 @@ npm run fetch:app          # sibling ../app/dist, else the app release
 docker build -f deploy/Dockerfile -t crewly-server .
 ```
 
-Without that step the image is still valid — the server just serves no UI.
+The image must include a complete, version-matching app. The build fetches its pinned release if no prepared web/ exists; a missing or corrupt app stops the build. To deploy a candidate before a public app release exists, use the separate pinned-source preparation in [the VPS guide](docs/vps.md).
 
 ## External connectors
 

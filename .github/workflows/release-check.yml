@@ -1,0 +1,73 @@
+name: Release candidate
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  packaged-app:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: server
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - name: Resolve coordinated app commit
+        id: app
+        run: echo "ref=$(node -p 'require("./release.json").appRef')" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: crewly-space/app
+          ref: ${{ steps.app.outputs.ref }}
+          path: app
+      - name: Build and verify the exact pair
+        run: |
+          npm ci --include=optional
+          npm run build
+          node --test scripts/app-bundle.test.mjs
+          npm --prefix ../app ci
+          npm --prefix ../app run vendor:check
+          npm --prefix ../app run build
+          npm --prefix ../app test
+          (cd ../app && npx playwright install --with-deps chromium)
+          npm --prefix ../app run test:release
+          npm --prefix ../app run test:ui
+          npm run fetch:app
+      - name: Build and boot the installable archive
+        run: |
+          bun run scripts/build-binary.ts bun-linux-x64
+          sh deploy/scripts/package-release.sh linux amd64 dist-binary/crewly_linux_amd64/crewly-server web
+          mkdir -p /tmp/crewly-release-check
+          tar -xzf deploy/dist/crewly-server_linux_amd64.tar.gz -C /tmp/crewly-release-check
+          node scripts/smoke-release.mjs /tmp/crewly-release-check
+      - name: Build and boot the hosted container
+        run: |
+          docker build -f deploy/Dockerfile -t crewly-release-check .
+          docker run --rm -d --name crewly-release-check -p 8787:8787 crewly-release-check
+          trap 'docker logs crewly-release-check; docker stop crewly-release-check' EXIT
+          for attempt in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8787/readyz >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8787/readyz
+          curl -fsS http://127.0.0.1:8787/ > /tmp/crewly-index.html
+          node -e 'if(!require("fs").readFileSync("/tmp/crewly-index.html","utf8").includes("id=\"root\""))process.exit(1)'
+          node -e 'fetch("http://127.0.0.1:8787/crewly-app.json").then(r=>r.json()).then(m=>{if(m.version!==require("./package.json").version)process.exit(1)})'
+      - name: Exercise VPS backup, restore and failed-update rollback
+        env:
+          CREWLY_TEST_VPS: '1'
+        run: node scripts/test-vps.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crewly-linux-release-candidate
+          path: server/deploy/dist/crewly-server_linux_amd64.tar.gz

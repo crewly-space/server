@@ -46,19 +46,13 @@ jobs:
         run: |
           npm run typecheck
           npm test
+          node --test scripts/app-bundle.test.mjs
 
-      # The app is a separate repository, so it is built from source here
-      # rather than pulled from its own release. That keeps this workflow from
-      # depending on the app having shipped first, which would deadlock the
-      # very first release of both.
-      - name: Build the app
+      # Fetch the coordinated app release; never build an unpinned app/main.
+      - name: Build the Node server and fetch the pinned app
         run: |
-          git clone --depth 1 https://github.com/crewly-space/app.git /tmp/app
-          npm --prefix /tmp/app ci
-          npm --prefix /tmp/app run build
-          rm -rf web && mkdir -p web
-          cp -R /tmp/app/dist/. web/
-          test -f web/index.html
+          npm run build
+          npm run fetch:app
 
       - name: Cross-compile the server
         run: bun run scripts/build-binary.ts
@@ -92,6 +86,12 @@ jobs:
           done
           sh deploy/scripts/checksums.sh
           ls -la deploy/dist
+
+      - name: Boot the archive a user installs
+        run: |
+          mkdir -p /tmp/crewly-release-check
+          tar -xzf deploy/dist/crewly-server_linux_amd64.tar.gz -C /tmp/crewly-release-check
+          node scripts/smoke-release.mjs /tmp/crewly-release-check
 
       # A release whose checksums do not match its archives bricks every
       # install, and the installer failure would not say why.

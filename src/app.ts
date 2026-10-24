@@ -305,9 +305,14 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   registerSkillSecretHooks();
   registerSkillRoutes(app);
   registerRegistryRoutes(app, opts.fetchImpl);
+  const delegation = delegationToolset({
+    db: opts.db, hub, respond: () => respond, status: agentStatus,
+    queue: runQueue, maxDepth: opts.maxDelegationDepth,
+  });
   const respond: RespondFn = opts.respond ?? createProviderRespond(opts.db, globalThis.fetch.bind(globalThis), deviceHub, {
     gateway,
     instructions: [skillInstructions(opts.db)],
+    proactiveToolsets: [delegation],
     toolsets: [
       utilityToolset(),
       automationToolset(opts.db),
@@ -316,14 +321,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       toolRuntimeToolset(opts.db, toolRuntimeOptions),
       artifactToolset({ db: opts.db, store: attachmentStore }),
       browserToolset({ db: opts.db, adapter: opts.browserAdapter ?? new FetchBrowserAdapter(opts.fetchImpl), store: attachmentStore }),
-      delegationToolset({
-        db: opts.db,
-        hub,
-        respond: () => respond,
-        status: agentStatus,
-        queue: runQueue,
-        maxDepth: opts.maxDelegationDepth,
-      }),
+      delegation,
     ],
   });
   registerAutomationRoutes(app, {
@@ -391,10 +389,17 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       return reply.code(404).send({ error: 'not_found' });
     });
   } else if (opts.webDir && fs.existsSync(path.join(opts.webDir, 'index.html'))) {
-    await app.register(fastifyStatic, { root: opts.webDir, prefix: '/', index: false });
+    await app.register(fastifyStatic, { root: opts.webDir, prefix: '/', index: false,
+      setHeaders: (reply, filename) => {
+        const name = path.basename(filename);
+        reply.header('Cache-Control', name === 'index.html' || name === 'sw.js' || name === 'crewly-app.json'
+          ? 'no-store' : filename.includes(`${path.sep}assets${path.sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache');
+      },
+    });
     app.get('/', async (_request, reply) => reply.sendFile('index.html'));
     app.setNotFoundHandler(async (request, reply) => {
-      if (request.method === 'GET' && !request.url.startsWith('/api/')) return reply.sendFile('index.html');
+      // Missing scripts must be a real 404, never HTML cached as JavaScript.
+      if (request.method === 'GET' && !request.url.startsWith('/api/') && !path.extname(request.url.split('?')[0]!)) return reply.sendFile('index.html');
       return reply.code(404).send({ error: 'not_found' });
     });
   }

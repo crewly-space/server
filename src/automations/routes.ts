@@ -18,7 +18,9 @@ import {
   type AutomationInput,
 } from './service.js';
 import { isParticipant } from '../conversations/repository.js';
-import { canReadChannel } from '../channels/repository.js';
+import { getAgent } from '../agents/repository.js';
+import { getProviderConfig } from '../providers/repository.js';
+import { canReadChannel, blockedAgentIds } from '../channels/repository.js';
 import { parsePublicHttpsUrl } from '../security/outbound.js';
 
 const ActionSchema = z.discriminatedUnion('type', [
@@ -63,17 +65,64 @@ export function registerAutomationRoutes(
   const ownTasks = (conversationId: string, userId: string) => listAutomations(app.db).filter((rule) =>
     rule.createdBy === userId && rule.triggerConfig.kind === 'conversation_schedule'
     && rule.triggerConfig.conversationId === conversationId);
+  const taskView = (rule: ReturnType<typeof listAutomations>[number]) => {
+    const lastRun = listAutomationRuns(app.db, rule.id, 1)[0];
+    return { id: rule.id, name: rule.name, enabled: rule.enabled, runAt: String(rule.triggerConfig.runAt),
+      intervalMinutes: typeof rule.triggerConfig.intervalMinutes === 'number' ? rule.triggerConfig.intervalMinutes : null,
+      agentId: String(rule.triggerConfig.agentId), kind: rule.triggerConfig.proactive === true ? 'followup' : rule.actions[0]?.type === 'invoke_agent' ? 'task' : 'reminder',
+      ...(rule.triggerConfig.proactive === true ? { timeZone: String(rule.triggerConfig.timeZone) } : {}),
+      body: rule.actions[0]?.type === 'post_message' ? rule.actions[0].body : rule.actions[0]?.type === 'invoke_agent' ? rule.actions[0].prompt ?? '' : '',
+      lastRun: lastRun ? { status: lastRun.status, error: lastRun.error, createdAt: lastRun.createdAt,
+        ...(typeof lastRun.output.skipped === 'string' ? { skipReason: lastRun.output.skipped } : {}) } : null };
+  };
+  const ScheduleSchema = z.object({
+    requestId: z.string().min(16).max(100), name: z.string().trim().min(2).max(80),
+    agentId: z.string().min(1), kind: z.enum(['task', 'reminder', 'followup']), body: z.string().trim().min(1).max(100_000),
+    runAt: z.string().datetime({ offset: true }), intervalMinutes: z.number().int().min(1).max(10080).optional(),
+    timeZone: z.string().max(100).refine(value => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }, 'Choose a valid time zone').optional(),
+  }).strict();
+  app.post('/api/v1/conversations/:conversationId/scheduled-tasks', { preHandler: requireAuth }, async (request, reply) => {
+    const { conversationId } = request.params as { conversationId: string };
+    if (!canRead(conversationId, request.user!.id)) return reply.code(404).send({ error: 'conversation_not_found' });
+    const input = ScheduleSchema.parse(request.body);
+    if (!isParticipant(app.db, conversationId, input.agentId, 'agent') || blockedAgentIds(app.db, conversationId).includes(input.agentId)) {
+      return reply.code(404).send({ error: 'conversation_agent_not_found' });
+    }
+    const { requestId, ...details } = input;
+    const requestKey = JSON.stringify(details);
+    const previous = ownTasks(conversationId, request.user!.id).find(rule => rule.triggerConfig.originRequestId === requestId);
+    // A lost response may be retried after the task has run. Return the saved
+    // result before checking the time, never create or re-enable a second job.
+    if (previous) {
+      if (previous.triggerConfig.requestKey !== requestKey) return reply.code(409).send({ error: 'schedule_request_changed' });
+      return reply.send({ task: taskView(previous) });
+    }
+    if (Date.parse(input.runAt) <= Date.now()) return reply.code(400).send({ error: 'schedule_time_must_be_in_future' });
+    const agent = getAgent(app.db, input.agentId);
+    if (input.kind !== 'reminder' && (!agent || !getProviderConfig(app.db, agent.modelPolicy.defaultProviderId))) {
+      return reply.code(409).send({ error: 'agent_provider_unavailable' });
+    }
+    if (input.kind === 'followup') {
+      if (!input.timeZone || !input.intervalMinutes || input.intervalMinutes < 1440) return reply.code(400).send({ error: 'followup_daily_interval_required' });
+      if (listAutomations(app.db).some(rule => rule.enabled && rule.triggerConfig.proactive === true
+        && rule.triggerConfig.conversationId === conversationId && rule.triggerConfig.agentId === input.agentId)) {
+        return reply.code(409).send({ error: 'followup_already_enabled' });
+      }
+    }
+    const { automation } = createAutomation(app.db, {
+      name: input.name, createdBy: request.user!.id, triggerType: 'schedule',
+      triggerConfig: { kind: 'conversation_schedule', conversationId, agentId: input.agentId, runAt: input.runAt,
+        ...(input.kind === 'followup' ? { proactive: true, timeZone: input.timeZone } : {}),
+        ...(input.intervalMinutes ? { intervalMinutes: input.intervalMinutes } : {}), originRequestId: requestId, requestKey },
+      actions: input.kind === 'reminder' ? [{ type: 'post_message', conversationId, body: input.body }]
+        : [{ type: 'invoke_agent', agentId: input.agentId, conversationId, prompt: input.body }],
+    });
+    return reply.code(201).send({ task: taskView(automation) });
+  });
   app.get('/api/v1/conversations/:conversationId/scheduled-tasks', { preHandler: requireAuth }, async (request, reply) => {
     const { conversationId } = request.params as { conversationId: string };
     if (!canRead(conversationId, request.user!.id)) return reply.code(404).send({ error: 'conversation_not_found' });
-    const tasks = ownTasks(conversationId, request.user!.id).map((rule) => {
-      const lastRun = listAutomationRuns(app.db, rule.id, 1)[0];
-      return { id: rule.id, name: rule.name, enabled: rule.enabled, runAt: String(rule.triggerConfig.runAt),
-        intervalMinutes: typeof rule.triggerConfig.intervalMinutes === 'number' ? rule.triggerConfig.intervalMinutes : null,
-        agentId: String(rule.triggerConfig.agentId), kind: rule.actions[0]?.type === 'invoke_agent' ? 'task' : 'reminder',
-        body: rule.actions[0]?.type === 'post_message' ? rule.actions[0].body : rule.actions[0]?.type === 'invoke_agent' ? rule.actions[0].prompt ?? '' : '',
-        lastRun: lastRun ? { status: lastRun.status, error: lastRun.error, createdAt: lastRun.createdAt } : null };
-    });
+    const tasks = ownTasks(conversationId, request.user!.id).map(taskView);
     return reply.send({ tasks });
   });
   app.delete('/api/v1/conversations/:conversationId/scheduled-tasks/:id', { preHandler: requireAuth }, async (request, reply) => {

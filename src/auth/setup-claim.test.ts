@@ -29,3 +29,16 @@ describe('setup claim', () => {
     expect(fs.existsSync(pending.file)).toBe(false);
   });
 });
+
+it('uses a dashboard-provided claim secret only until the first owner exists', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'crewly-hosted-claim-'));
+  try {
+    const token = 'dashboard-provided-setup-secret';
+    const claim = prepareSetupClaim(directory, false, token);
+    expect(claim.token).toBe(token);
+    expect(fs.existsSync(claim.file)).toBe(false);
+    claim.consume();
+    expect(prepareSetupClaim(directory, true, token).token).toBeUndefined();
+    expect(() => prepareSetupClaim(directory, false, 'short')).toThrow(/20 to 512/);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});

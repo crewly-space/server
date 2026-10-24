@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadOrCreateAgentdServerIdentity } from './devices/server-identity.js';
 
-const VERSION = '0.1.13';
+const VERSION = '0.2.0';
 
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -42,11 +42,11 @@ Usage: crewly-server [options]
   if (!config.webDir) {
     console.warn('Crewly app is disabled (no --web-dir); serving the API only');
   }
-  const db = openDatabase(config.dataDir, { managedSecretsKey: config.managedSecretsKey, databaseUrl: config.databaseUrl });
+  const db = openDatabase(config.dataDir, { managedSecretsKey: config.managedSecretsKey, databaseUrl: config.databaseUrl, turso: config.turso });
   runMigrations(db);
-  const setupClaim = prepareSetupClaim(config.dataDir, countUsers(db) > 0);
+  const setupClaim = prepareSetupClaim(config.dataDir, countUsers(db) > 0, config.setupToken);
   if (setupClaim.token) {
-    console.warn(`First-run claim token created at ${setupClaim.file}; read it from the server host to claim ownership.`);
+    console.warn(config.setupToken ? 'First-run setup is protected by CREWLY_SETUP_TOKEN; copy it from your hosting dashboard to claim ownership.' : `First-run claim token created at ${setupClaim.file}; read it from the server host to claim ownership.`);
   }
   const app = await buildApp({
     db,
