@@ -41,6 +41,7 @@ jobs:
           npm --prefix ../app test
           (cd ../app && npx playwright install --with-deps chromium)
           npm --prefix ../app run test:release
+          npm --prefix ../app run test:ui
           npm run fetch:app
       - name: Build and boot the installable archive
         run: |
