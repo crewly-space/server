@@ -42,6 +42,11 @@ Only tag the checked server commit `v0.2.0` once app `v0.2.0` is published. The
 Release workflow preserves existing Ed25519 signing and installer verification.
 Do not treat source checks or an unsigned local archive as a published release.
 
+Alternatively, create `release/v0.2.0` at the checked `main` commit after the app
+release is available. The Release workflow runs the same build and signing
+gates, then creates the tag and publishes Latest. It refuses to move a tag that
+already points at different code; the final checksum signature is still required.
+
 ## Hosting and recovery
 
 See [simple-hosting.md](docs/simple-hosting.md). Render runs one paid service and

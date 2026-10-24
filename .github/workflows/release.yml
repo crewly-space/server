@@ -6,6 +6,7 @@ name: Release
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 on:
+  create:
   push:
     tags: ["v*"]
   workflow_dispatch:
@@ -21,13 +22,19 @@ permissions:
 env:
   IMAGE: ghcr.io/${{ github.repository }}
 
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   release:
+    if: github.event_name != 'create' || (github.event.ref_type == 'branch' && startsWith(github.event.ref, 'release/v'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with: { node-version: "24", cache: npm }
@@ -37,10 +44,20 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Verify release version
+      - name: Verify release source and version
+        id: release_context
         env:
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: test "$TAG" = "v$(node -p "require('./package.json').version")"
+          REQUESTED_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          RELEASE_EVENT: ${{ github.event_name }}
+        run: |
+          set -eu
+          tag="${REQUESTED_TAG#release/}"
+          test "$tag" = "v$(node -p "require('./package.json').version")"
+          if [ "$RELEASE_EVENT" = create ]; then
+            test "$REQUESTED_TAG" = "release/$tag"
+            git merge-base --is-ancestor HEAD origin/main
+          fi
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
 
       - name: Test before publishing
         run: |
@@ -107,7 +124,7 @@ jobs:
       # machine that had run fetch:app.
       - name: Build the container image
         env:
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG: ${{ steps.release_context.outputs.tag }}
         run: |
           docker build -f deploy/Dockerfile -t "$IMAGE:$TAG" .
           docker run --rm -d --name smoke -e CREWLY_HOST=0.0.0.0 -p 8787:8787 \
@@ -123,7 +140,7 @@ jobs:
 
       - name: Publish the server container
         env:
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG: ${{ steps.release_context.outputs.tag }}
         run: |
           set -u
           archive="deploy/dist/crewly-server_container_${TAG}.tar.gz"
@@ -159,10 +176,27 @@ jobs:
           openssl pkeyutl -verify -rawin -pubin -inkey "$pub" -in checksums.txt -sigfile checksums.txt.sig
           echo "Signed with public key: $(openssl pkey -pubin -in "$pub" -outform DER | tail -c 32 | base64)"
 
+      # A release branch creates its version tag only after all archives and
+      # the final signed checksum listing are ready. Existing tags are never moved.
+      - name: Ensure the checked release tag exists
+        env:
+          TAG: ${{ steps.release_context.outputs.tag }}
+          RELEASE_EVENT: ${{ github.event_name }}
+        run: |
+          set -eu
+          git fetch --tags origin
+          if git show-ref --verify --quiet "refs/tags/$TAG"; then
+            test "$(git rev-parse "$TAG^{commit}")" = "$(git rev-parse HEAD)"
+          else
+            test "$RELEASE_EVENT" = create
+            git tag "$TAG" HEAD
+            git push origin "refs/tags/$TAG"
+          fi
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG: ${{ steps.release_context.outputs.tag }}
         run: |
           assets=(
             deploy/dist/crewly-server_*
@@ -180,7 +214,8 @@ jobs:
             gh release create "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --title "Crewly Server $TAG" \
-              --generate-notes \
+              --notes-file release-notes.md \
+              --latest \
               --verify-tag \
               "${assets[@]}"
           fi
